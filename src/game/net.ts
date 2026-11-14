@@ -1,4 +1,4 @@
-import type { CharacterId, MultiplayerHudState, RoomPeerInfo } from './types';
+import type { CharacterId, ChatEntry, MultiplayerHudState, RoomPeerInfo } from './types';
 
 export interface NetEventHandlers {
   onRoomChange: (
@@ -7,6 +7,7 @@ export interface NetEventHandlers {
   ) => void;
   onMatchStart: (roomKind: 'global' | 'link_duel' | 'private') => void;
   onLinkMatchOver: (msg: { winnerId: string; winnerName: string; loserId: string; loserName: string }) => void;
+  onChat: (msg: ChatEntry) => void;
   onPeerState: (msg: {
     id: string;
     x: number;
@@ -174,6 +175,16 @@ export class MultiplayerClient {
         return;
       }
 
+      if (type === 'chat_message') {
+        this.handlers.onChat?.({
+          id: String(msg.id || Math.random()),
+          senderId: String(msg.senderId || ''),
+          senderName: String(msg.senderName || 'Player'),
+          text: String(msg.text || ''),
+        });
+        return;
+      }
+
       if (type === 'peer_state') {
         this.handlers.onPeerState(msg as unknown as Parameters<NetEventHandlers['onPeerState']>[0]);
         return;
@@ -232,6 +243,12 @@ export class MultiplayerClient {
       this.pendingActions.push(payload);
       this.ensureSocket();
     }
+  }
+
+  public sendChat(text: string): void {
+    const clean = text.trim().slice(0, 160);
+    if (!clean) return;
+    this.send({ type: 'chat_message', text: clean });
   }
 
   public joinGlobal(name: string, characterId: CharacterId): void {

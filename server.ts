@@ -529,6 +529,22 @@ async function startServer() {
         return;
       }
 
+      if (type === 'chat_message') {
+        const text = String(msg.text || '').trim().slice(0, 160);
+        if (!text) return;
+        const chatMsg = {
+          id: `chat-${clientId}-${Date.now().toString(36)}`,
+          senderId: clientId,
+          senderName: self.name,
+          text,
+        };
+        broadcastRoom(room, {
+          type: 'chat_message',
+          ...chatMsg,
+        });
+        return;
+      }
+
       if (type === 'heal_sync') {
         const hp = Math.max(1, Math.min(self.maxHp, Math.round(Number(msg.hp || self.hp))));
         const absorption = Math.max(0, Math.min(30, Math.round(Number(msg.absorption || 0))));

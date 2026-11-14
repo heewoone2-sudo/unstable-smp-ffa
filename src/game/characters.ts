@@ -3,8 +3,8 @@ import type { CharacterId, CharacterProfile, GameModeId, LoadoutItemMeta } from 
 export const ITEM_CATALOG: Record<string, LoadoutItemMeta> = {
   sword: { id: 'sword', name: '네더라이트 검', role: '무쿨타임 연속 참격 · 낙하 치명타', cooldown: 0 },
   fire_sword: { id: 'fire_sword', name: '화염의 검', role: '무쿨타임 화염 연타 · 화상 지속 피해', cooldown: 0 },
-  spear: { id: 'spear', name: '오비탈 창', role: '긴 사거리 · 전방 돌진 찌르기', cooldown: 0.42 },
-  axe: { id: 'axe', name: '파괴의 도끼', role: '방패 100% 파쇄 · 묵직한 일격', cooldown: 0.62 },
+  spear: { id: 'spear', name: '오비탈 창', role: '넓은 반경 · 초고속 전방 찌르기', cooldown: 0.32 },
+  axe: { id: 'axe', name: '파괴의 도끼', role: '방패 100% 파쇄 · 42딜 압도적 일격', cooldown: 2.2 },
   mace: { id: 'mace', name: '중력 메이스', role: '낙하 높이 비례 폭딜 · 충격파', cooldown: 0.62 },
   trident: { id: 'trident', name: '투척 삼지창', role: '원거리 관통 창 투척', cooldown: 1.7 },
   wind_charge: { id: 'wind_charge', name: '돌풍구', role: '발 아래 쏘아 하이점프 & 넉백', cooldown: 1.6 },

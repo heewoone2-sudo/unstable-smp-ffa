@@ -98,6 +98,13 @@ export interface HazardPoolZone {
   radius: number;
 }
 
+export interface ChatEntry {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+}
+
 export interface RoomPeerInfo {
   id: string;
   name: string;
@@ -161,6 +168,7 @@ export interface HudSnapshot {
   calloutAccent: string;
   calloutTimer: number;
   killFeed: Array<{ id: number; text: string; color: string }>;
+  chatMessages: ChatEntry[];
   hitmarkerTimer: number;
   hitmarkerCrit: boolean;
   lastHitText: string;

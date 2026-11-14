@@ -73,6 +73,7 @@ const INITIAL_HUD: HudSnapshot = {
   calloutAccent: '#fbbf24',
   calloutTimer: 0,
   killFeed: [],
+  chatMessages: [],
   hitmarkerTimer: 0,
   hitmarkerCrit: false,
   lastHitText: '',

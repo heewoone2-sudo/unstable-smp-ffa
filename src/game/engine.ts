@@ -34,6 +34,7 @@ import type {
   CameraViewMode,
   CharacterId,
   CharacterProfile,
+  ChatEntry,
   CobwebZone,
   GameModeId,
   GameScreenState,
@@ -277,6 +278,7 @@ export class UnstableArenaEngine {
   private hitmarkerCrit = false;
   private lastHitText = '';
   private killFeed: Array<{ id: number; text: string; color: string }> = [];
+  private chatMessages: ChatEntry[] = [];
   private nextFeedId = 1;
 
   // World dynamic pools
@@ -398,6 +400,10 @@ export class UnstableArenaEngine {
           won ? '#fbbf24' : '#ef4444'
         );
         this.triggerEndGame(won ? 'victory' : 'defeat');
+      },
+      onChat: (msg) => {
+        this.chatMessages = [...this.chatMessages, msg].slice(-40);
+        this.emitHud(true);
       },
       onPeerState: (msg) => {
         const peer = this.remotePeers.get(msg.id);
@@ -888,6 +894,10 @@ export class UnstableArenaEngine {
 
   public cancelLinkQueue(): void {
     this.net.cancelLinkQueue();
+  }
+
+  public sendChatMessage(text: string): void {
+    this.net.sendChat(text);
   }
 
   public createMultiplayerRoom(name: string, includeBots: boolean): void {
@@ -2062,7 +2072,7 @@ export class UnstableArenaEngine {
 
     const aimX = -Math.sin(this.playerYaw);
     const aimZ = -Math.cos(this.playerYaw);
-    const reach = kind === 'spear' ? 5.1 : kind === 'mace' ? 4.4 : 4.1;
+    const reach = kind === 'spear' ? 6.2 : kind === 'mace' ? 4.4 : 4.1;
 
     let hitEnemy: AiFighter | null = null;
     let bestScore = Infinity;
@@ -2099,7 +2109,7 @@ export class UnstableArenaEngine {
     }
 
     if (kind !== 'mace') {
-      const base = kind === 'axe' ? 21 : kind === 'spear' ? 16 : 15;
+      const base = kind === 'axe' ? 42 : kind === 'spear' ? 16 : 15;
       const mult = kind === 'sword' ? prof.swordMult : 1.05;
       const { damage, isCrit } = computeSwordDamage(base, mult, this.playerVel.y, this.playerOnGround);
       this.showSlashArc(
@@ -3760,6 +3770,7 @@ export class UnstableArenaEngine {
       calloutAccent: this.calloutAccent,
       calloutTimer: this.calloutTimer,
       killFeed: this.killFeed,
+      chatMessages: this.chatMessages,
       hitmarkerTimer: this.hitmarkerTimer,
       hitmarkerCrit: this.hitmarkerCrit,
       lastHitText: this.lastHitText,
