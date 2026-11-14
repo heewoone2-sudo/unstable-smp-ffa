@@ -1,4 +1,5 @@
-import { Volume2, VolumeX, Pause, RotateCcw } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { Volume2, VolumeX, Pause, RotateCcw, Shield, Swords, ArrowUp } from 'lucide-react';
 import { CHARACTERS } from '../game/characters';
 import type { HudSnapshot } from '../game/types';
 import { WeaponIcon } from './WeaponIcons';
@@ -10,6 +11,11 @@ interface GameHudProps {
   onToggleMute: () => void;
   onPause: () => void;
   onRestart: () => void;
+  onMobileAttack?: () => void;
+  onMobileJump?: (pressed: boolean) => void;
+  onMobileBlock?: (pressed: boolean) => void;
+  onMobileMove?: (forward: number, right: number) => void;
+  onMobileLook?: (dx: number, dy: number) => void;
 }
 
 export function GameHud({
@@ -19,12 +25,21 @@ export function GameHud({
   onToggleMute,
   onPause,
   onRestart,
+  onMobileAttack,
+  onMobileJump,
+  onMobileBlock,
+  onMobileMove,
+  onMobileLook,
 }: GameHudProps) {
   const prof = CHARACTERS[hud.characterId];
   const hpPct = Math.max(0, Math.min(100, (hud.hp / hud.maxHp) * 100));
   const absPct = Math.max(0, Math.min(100, (hud.absorption / 30) * 100));
   const activeWeapon = hud.loadout[hud.activeSlot] ?? hud.loadout[0];
   const lowHp = hud.hp <= hud.maxHp * 0.3;
+
+  const [joystickCenter, setJoystickCenter] = useState<{ x: number; y: number } | null>(null);
+  const [joystickOffset, setJoystickOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const lookTouchRef = useRef<{ id: number; x: number; y: number } | null>(null);
 
   const cameraLabel =
     hud.cameraMode === 'shiftlock'
@@ -43,7 +58,7 @@ export function GameHud({
   const statusText = hud.isBurning
     ? '화상 피해!'
     : hud.isInCobweb
-      ? '거미줄 속박!'
+      ? '거미줄 속박 (이속 저하!)'
       : hud.isInWater
         ? '물 속 (소화)'
         : hud.isStealthed
@@ -52,10 +67,33 @@ export function GameHud({
             ? '방어 중'
             : hud.isGliding
               ? '활공 중'
-              : '마우스 조준';
+              : '전투 준비';
 
   return (
-    <div className="fixed inset-0 z-10 pointer-events-none select-none">
+    <div
+      className="fixed inset-0 z-10 pointer-events-none select-none"
+      onTouchMove={(e) => {
+        if (!onMobileLook) return;
+        for (let i = 0; i < e.changedTouches.length; i++) {
+          const t = e.changedTouches[i];
+          if (lookTouchRef.current && lookTouchRef.current.id === t.identifier) {
+            const dx = t.clientX - lookTouchRef.current.x;
+            const dy = t.clientY - lookTouchRef.current.y;
+            onMobileLook(dx, dy);
+            lookTouchRef.current.x = t.clientX;
+            lookTouchRef.current.y = t.clientY;
+          }
+        }
+      }}
+      onTouchEnd={(e) => {
+        for (let i = 0; i < e.changedTouches.length; i++) {
+          const t = e.changedTouches[i];
+          if (lookTouchRef.current && lookTouchRef.current.id === t.identifier) {
+            lookTouchRef.current = null;
+          }
+        }
+      }}
+    >
       {lowHp && (
         <div
           className="fixed inset-0 pointer-events-none"
@@ -74,9 +112,9 @@ export function GameHud({
         />
       )}
 
-      {/* Top-Left: Vitality + 3-Way Camera Toggle */}
+      {/* Top-Left: Vitality + Camera Toggle */}
       <div className="fixed top-4 left-4 flex flex-col gap-2 w-80">
-        <div className="bg-[#0e111d]/88 border border-white/15 rounded-lg px-3.5 py-2.5">
+        <div className="bg-[#0a0e17]/92 border border-white/15 rounded-lg px-3.5 py-2.5 shadow-xl">
           <div className="flex items-baseline justify-between mb-1.5">
             <div className="flex items-center gap-2">
               <span
@@ -93,7 +131,7 @@ export function GameHud({
             </span>
           </div>
 
-          <div className="h-2.5 w-full bg-slate-900 rounded-xs overflow-hidden border border-white/10">
+          <div className="h-2.5 w-full bg-slate-950 rounded-xs overflow-hidden border border-white/10">
             <div
               className="h-full transition-all duration-150"
               style={{
@@ -104,7 +142,7 @@ export function GameHud({
           </div>
 
           {hud.absorption > 0 && (
-            <div className="h-1.5 w-full bg-slate-900 rounded-xs overflow-hidden mt-1">
+            <div className="h-1.5 w-full bg-slate-950 rounded-xs overflow-hidden mt-1">
               <div
                 className="h-full bg-amber-400 transition-all duration-150"
                 style={{ width: `${absPct}%` }}
@@ -130,7 +168,7 @@ export function GameHud({
                 hud.isBurning
                   ? 'text-orange-400'
                   : hud.isInCobweb
-                    ? 'text-slate-200'
+                    ? 'text-red-300'
                     : hud.isInWater
                       ? 'text-sky-300'
                       : 'text-slate-400'
@@ -144,7 +182,7 @@ export function GameHud({
 
       {/* Top-Right: Match Counter & Utility Buttons */}
       <div className="fixed top-4 right-4 flex items-start gap-2.5">
-        <div className="bg-[#0e111d]/88 border border-white/15 rounded-lg px-4 py-2 flex items-center gap-5">
+        <div className="bg-[#0a0e17]/92 border border-white/15 rounded-lg px-4 py-2 flex items-center gap-5 shadow-xl">
           {hud.mode === 'online_world' && (
             <div>
               <div className="text-[10px] font-semibold tracking-wider text-slate-400">ONLINE</div>
@@ -193,7 +231,7 @@ export function GameHud({
               e.currentTarget.blur();
               onToggleMute();
             }}
-            className="w-10 h-10 flex items-center justify-center rounded-lg bg-[#0e111d]/88 border border-white/15 text-slate-200 hover:border-white/35 hover:text-white cursor-pointer"
+            className="w-10 h-10 flex items-center justify-center rounded-lg bg-[#0a0e17]/92 border border-white/15 text-slate-200 hover:border-white/35 hover:text-white cursor-pointer shadow-xl"
           >
             {hud.muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </button>
@@ -209,7 +247,7 @@ export function GameHud({
                   e.currentTarget.blur();
                   onRestart();
                 }}
-                className="w-10 h-10 flex items-center justify-center rounded-lg bg-[#0e111d]/88 border border-white/15 text-slate-200 hover:border-white/35 hover:text-white cursor-pointer"
+                className="w-10 h-10 flex items-center justify-center rounded-lg bg-[#0a0e17]/92 border border-white/15 text-slate-200 hover:border-white/35 hover:text-white cursor-pointer shadow-xl"
               >
                 <RotateCcw className="w-4 h-4" />
               </button>
@@ -223,18 +261,18 @@ export function GameHud({
               e.currentTarget.blur();
               onPause();
             }}
-            className="w-10 h-10 flex items-center justify-center rounded-lg bg-[#0e111d]/88 border border-white/15 text-slate-200 hover:border-white/35 hover:text-white cursor-pointer"
+            className="w-10 h-10 flex items-center justify-center rounded-lg bg-[#0a0e17]/92 border border-white/15 text-slate-200 hover:border-white/35 hover:text-white cursor-pointer shadow-xl"
           >
             <Pause className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* Transient Smash / Action Callout */}
+      {/* Callout */}
       {hud.calloutTimer > 0 && hud.calloutText && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 pointer-events-none">
           <div
-            className="font-display text-lg font-bold tracking-wide px-4 py-1.5 rounded-md bg-[#0e111d]/90 border border-white/15 hud-text-stroke"
+            className="font-display text-lg font-bold tracking-wide px-4 py-1.5 rounded-md bg-[#0a0e17]/95 border border-white/20 shadow-2xl"
             style={{ color: hud.calloutAccent }}
           >
             {hud.calloutText}
@@ -248,7 +286,7 @@ export function GameHud({
           {hud.killFeed.map((item) => (
             <div
               key={item.id}
-              className="text-xs font-medium px-2.5 py-1 rounded bg-[#0e111d]/82 border border-white/10"
+              className="text-xs font-medium px-2.5 py-1 rounded bg-[#0a0e17]/88 border border-white/10 shadow-lg"
               style={{ color: item.color }}
             >
               {item.text}
@@ -257,7 +295,7 @@ export function GameHud({
         </div>
       )}
 
-      {/* Center Crosshair + Hitmarker + Damage/CRIT Callout */}
+      {/* Center Crosshair */}
       <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none flex items-center justify-center">
         <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
           <line x1="13" y1="3" x2="13" y2="9" stroke="#ffffff" strokeWidth="2" strokeOpacity="0.9" />
@@ -277,7 +315,7 @@ export function GameHud({
 
         {hud.hitmarkerTimer > 0 && hud.lastHitText && (
           <div
-            className={`absolute left-7 -top-4 whitespace-nowrap font-display font-mono-num text-sm font-bold hud-text-stroke ${
+            className={`absolute left-7 -top-4 whitespace-nowrap font-display font-mono-num text-sm font-bold ${
               hud.hitmarkerCrit ? 'text-amber-300 scale-110' : 'text-white'
             }`}
           >
@@ -286,15 +324,114 @@ export function GameHud({
         )}
 
         {activeWeapon.id === 'mace' && hud.fallHeightReady >= 2 && (
-          <div className="absolute top-7 whitespace-nowrap font-mono-num text-xs font-bold text-sky-300 hud-text-stroke">
+          <div className="absolute top-7 whitespace-nowrap font-mono-num text-xs font-bold text-sky-300">
             SMASH +{hud.fallHeightReady}m
           </div>
         )}
       </div>
 
-      {/* Bottom-Center: Dynamic Per-Character 6-Slot Combat Hotbar (Mouse Wheel / 1-6) */}
-      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5">
-        <div className="text-xs font-medium text-slate-100 bg-[#0e111d]/82 border border-white/10 rounded px-2.5 py-0.5">
+      {/* Mobile Touch Overlay Controls (Joystick & Action Buttons) */}
+      <div className="fixed inset-0 pointer-events-none flex justify-between items-end p-6 z-20">
+        {/* Virtual Joystick (Bottom Left) */}
+        <div
+          className="pointer-events-auto relative w-32 h-32 rounded-full bg-black/35 border-2 border-white/20 flex items-center justify-center backdrop-blur-xs touch-none"
+          onTouchStart={(e) => {
+            const touch = e.targetTouches[0];
+            const rect = e.currentTarget.getBoundingClientRect();
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            setJoystickCenter({ x: cx, y: cy });
+            const dx = touch.clientX - cx;
+            const dy = touch.clientY - cy;
+            const dist = Math.hypot(dx, dy);
+            const maxR = 45;
+            const nx = dist > maxR ? (dx / dist) * maxR : dx;
+            const ny = dist > maxR ? (dy / dist) * maxR : dy;
+            setJoystickOffset({ x: nx, y: ny });
+            if (onMobileMove) {
+              onMobileMove(-ny / maxR, nx / maxR);
+            }
+          }}
+          onTouchMove={(e) => {
+            if (!joystickCenter) return;
+            const touch = e.targetTouches[0];
+            const dx = touch.clientX - joystickCenter.x;
+            const dy = touch.clientY - joystickCenter.y;
+            const dist = Math.hypot(dx, dy);
+            const maxR = 45;
+            const nx = dist > maxR ? (dx / dist) * maxR : dx;
+            const ny = dist > maxR ? (dy / dist) * maxR : dy;
+            setJoystickOffset({ x: nx, y: ny });
+            if (onMobileMove) {
+              onMobileMove(-ny / maxR, nx / maxR);
+            }
+          }}
+          onTouchEnd={() => {
+            setJoystickCenter(null);
+            setJoystickOffset({ x: 0, y: 0 });
+            if (onMobileMove) {
+              onMobileMove(0, 0);
+            }
+          }}
+        >
+          <div
+            className="absolute w-14 h-14 rounded-full bg-amber-500/80 border-2 border-white/50 shadow-lg transition-transform"
+            style={{
+              transform: `translate(${joystickOffset.x}px, ${joystickOffset.y}px)`,
+            }}
+          />
+        </div>
+
+        {/* Action Buttons (Bottom Right) */}
+        <div className="pointer-events-auto flex items-end gap-3 touch-none">
+          <button
+            type="button"
+            onTouchStart={() => onMobileBlock?.(true)}
+            onTouchEnd={() => onMobileBlock?.(false)}
+            onMouseDown={() => onMobileBlock?.(true)}
+            onMouseUp={() => onMobileBlock?.(false)}
+            className="w-16 h-16 rounded-full bg-sky-600/80 border-2 border-white/30 flex flex-col items-center justify-center text-white font-display text-xs font-bold shadow-xl cursor-pointer active:scale-95 transition-transform"
+          >
+            <Shield className="w-6 h-6 mb-0.5" />
+            방어
+          </button>
+
+          <button
+            type="button"
+            onTouchStart={() => onMobileJump?.(true)}
+            onTouchEnd={() => onMobileJump?.(false)}
+            onMouseDown={() => onMobileJump?.(true)}
+            onMouseUp={() => onMobileJump?.(false)}
+            className="w-16 h-16 rounded-full bg-emerald-600/80 border-2 border-white/30 flex flex-col items-center justify-center text-white font-display text-xs font-bold shadow-xl cursor-pointer active:scale-95 transition-transform"
+          >
+            <ArrowUp className="w-6 h-6 mb-0.5" />
+            점프
+          </button>
+
+          <button
+            type="button"
+            onTouchStart={() => onMobileAttack?.()}
+            onClick={() => onMobileAttack?.()}
+            className="w-20 h-20 rounded-full bg-amber-500 border-2 border-white/40 flex flex-col items-center justify-center text-slate-950 font-display text-sm font-extrabold shadow-2xl cursor-pointer active:scale-95 transition-transform"
+          >
+            <Swords className="w-8 h-8 mb-0.5" />
+            공격
+          </button>
+        </div>
+      </div>
+
+      {/* Right Screen Look Touch Area (for Camera Swipe on Mobile) */}
+      <div
+        className="fixed inset-y-0 right-0 w-1/2 pointer-events-auto z-10 touch-none"
+        onTouchStart={(e) => {
+          const t = e.targetTouches[0];
+          lookTouchRef.current = { id: t.identifier, x: t.clientX, y: t.clientY };
+        }}
+      />
+
+      {/* Bottom-Center: Hotbar */}
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 z-20">
+        <div className="text-xs font-medium text-slate-100 bg-[#0a0e17]/92 border border-white/15 rounded px-2.5 py-0.5 shadow-xl">
           {activeWeapon.name}
           {(hud.slotMaxCharges[hud.activeSlot] ?? 1) > 1 && (
             <span className="text-amber-300 font-mono-num ml-1.5">
@@ -304,7 +441,7 @@ export function GameHud({
           · <span className="text-slate-300">{activeWeapon.role}</span>
         </div>
 
-        <div className="flex items-center gap-1.5 bg-[#0e111d]/90 border border-white/15 rounded-lg p-1.5 pointer-events-auto">
+        <div className="flex items-center gap-1.5 bg-[#0a0e17]/95 border border-white/20 rounded-xl p-1.5 pointer-events-auto shadow-2xl">
           {hud.loadout.map((slot, idx) => {
             const active = hud.activeSlot === idx;
             const cd = hud.slotCooldowns[idx] ?? 0;
@@ -330,8 +467,8 @@ export function GameHud({
                 }}
                 className={`relative w-13 h-13 rounded-md border flex flex-col items-center justify-center transition-colors cursor-pointer overflow-hidden ${
                   active
-                    ? 'bg-[#232844] border-amber-400 text-white'
-                    : 'bg-[#141828] border-white/10 text-slate-300 hover:border-white/25'
+                    ? 'bg-[#1e253c] border-amber-400 text-white shadow-md'
+                    : 'bg-[#111524] border-white/10 text-slate-300 hover:border-white/25'
                 }`}
               >
                 <span className="absolute top-0.5 left-1.5 font-mono-num text-[10px] text-slate-400">
@@ -342,8 +479,8 @@ export function GameHud({
                   <span
                     className={`absolute top-0.5 right-1 font-mono-num text-[10px] font-bold leading-none px-1 py-0.5 rounded-xs ${
                       charges > 0
-                        ? 'text-amber-300 bg-slate-950/75'
-                        : 'text-red-400 bg-slate-950/85'
+                        ? 'text-amber-300 bg-slate-950/80'
+                        : 'text-red-400 bg-slate-950/90'
                     }`}
                   >
                     {charges}
@@ -353,7 +490,7 @@ export function GameHud({
                 <WeaponIcon id={slot.id} className="w-6 h-6" />
 
                 {isRechargingWithStock && (
-                  <div className="absolute inset-x-0 bottom-0 h-1 bg-slate-950/80">
+                  <div className="absolute inset-x-0 bottom-0 h-1 bg-slate-950/90">
                     <div
                       className="h-full bg-emerald-400 transition-all duration-75"
                       style={{ width: `${Math.max(8, 100 - cdPct)}%` }}
@@ -363,7 +500,7 @@ export function GameHud({
 
                 {isBlocked && (
                   <div
-                    className="absolute inset-x-0 bottom-0 bg-slate-950/82 flex items-center justify-center font-mono-num text-[11px] font-bold text-amber-300 rounded-b-md"
+                    className="absolute inset-x-0 bottom-0 bg-slate-950/90 flex items-center justify-center font-mono-num text-[11px] font-bold text-amber-300 rounded-b-md"
                     style={{ height: `${Math.max(40, cdPct)}%` }}
                   >
                     {cd.toFixed(1)}
@@ -373,9 +510,9 @@ export function GameHud({
             );
           })}
 
-          <div className="w-px h-9 bg-white/10 mx-1" aria-hidden="true" />
+          <div className="w-px h-9 bg-white/15 mx-1" aria-hidden="true" />
 
-          <div className="px-2.5 py-1 rounded-md bg-[#141828] border border-white/10 text-center min-w-16">
+          <div className="px-2.5 py-1 rounded-md bg-[#111524] border border-white/10 text-center min-w-16">
             <div className="text-[10px] font-semibold text-sky-300">겉날개 [F]</div>
             <div className="font-mono-num text-xs font-bold text-white">
               {hud.elytraCooldown > 0.05 ? `${hud.elytraCooldown.toFixed(1)}s` : 'READY'}

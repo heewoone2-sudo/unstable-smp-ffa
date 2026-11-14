@@ -239,6 +239,11 @@ export default function App() {
           onToggleMute={() => engineRef.current?.toggleMute()}
           onPause={() => engineRef.current?.pauseGame()}
           onRestart={() => engineRef.current?.startGame()}
+          onMobileAttack={() => engineRef.current?.mobileAttack()}
+          onMobileJump={(pressed) => engineRef.current?.mobileJump(pressed)}
+          onMobileBlock={(pressed) => engineRef.current?.mobileBlock(pressed)}
+          onMobileMove={(fwd, rt) => engineRef.current?.mobileMove(fwd, rt)}
+          onMobileLook={(dx, dy) => engineRef.current?.mobileLook(dx, dy)}
         />
       )}
 

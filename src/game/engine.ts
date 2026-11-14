@@ -90,6 +90,7 @@ interface ActiveCobweb extends CobwebZone {
   active: boolean;
   life: number;
   ownerGrace: number;
+  hp: number;
   mesh: THREE.Group;
 }
 
@@ -773,6 +774,7 @@ export class UnstableArenaEngine {
         height: 2.2,
         life: 0,
         ownerGrace: 0,
+        hp: 3,
         mesh: webMesh,
       });
     }
@@ -1701,14 +1703,30 @@ export class UnstableArenaEngine {
 
     const slotId = item.id;
 
-    if (slotId === 'sword') {
+    if (slotId === 'sword' || slotId === 'fire_sword') {
       this.swingTimer = 0.22;
-      this.audio.playSwing();
-      this.performMeleeStrike('sword', false, false);
-    } else if (slotId === 'fire_sword') {
-      this.swingTimer = 0.22;
-      this.audio.playFireSwing();
-      this.performMeleeStrike('sword', true, false);
+      if (slotId === 'fire_sword') {
+        this.audio.playFireSwing();
+      } else {
+        this.audio.playSwing();
+      }
+      this.performMeleeStrike('sword', slotId === 'fire_sword', false);
+
+      for (let i = this.cobwebs.length - 1; i >= 0; i--) {
+        const w = this.cobwebs[i];
+        if (!w.active) continue;
+        const dist = Math.hypot(w.x - this.playerPos.x, w.y - this.playerPos.y, w.z - this.playerPos.z);
+        if (dist <= 3.8) {
+          w.hp = (w.hp ?? 3) - 1;
+          this.audio.playCobwebSlice();
+          this.spawnParticles(w.x, w.y + 0.5, w.z, 8, 0xe2e8f0, 5);
+          if (w.hp <= 0) {
+            w.active = false;
+            w.mesh.visible = false;
+            this.pushCallout('거미줄을 칼로 베어냈습니다!', '#38bdf8');
+          }
+        }
+      }
     } else if (slotId === 'spear') {
       this.swingTimer = 0.26;
       this.audio.playSpearThrust();
@@ -2008,6 +2026,7 @@ export class UnstableArenaEngine {
     w.z = z;
     w.life = 9.0;
     w.ownerGrace = 0.55;
+    w.hp = 3;
     w.mesh.position.set(x, y, z);
     w.mesh.visible = true;
     this.audio.playCobweb();
@@ -2982,7 +3001,7 @@ export class UnstableArenaEngine {
 
     const sprinting = this.keys.has('ShiftLeft') && hasMoveInput && !this.isBlocking;
     const stealthMult = this.stealthTimer > 0 ? 1.35 : 1.0;
-    const terrainMult = inWeb ? 0.22 : inLava ? 0.55 : inWater ? 0.78 : 1.0;
+    const terrainMult = inWeb ? 0.08 : inLava ? 0.55 : inWater ? 0.78 : 1.0;
     const baseSpeed =
       (this.isBlocking ? 5.2 : sprinting ? 11.4 : 8.8) * prof.speedMult * stealthMult * terrainMult;
 
@@ -3778,6 +3797,59 @@ export class UnstableArenaEngine {
       muted: this.audio.isMuted(),
       multiplayer: this.mpState,
     });
+  }
+
+  public mobileAttack(): void {
+    if (this.screen !== 'playing') return;
+    this.triggerPrimaryAction();
+  }
+
+  public mobileJump(pressed: boolean): void {
+    if (pressed) {
+      this.keys.add('Space');
+      this.playerJumpBuffer = 0.2;
+    } else {
+      this.keys.delete('Space');
+    }
+  }
+
+  public mobileBlock(pressed: boolean): void {
+    if (pressed) {
+      this.keys.add('KeyB');
+      this.mouseDownRight = true;
+    } else {
+      this.keys.delete('KeyB');
+      this.mouseDownRight = false;
+    }
+  }
+
+  public mobileMove(forward: number, right: number): void {
+    if (forward > 0.15) {
+      this.keys.add('KeyW');
+      this.keys.delete('KeyS');
+    } else if (forward < -0.15) {
+      this.keys.add('KeyS');
+      this.keys.delete('KeyW');
+    } else {
+      this.keys.delete('KeyW');
+      this.keys.delete('KeyS');
+    }
+
+    if (right > 0.15) {
+      this.keys.add('KeyD');
+      this.keys.delete('KeyA');
+    } else if (right < -0.15) {
+      this.keys.add('KeyA');
+      this.keys.delete('KeyD');
+    } else {
+      this.keys.delete('KeyA');
+      this.keys.delete('KeyD');
+    }
+  }
+
+  public mobileLook(dx: number, dy: number): void {
+    this.playerYaw -= dx * 0.0045;
+    this.playerPitch = THREE.MathUtils.clamp(this.playerPitch - dy * 0.0045, -1.48, 1.42);
   }
 
   public dispose(): void {
