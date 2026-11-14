@@ -1,0 +1,99 @@
+{
+  "entities": {
+    "UserPrivate": {
+      "title": "UserPrivate",
+      "description": "Private authenticated player account record isolated from public leaderboard data.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "nickname": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 16
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "nickname", "createdAt", "updatedAt"]
+    },
+    "LeaderboardProfile": {
+      "title": "LeaderboardProfile",
+      "description": "Public player combat rating, tier, and match record with zero PII.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "nickname": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 16
+        },
+        "favoriteCharacter": {
+          "type": "string",
+          "enum": [
+            "wemmbu",
+            "flamefrags",
+            "parrotx2",
+            "spokeishere",
+            "manepear",
+            "clownpierce",
+            "princezam",
+            "jumperwho",
+            "minutetech"
+          ]
+        },
+        "tier": {
+          "type": "string",
+          "enum": ["Bronze", "Silver", "Gold", "Platinum", "Diamond", "Unstable Master"]
+        },
+        "elo": {
+          "type": "integer"
+        },
+        "wins": {
+          "type": "integer"
+        },
+        "losses": {
+          "type": "integer"
+        },
+        "kills": {
+          "type": "integer"
+        },
+        "deaths": {
+          "type": "integer"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "nickname", "favoriteCharacter", "tier", "elo", "wins", "losses", "kills", "deaths", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserPrivate" },
+      "description": "Private user profile containing email and account metadata, strictly owner-only."
+    },
+    "/leaderboard/{userId}": {
+      "schema": { "$ref": "#/entities/LeaderboardProfile" },
+      "description": "Public ranked ELO leaderboard and combat record, owner-writable only."
+    }
+  }
+}

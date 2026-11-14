@@ -1,0 +1,125 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidCharacter(c) {
+      return c in [
+        'wemmbu',
+        'flamefrags',
+        'parrotx2',
+        'spokeishere',
+        'manepear',
+        'clownpierce',
+        'princezam',
+        'jumperwho',
+        'minutetech'
+      ];
+    }
+
+    function isValidTier(t) {
+      return t in ['Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond', 'Unstable Master'];
+    }
+
+    function isValidUserPrivate(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'nickname', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'nickname', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.email is string
+        && data.email.size() <= 120
+        && data.nickname is string
+        && data.nickname.size() >= 2
+        && data.nickname.size() <= 16
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLeaderboardEntry(data, userId) {
+      return data.keys().hasAll(['uid', 'nickname', 'favoriteCharacter', 'tier', 'elo', 'wins', 'losses', 'kills', 'deaths', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'nickname', 'favoriteCharacter', 'tier', 'elo', 'wins', 'losses', 'kills', 'deaths', 'updatedAt'])
+        && data.uid is string
+        && data.uid == request.auth.uid
+        && data.uid == userId
+        && data.nickname is string
+        && data.nickname.size() >= 2
+        && data.nickname.size() <= 16
+        && isValidCharacter(data.favoriteCharacter)
+        && isValidTier(data.tier)
+        && data.elo is int && data.elo >= 100 && data.elo <= 5000
+        && data.wins is int && data.wins >= 0 && data.wins <= 100000
+        && data.losses is int && data.losses >= 0 && data.losses <= 100000
+        && data.kills is int && data.kills >= 0 && data.kills <= 1000000
+        && data.deaths is int && data.deaths >= 0 && data.deaths <= 1000000
+        && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserPrivate(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidUserPrivate(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['nickname', 'email', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    match /leaderboard/{userId} {
+      allow get: if isValidId(userId);
+      allow list: if resource.data.elo >= 100 && request.query.limit <= 50;
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidLeaderboardEntry(incoming(), userId)
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidLeaderboardEntry(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'nickname',
+          'favoriteCharacter',
+          'tier',
+          'elo',
+          'wins',
+          'losses',
+          'kills',
+          'deaths',
+          'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+  }
+}

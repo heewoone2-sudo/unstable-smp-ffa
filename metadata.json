@@ -1,0 +1,6 @@
+{
+  "name": "Unstable SMP FFA 3D",
+  "description": "Unstable SMP inspired 3D third-person shift-lock voxel PvP arena game with Mace Smash, Wind Charge, Ender Pearl, and Elytra combat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
