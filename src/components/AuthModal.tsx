@@ -56,6 +56,9 @@ function mapAuthError(err: unknown): string {
   if (msg.includes('auth/popup-closed-by-user')) {
     return 'Google 로그인 창이 닫혔습니다.';
   }
+  if (msg.includes('auth/unauthorized-domain')) {
+    return '현재 접속 중인 웹 주소(도메인)가 Firebase 콘솔에 등록되지 않았습니다. Firebase Console > Authentication > Settings(설정) > Authorized domains(승인된 도메인)에 현재 주소를 추가해 주세요.';
+  }
   return msg;
 }
 
