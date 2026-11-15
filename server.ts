@@ -50,6 +50,7 @@ interface RoomPeer {
   ws: WebSocket;
   name: string;
   characterId: CharacterId;
+  team: 'red' | 'blue' | 'ffa';
   kills: number;
   deaths: number;
   hp: number;
@@ -62,6 +63,7 @@ interface RoomPeer {
 interface RoomState {
   code: string;
   kind: 'global' | 'link_duel' | 'private';
+  roomMode: 'ffa' | 'team';
   hostId: string;
   status: 'lobby' | 'playing';
   includeBots: boolean;
@@ -114,6 +116,7 @@ function serializeRoom(room: RoomState) {
     type: 'room_state',
     code: room.code,
     roomKind: room.kind,
+    roomMode: room.roomMode || 'ffa',
     hostId: room.hostId,
     status: room.status,
     includeBots: room.includeBots,
@@ -122,6 +125,7 @@ function serializeRoom(room: RoomState) {
       id: p.id,
       name: p.name,
       characterId: p.characterId,
+      team: p.team || 'ffa',
       kills: p.kills,
       deaths: p.deaths,
       hp: p.hp,
@@ -162,6 +166,7 @@ function ensureGlobalRoom(hostId: string): RoomState {
   const created: RoomState = {
     code: 'GLOBAL',
     kind: 'global',
+    roomMode: 'ffa',
     hostId,
     status: 'playing',
     includeBots: true,
@@ -244,6 +249,7 @@ async function startServer() {
           ws,
           name,
           characterId: charId,
+          team: 'ffa',
           kills: 0,
           deaths: 0,
           hp: maxHp,
@@ -268,6 +274,7 @@ async function startServer() {
         const room: RoomState = {
           code,
           kind: 'link_duel',
+          roomMode: 'ffa',
           hostId: clientId,
           status: 'lobby',
           includeBots: false,
@@ -281,6 +288,7 @@ async function startServer() {
           ws,
           name,
           characterId: charId,
+          team: 'ffa',
           kills: 0,
           deaths: 0,
           hp: maxHp,
@@ -316,6 +324,7 @@ async function startServer() {
           ws,
           name,
           characterId: charId,
+          team: 'ffa',
           kills: 0,
           deaths: 0,
           hp: maxHp,
@@ -342,6 +351,7 @@ async function startServer() {
           const room: RoomState = {
             code,
             kind: 'link_duel',
+            roomMode: 'ffa',
             hostId: partner.clientId,
             status: 'playing',
             includeBots: false,
@@ -357,6 +367,7 @@ async function startServer() {
             ws: partner.ws,
             name: partner.name,
             characterId: partner.characterId,
+            team: 'ffa',
             kills: 0,
             deaths: 0,
             hp: p1Hp,
@@ -370,6 +381,7 @@ async function startServer() {
             ws,
             name,
             characterId: charId,
+            team: 'ffa',
             kills: 0,
             deaths: 0,
             hp: p2Hp,
@@ -402,9 +414,12 @@ async function startServer() {
         const charId = (CHARACTER_HP[msg.characterId as CharacterId] ? msg.characterId : 'wemmbu') as CharacterId;
         const maxHp = CHARACTER_HP[charId];
         const name = String(msg.name || 'Player').trim().slice(0, 16) || 'Player';
+        const roomMode = msg.roomMode === 'team' ? 'team' : 'ffa';
+        const team = (msg.team === 'red' || msg.team === 'blue' || msg.team === 'ffa') ? msg.team : (roomMode === 'team' ? 'red' : 'ffa');
         const room: RoomState = {
           code,
           kind: 'private',
+          roomMode,
           hostId: clientId,
           status: 'lobby',
           includeBots: Boolean(msg.includeBots),
@@ -418,6 +433,7 @@ async function startServer() {
           ws,
           name,
           characterId: charId,
+          team,
           kills: 0,
           deaths: 0,
           hp: maxHp,
@@ -449,11 +465,13 @@ async function startServer() {
         const charId = (CHARACTER_HP[msg.characterId as CharacterId] ? msg.characterId : 'flamefrags') as CharacterId;
         const maxHp = CHARACTER_HP[charId];
         const name = String(msg.name || 'Friend').trim().slice(0, 16) || 'Friend';
+        const team = (msg.team === 'red' || msg.team === 'blue' || msg.team === 'ffa') ? msg.team : (room.roomMode === 'team' ? 'blue' : 'ffa');
         room.peers.set(clientId, {
           id: clientId,
           ws,
           name,
           characterId: charId,
+          team,
           kills: 0,
           deaths: 0,
           hp: maxHp,
@@ -501,8 +519,14 @@ async function startServer() {
         if (typeof msg.name === 'string') {
           self.name = msg.name.trim().slice(0, 16) || self.name;
         }
+        if (msg.team === 'red' || msg.team === 'blue' || msg.team === 'ffa') {
+          self.team = msg.team;
+        }
         if (typeof msg.includeBots === 'boolean' && room.hostId === clientId) {
           room.includeBots = msg.includeBots;
+        }
+        if ((msg.roomMode === 'ffa' || msg.roomMode === 'team') && room.hostId === clientId) {
+          room.roomMode = msg.roomMode;
         }
         broadcastRoom(room, serializeRoom(room));
         return;

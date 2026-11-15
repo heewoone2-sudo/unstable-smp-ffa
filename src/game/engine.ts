@@ -1079,17 +1079,17 @@ export class UnstableArenaEngine {
     this.net.resetConnection();
   }
 
-  public createMultiplayerRoom(name: string, includeBots: boolean): void {
+  public createMultiplayerRoom(name: string, includeBots: boolean, roomMode: 'ffa' | 'team', team: 'red' | 'blue' | 'ffa'): void {
     this.mode = 'multiplayer';
-    this.net.createRoom(name, this.selectedCharId, includeBots);
+    this.net.createRoom(name, this.selectedCharId, includeBots, roomMode, team);
   }
 
-  public joinMultiplayerRoom(code: string, name: string): void {
+  public joinMultiplayerRoom(code: string, name: string, team: 'red' | 'blue' | 'ffa'): void {
     this.mode = 'multiplayer';
-    this.net.joinRoom(code, name, this.selectedCharId);
+    this.net.joinRoom(code, name, this.selectedCharId, team);
   }
 
-  public updateMultiplayerLobby(updates: { name?: string; includeBots?: boolean }): void {
+  public updateMultiplayerLobby(updates: { name?: string; includeBots?: boolean; team?: 'red' | 'blue' | 'ffa'; roomMode?: 'ffa' | 'team' }): void {
     this.net.updateLobby(updates);
   }
 
@@ -3718,59 +3718,71 @@ export class UnstableArenaEngine {
       const speed = (e.isBoss ? 6.4 : 6.0) * e.profile.speedMult * hazardMult;
 
       if (e.policy === 'wind_diver') {
-        if (dist > 4.2) {
-          moveX = dirX + -dirZ * 0.35 * e.strafeDir;
-          moveZ = dirZ + dirX * 0.35 * e.strafeDir;
+        if (dist > 3.8) {
+          moveX = dirX + -dirZ * 0.45 * e.strafeDir;
+          moveZ = dirZ + dirX * 0.45 * e.strafeDir;
         }
-        if (e.onGround && !enemyWebbed && e.windCd <= 0 && dist < 11) {
-          e.windCd = 4.5;
-          e.vel.y = 14.5;
+        if (e.onGround && !enemyWebbed && e.windCd <= 0 && dist < 14) {
+          e.windCd = 3.2;
+          e.vel.y = 16.0;
           e.onGround = false;
-          e.fallStartY = e.pos.y + 7;
-          this.spawnParticles(e.pos.x, e.pos.y + 0.3, e.pos.z, 10, 0x7dd3fc, 5);
+          e.fallStartY = e.pos.y + 8;
+          this.spawnParticles(e.pos.x, e.pos.y + 0.3, e.pos.z, 16, 0x38bdf8, 8);
+          this.audio.playHit(false);
         }
       } else if (e.policy === 'pearl_flanker') {
-        if (dist > 9) {
+        if (dist > 8) {
           moveX = dirX;
           moveZ = dirZ;
-        } else if (dist < 4.5) {
-          moveX = -dirX * 0.6 + -dirZ * e.strafeDir;
-          moveZ = -dirZ * 0.6 + dirX * e.strafeDir;
+        } else if (dist < 4) {
+          moveX = -dirX * 0.7 + -dirZ * e.strafeDir;
+          moveZ = -dirZ * 0.7 + dirX * e.strafeDir;
         } else {
           moveX = -dirZ * e.strafeDir;
           moveZ = dirX * e.strafeDir;
         }
-        if (!enemyWebbed && e.pearlCd <= 0 && dist > 7 && dist < 20 && this.stealthTimer <= 0) {
-          e.pearlCd = 6.5;
-          this.spawnParticles(e.pos.x, e.pos.y + 1, e.pos.z, 10, 0xc084fc, 5);
+        if (!enemyWebbed && e.pearlCd <= 0 && dist > 6 && dist < 22 && this.stealthTimer <= 0) {
+          e.pearlCd = 4.5;
+          this.spawnParticles(e.pos.x, e.pos.y + 1, e.pos.z, 14, 0xc084fc, 6);
           e.pos.x = THREE.MathUtils.clamp(
-            this.playerPos.x - dirX * 4.5 + dirZ * 2.5,
+            this.playerPos.x - dirX * 4.0 + dirZ * 2.2,
             -ARENA_RADIUS + 2,
             ARENA_RADIUS - 2
           );
           e.pos.z = THREE.MathUtils.clamp(
-            this.playerPos.z - dirZ * 4.5 - dirX * 2.5,
+            this.playerPos.z - dirZ * 4.0 - dirX * 2.2,
             -ARENA_RADIUS + 2,
             ARENA_RADIUS - 2
           );
-          this.spawnParticles(e.pos.x, e.pos.y + 1, e.pos.z, 12, 0xc084fc, 5);
+          this.spawnParticles(e.pos.x, e.pos.y + 1, e.pos.z, 18, 0xa855f7, 8);
+          this.audio.playHit(false);
         }
       } else if (e.policy === 'bruiser_charger') {
         moveX = dirX;
         moveZ = dirZ;
-        e.isBlocking = dist > 4.5 && dist < 8 && Math.sin(this.elapsedTime * 2) > 0.3;
+        e.isBlocking = dist > 3.5 && dist < 9.5 && Math.sin(this.elapsedTime * 3.5) > -0.2;
+        if (e.onGround && !enemyWebbed && dist < 5 && e.windCd <= 0) {
+          e.windCd = 4.0;
+          e.vel.y = 12.0;
+          e.onGround = false;
+        }
       } else {
-        if (dist > 2.8) {
-          moveX = dirX * 0.85 + -dirZ * 0.55 * e.strafeDir;
-          moveZ = dirZ * 0.85 + dirX * 0.55 * e.strafeDir;
+        if (dist > 2.6) {
+          moveX = dirX * 0.9 + -dirZ * 0.6 * e.strafeDir;
+          moveZ = dirZ * 0.9 + dirX * 0.6 * e.strafeDir;
         } else {
           moveX = -dirZ * e.strafeDir;
           moveZ = dirX * e.strafeDir;
         }
-        if (e.onGround && !enemyWebbed && dist < 4.5 && Math.random() < 0.025) {
-          e.vel.y = 8.8;
+        if (e.onGround && !enemyWebbed && dist < 4.8 && Math.random() < 0.04) {
+          e.vel.y = 10.5;
           e.onGround = false;
         }
+      }
+
+      if (e.hp < e.maxHp * 0.45 && Math.random() < 0.025) {
+        e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.5);
+        this.spawnParticles(e.pos.x, e.pos.y + 1, e.pos.z, 20, 0xfacc15, 8);
       }
 
       const mLen = Math.hypot(moveX, moveZ);

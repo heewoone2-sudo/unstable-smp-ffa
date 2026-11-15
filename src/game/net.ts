@@ -434,19 +434,19 @@ export class MultiplayerClient {
     this.handlers.onRoomChange(this.getState());
   }
 
-  public createRoom(name: string, characterId: CharacterId, includeBots: boolean): void {
+  public createRoom(name: string, characterId: CharacterId, includeBots: boolean, roomMode: 'ffa' | 'team', team: 'red' | 'blue' | 'ffa'): void {
     this.state.playerName = name.trim() || 'Player';
     this.retryCount = 0;
-    this.send({ type: 'create_room', name: this.state.playerName, characterId, includeBots });
+    this.send({ type: 'create_room', name: this.state.playerName, characterId, includeBots, roomMode, team });
   }
 
-  public joinRoom(code: string, name: string, characterId: CharacterId): void {
+  public joinRoom(code: string, name: string, characterId: CharacterId, team: 'red' | 'blue' | 'ffa'): void {
     this.state.playerName = name.trim() || 'Friend';
     this.retryCount = 0;
-    this.send({ type: 'join_room', code: code.trim().toUpperCase(), name: this.state.playerName, characterId });
+    this.send({ type: 'join_room', code: code.trim().toUpperCase(), name: this.state.playerName, characterId, team });
   }
 
-  public updateLobby(updates: { name?: string; characterId?: CharacterId; includeBots?: boolean }): void {
+  public updateLobby(updates: { name?: string; characterId?: CharacterId; includeBots?: boolean; team?: 'red' | 'blue' | 'ffa'; roomMode?: 'ffa' | 'team' }): void {
     if (updates.name !== undefined) {
       this.state.playerName = updates.name.trim() || 'Player';
     }

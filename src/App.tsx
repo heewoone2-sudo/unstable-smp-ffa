@@ -224,8 +224,8 @@ export default function App() {
           onJoinLinkDuel={(code, name) => engineRef.current?.joinLinkDuelRoom(code, name)}
           onQueueLinkDuel={(name) => engineRef.current?.queueLinkDuel(name)}
           onCancelLinkQueue={() => engineRef.current?.cancelLinkQueue()}
-          onCreateRoom={(name, includeBots) => engineRef.current?.createMultiplayerRoom(name, includeBots)}
-          onJoinRoom={(code, name) => engineRef.current?.joinMultiplayerRoom(code, name)}
+          onCreateRoom={(name, includeBots, roomMode, team) => engineRef.current?.createMultiplayerRoom(name, includeBots, roomMode, team)}
+          onJoinRoom={(code, name, team) => engineRef.current?.joinMultiplayerRoom(code, name, team)}
           onUpdateLobby={(updates) => engineRef.current?.updateMultiplayerLobby(updates)}
           onStartMultiplayer={() => engineRef.current?.startMultiplayerMatch()}
           onLeaveRoom={() => engineRef.current?.leaveMultiplayerRoom()}

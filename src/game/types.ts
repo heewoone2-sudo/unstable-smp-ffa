@@ -109,6 +109,7 @@ export interface RoomPeerInfo {
   id: string;
   name: string;
   characterId: CharacterId;
+  team?: 'red' | 'blue' | 'ffa';
   kills: number;
   deaths: number;
   hp: number;
