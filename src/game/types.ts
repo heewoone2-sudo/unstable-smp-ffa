@@ -170,7 +170,12 @@ export type SixTuple<T> = [T, T, T, T, T, T];
 
 export interface KillFeedEntry {
   id: number;
-  text: string;
+  killerName: string;
+  killerTeam?: PlayerTeam;
+  victimName: string;
+  victimTeam?: PlayerTeam;
+  weaponId?: WeaponSlotId;
+  text?: string;
   color: string;
 }
 

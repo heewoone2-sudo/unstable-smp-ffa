@@ -442,6 +442,55 @@ export function GameHud({
         </div>
       </div>
 
+      {/* Top-Center Competitive Score Banner (Valorant / CS:GO style) */}
+      {(hud.mode === 'multiplayer' || hud.mode === 'link_duel' || hud.roomMode === 'team') && (
+        <div
+          data-testid="top-center-score-banner"
+          className="fixed top-3 left-1/2 -translate-x-1/2 pointer-events-none z-15 bg-white/95 border border-slate-200 rounded-2xl px-5 py-2 shadow-md flex items-center gap-4 text-slate-900"
+        >
+          {hud.roomMode === 'team' ? (
+            <div className="flex items-center gap-3 text-xs sm:text-sm font-display font-bold">
+              <span className="flex items-center gap-1.5 text-red-600">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-600 inline-block" />
+                레드팀
+                <span className="font-mono-num text-base font-extrabold text-red-700 ml-0.5">
+                  {hud.scoreboard.filter((s) => s.team === 'red').reduce((acc, s) => acc + s.kills, 0)}
+                </span>
+              </span>
+              <span className="text-slate-300 font-normal text-xs">:</span>
+              <span className="flex items-center gap-1.5 text-blue-600">
+                <span className="font-mono-num text-base font-extrabold text-blue-700 mr-0.5">
+                  {hud.scoreboard.filter((s) => s.team === 'blue').reduce((acc, s) => acc + s.kills, 0)}
+                </span>
+                블루팀
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block" />
+              </span>
+              <span className="text-slate-400 font-normal text-[11px] ml-2 pl-2 border-l border-slate-200">
+                목표 {hud.targetKills}킬
+              </span>
+            </div>
+          ) : hud.mode === 'link_duel' ? (
+            <div className="flex items-center gap-3 text-xs sm:text-sm font-display font-bold">
+              <span className="text-slate-700">1v1 링크전</span>
+              <span className="font-mono-num text-amber-600">
+                {hud.kills} 승
+              </span>
+              <span className="text-slate-300">/</span>
+              <span className="font-mono-num text-slate-500">
+                3선승
+              </span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 text-xs sm:text-sm font-display font-bold">
+              <span className="text-slate-700">⚔️ 매치 킬 수</span>
+              <span className="font-mono-num text-slate-950 text-base">
+                {hud.kills} / {hud.targetKills} 킬
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Transient Callout */}
       {hud.calloutTimer > 0 && hud.calloutText && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 pointer-events-none">
@@ -451,17 +500,44 @@ export function GameHud({
         </div>
       )}
 
-      {/* Kill Feed */}
+      {/* Kill Feed (Modern Competitive Shooter Style with Weapon Icons & Team Colored Names) */}
       {hud.killFeed.length > 0 && (
-        <div className="fixed top-20 right-4 flex flex-col items-end gap-1 pointer-events-none">
-          {hud.killFeed.map((item) => (
-            <div
-              key={item.id}
-              className="text-xs font-semibold px-2.5 py-1 rounded-md bg-white/90 border border-slate-200 text-slate-800 shadow-xs"
-            >
-              {item.text}
-            </div>
-          ))}
+        <div className="fixed top-20 right-4 flex flex-col items-end gap-1.5 pointer-events-none z-20">
+          {hud.killFeed.map((item) => {
+            const redKiller = item.killerTeam === 'red';
+            const blueKiller = item.killerTeam === 'blue';
+            const redVictim = item.victimTeam === 'red';
+            const blueVictim = item.victimTeam === 'blue';
+            const killerClass = redKiller
+              ? 'text-red-600 font-bold'
+              : blueKiller
+                ? 'text-blue-600 font-bold'
+                : 'text-slate-900 font-semibold';
+            const victimClass = redVictim
+              ? 'text-red-600 font-bold'
+              : blueVictim
+                ? 'text-blue-600 font-bold'
+                : 'text-slate-900 font-semibold';
+
+            return (
+              <div
+                key={item.id}
+                className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-white/95 border border-slate-200 shadow-sm text-slate-800 backdrop-blur-xs"
+              >
+                {item.killerName ? (
+                  <>
+                    <span className={killerClass}>{item.killerName}</span>
+                    <span className="w-5 h-5 flex items-center justify-center shrink-0 bg-slate-100 rounded p-0.5">
+                      <WeaponIcon id={item.weaponId ?? 'sword'} className="w-4 h-4" />
+                    </span>
+                    <span className={victimClass}>{item.victimName}</span>
+                  </>
+                ) : (
+                  <span className="font-semibold text-slate-700">{item.text}</span>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

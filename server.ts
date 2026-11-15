@@ -808,8 +808,11 @@ async function startServer() {
             type: 'combat_ko',
             killerId: clientId,
             killerName: self.name,
+            killerTeam: self.team || 'ffa',
             victimId: targetId,
             victimName: target.name,
+            victimTeam: target.team || 'ffa',
+            weaponId: self.activeSlot || 'sword',
             killerKills: self.kills,
           });
           broadcastRoom(room, serializeRoom(room));
@@ -824,6 +827,42 @@ async function startServer() {
               loserName: target.name,
             });
             return;
+          }
+
+          if (room.kind === 'private') {
+            const redKills = Array.from(room.peers.values())
+              .filter((p) => p.team === 'red')
+              .reduce((acc, p) => acc + p.kills, 0);
+            const blueKills = Array.from(room.peers.values())
+              .filter((p) => p.team === 'blue')
+              .reduce((acc, p) => acc + p.kills, 0);
+
+            if (room.roomMode === 'team') {
+              if (redKills >= room.targetKills || blueKills >= room.targetKills) {
+                room.status = 'lobby';
+                const winningTeam = redKills >= room.targetKills ? 'red' : 'blue';
+                broadcastRoom(room, {
+                  type: 'link_match_over',
+                  winnerId: clientId,
+                  winnerName: `${winningTeam === 'red' ? '레드팀' : '블루팀'} 승리! (${winningTeam === 'red' ? redKills : blueKills}킬)`,
+                  loserId: targetId,
+                  loserName: '',
+                });
+                return;
+              }
+            } else {
+              if (self.kills >= room.targetKills) {
+                room.status = 'lobby';
+                broadcastRoom(room, {
+                  type: 'link_match_over',
+                  winnerId: clientId,
+                  winnerName: self.name,
+                  loserId: targetId,
+                  loserName: target.name,
+                });
+                return;
+              }
+            }
           }
 
           target.respawnTimer = setTimeout(() => {

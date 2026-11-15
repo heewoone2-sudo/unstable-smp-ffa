@@ -553,7 +553,14 @@ export class UnstableArenaEngine {
         }
       },
       onCombatKo: (msg) => {
-        this.addKillFeed(`${msg.killerName} ⚔ ${msg.victimName}`, '#c084fc');
+        this.addKillFeedStructured({
+          killerName: msg.killerName,
+          killerTeam: msg.killerTeam,
+          victimName: msg.victimName,
+          victimTeam: msg.victimTeam,
+          weaponId: msg.weaponId,
+          color: '#c084fc',
+        });
         this.audio.playDeath(msg.victimId === this.mpState.selfId);
         if (msg.killerId === this.mpState.selfId) {
           this.kills = msg.killerKills;
@@ -2950,7 +2957,12 @@ export class UnstableArenaEngine {
     this.comboStreak += 1;
     this.audio.playDeath(false);
     this.spawnParticles(enemy.pos.x, enemy.pos.y + 1.0, enemy.pos.z, 24, 0xc084fc, 9);
-    this.addKillFeed(`${enemy.name} 처치 (${cause})`, '#c084fc');
+    this.addKillFeedStructured({
+      killerName: this.mpState.playerName || 'Player',
+      victimName: enemy.name,
+      weaponId: this.getCurrentLoadout()[this.activeSlot].id,
+      color: '#c084fc',
+    });
 
     if (this.mode === 'ffa' && this.kills >= this.matchTargetKills) {
       this.triggerEndGame('victory');
@@ -3278,8 +3290,32 @@ export class UnstableArenaEngine {
     this.calloutTimer = 2.0;
   }
 
+  private addKillFeedStructured(entry: {
+    killerName: string;
+    killerTeam?: PlayerTeam;
+    victimName: string;
+    victimTeam?: PlayerTeam;
+    weaponId?: WeaponSlotId;
+    text?: string;
+    color: string;
+  }): void {
+    this.killFeed = [
+      {
+        id: this.nextFeedId++,
+        killerName: entry.killerName,
+        killerTeam: entry.killerTeam,
+        victimName: entry.victimName,
+        victimTeam: entry.victimTeam,
+        weaponId: entry.weaponId,
+        text: entry.text,
+        color: entry.color,
+      },
+      ...this.killFeed,
+    ].slice(0, 4);
+  }
+
   private addKillFeed(text: string, color: string): void {
-    this.killFeed = [{ id: this.nextFeedId++, text, color }, ...this.killFeed].slice(0, 4);
+    this.addKillFeedStructured({ killerName: '', victimName: '', text, color });
   }
 
   private spawnParticles(
