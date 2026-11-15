@@ -28,7 +28,7 @@ export const ITEM_CATALOG: Record<string, LoadoutItemMeta> = {
   },
   ender_pearl: { id: 'ender_pearl', name: '엔더 진주', role: '조준 지점 즉시 텔레포트', cooldown: 3.6 },
   shadow_step: { id: 'shadow_step', name: '은신 망토', role: '2.5초 투명화 + 이속 급상승', cooldown: 5.8 },
-  gapple: { id: 'gapple', name: '황금 사과', role: 'HP +35 회복 + 황금 보호막', cooldown: 6.2 },
+  gapple: { id: 'gapple', name: '황금 사과', role: '즉시 100% 풀피 회복 + 황금 보호막', cooldown: 6.2 },
   potion: { id: 'potion', name: '치유 포션', role: '즉시 HP +42 급속 회복', cooldown: 5.2 },
   lava_bucket: { id: 'lava_bucket', name: '용암 양동이', role: '화염 용암 장판 설치 · 지속 화상', cooldown: 5.5 },
   water_bucket: {

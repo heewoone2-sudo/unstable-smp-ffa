@@ -149,6 +149,7 @@ export interface HudSnapshot {
   isBlocking: boolean;
   isStealthed: boolean;
   isInCobweb: boolean;
+  cobwebBreakProgress: number;
   isBurning: boolean;
   isInWater: boolean;
   cameraMode: CameraViewMode;

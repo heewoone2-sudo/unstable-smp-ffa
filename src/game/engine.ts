@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { GameAudio } from './audio';
 import { CHARACTER_LIST, CHARACTERS, GAME_MODES } from './characters';
 import {
@@ -91,6 +92,7 @@ interface ActiveCobweb extends CobwebZone {
   life: number;
   ownerGrace: number;
   hp: number;
+  breakProgress: number;
   mesh: THREE.Group;
 }
 
@@ -224,6 +226,8 @@ export class UnstableArenaEngine {
   private playerVel = new THREE.Vector3();
   private playerYaw = 0;
   private playerPitch = -0.14;
+  private targetYaw = 0;
+  private targetPitch = -0.14;
   private playerOnGround = true;
   private playerFallStartY = 0;
   private playerCoyote = 0;
@@ -241,13 +245,23 @@ export class UnstableArenaEngine {
   private slotUseDelays: SixTuple<number> = [0, 0, 0, 0, 0, 0];
   private elytraCooldown = 0;
   private isGliding = false;
+  private glideSpeed = 18;
+  private fireworkBoostTimer = 0;
+  private fireworkCooldown = 0;
+  private elytraHealAccum = 0;
+  private elytraHealSyncTimer = 0;
+  private elytraHealParticleTimer = 0;
   private isBlocking = false;
   private stealthTimer = 0;
   private playerInCobweb = false;
+  private cobwebBreakProgress = 0;
+  private cobwebHoldSoundTimer = 0;
   private playerInLava = false;
+  private wasInLava = false;
   private playerInWater = false;
   private playerBurnTimer = 0;
   private playerBurnTickTimer = 0;
+  private mobileAttackHeld = false;
   private cameraMode: CameraViewMode = 'firstperson';
   private swingTimer = 0;
   private hitFlashTimer = 0;
@@ -361,8 +375,8 @@ export class UnstableArenaEngine {
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color('#0f1322');
-    this.scene.fog = new THREE.FogExp2('#0f1322', 0.0042);
+    this.scene.background = new THREE.Color('#b6dffb');
+    this.scene.fog = new THREE.FogExp2('#c6e6fb', 0.0020);
 
     const aspect =
       (container.clientWidth || window.innerWidth) / (container.clientHeight || window.innerHeight);
@@ -463,7 +477,7 @@ export class UnstableArenaEngine {
       },
       onCombatKo: (msg) => {
         this.addKillFeed(`${msg.killerName} ⚔ ${msg.victimName}`, '#c084fc');
-        this.audio.playKo();
+        this.audio.playDeath(msg.victimId === this.mpState.selfId);
         if (msg.killerId === this.mpState.selfId) {
           this.kills = msg.killerKills;
           this.comboStreak += 1;
@@ -520,46 +534,68 @@ export class UnstableArenaEngine {
   }
 
   private setupLighting(): void {
-    const hemi = new THREE.HemisphereLight(0x93c5fd, 0x1e182d, 0.9);
+    const hemi = new THREE.HemisphereLight(0xe0f2fe, 0x3b6e28, 1.15);
     hemi.position.set(0, 50, 0);
     this.scene.add(hemi);
 
-    const sun = new THREE.DirectionalLight(0xfff1d6, 2.1);
-    sun.position.set(42, 68, 36);
+    const sun = new THREE.DirectionalLight(0xfff7e6, 2.2);
+    sun.position.set(52, 82, 40);
     if (!this.isSoftwareGl) {
       sun.castShadow = true;
-      sun.shadow.mapSize.set(1024, 1024);
+      sun.shadow.mapSize.set(2048, 2048);
       sun.shadow.camera.near = 5;
-      sun.shadow.camera.far = 220;
-      const d = 75;
+      sun.shadow.camera.far = 230;
+      const d = 80;
       sun.shadow.camera.left = -d;
       sun.shadow.camera.right = d;
       sun.shadow.camera.top = d;
       sun.shadow.camera.bottom = -d;
-      sun.shadow.bias = -0.0005;
+      sun.shadow.bias = -0.0004;
       sun.shadow.normalBias = 0.02;
     }
     this.scene.add(sun);
 
-    const rim = new THREE.DirectionalLight(0xa855f7, 0.72);
-    rim.position.set(-48, 28, -48);
+    const rim = new THREE.DirectionalLight(0x93c5fd, 0.58);
+    rim.position.set(-48, 30, -48);
     this.scene.add(rim);
   }
 
   private buildArenaEnvironment(): void {
-    const groundGeo = new THREE.CylinderGeometry(ARENA_RADIUS + 2.5, ARENA_RADIUS + 8, 4, 48);
+    // Atmospheric sky dome with smooth zenith-to-horizon gradient
+    const skyDome = new THREE.Mesh(
+      new THREE.SphereGeometry(330, 32, 20),
+      new THREE.MeshBasicMaterial({
+        map: this.materials.skyDomeTex,
+        side: THREE.BackSide,
+        depthWrite: false,
+        fog: false,
+      })
+    );
+    this.scene.add(skyDome);
+
+    // Wide meadow basin extending organically into distant hills
+    const outerTerrain = new THREE.Mesh(
+      new THREE.CylinderGeometry(ARENA_RADIUS + 44, ARENA_RADIUS + 54, 4, 64),
+      this.materials.ground
+    );
+    outerTerrain.position.y = -2.04;
+    outerTerrain.receiveShadow = !this.isSoftwareGl;
+    this.scene.add(outerTerrain);
+
+    const groundGeo = new THREE.CylinderGeometry(ARENA_RADIUS + 2.5, ARENA_RADIUS + 8, 4, 64);
     const groundMesh = new THREE.Mesh(groundGeo, this.materials.ground);
     groundMesh.position.y = -2;
     groundMesh.receiveShadow = !this.isSoftwareGl;
     this.scene.add(groundMesh);
 
-    const ringGeo = new THREE.RingGeometry(13.8, 14.3, 48);
-    const ringMat = new THREE.MeshStandardMaterial({
+    const ringGeo = new THREE.RingGeometry(13.85, 14.25, 64);
+    const ringMat = new THREE.MeshPhysicalMaterial({
       color: 0xf59e0b,
       emissive: 0xb45309,
-      emissiveIntensity: 0.45,
-      roughness: 0.3,
-      metalness: 0.75,
+      emissiveIntensity: 0.35,
+      roughness: 0.22,
+      metalness: 0.85,
+      clearcoat: 0.8,
       side: THREE.DoubleSide,
     });
     const centerRing = new THREE.Mesh(ringGeo, ringMat);
@@ -567,13 +603,14 @@ export class UnstableArenaEngine {
     centerRing.position.y = 0.025;
     this.scene.add(centerRing);
 
-    const outerRingGeo = new THREE.RingGeometry(53.5, 54.5, 72);
-    const outerRingMat = new THREE.MeshStandardMaterial({
+    const outerRingGeo = new THREE.RingGeometry(53.6, 54.4, 96);
+    const outerRingMat = new THREE.MeshPhysicalMaterial({
       color: 0xa855f7,
       emissive: 0x7e22ce,
-      emissiveIntensity: 0.4,
-      roughness: 0.35,
-      metalness: 0.7,
+      emissiveIntensity: 0.35,
+      roughness: 0.25,
+      metalness: 0.78,
+      clearcoat: 0.7,
       side: THREE.DoubleSide,
     });
     const outerRing = new THREE.Mesh(outerRingGeo, outerRingMat);
@@ -581,8 +618,10 @@ export class UnstableArenaEngine {
     outerRing.position.y = 0.02;
     this.scene.add(outerRing);
 
+    // Sculpted beveled architectural blocks & monolith caps
     for (const b of this.blocks) {
-      const geo = new THREE.BoxGeometry(b.w, b.h, b.d);
+      const bevelR = Math.min(0.16, Math.min(b.w, b.h, b.d) * 0.14);
+      const geo = new RoundedBoxGeometry(b.w, b.h, b.d, 3, bevelR);
       const mat = this.materials[b.kind] ?? this.materials.stone;
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(b.x, b.y + b.h * 0.5, b.z);
@@ -590,8 +629,20 @@ export class UnstableArenaEngine {
       mesh.receiveShadow = !this.isSoftwareGl;
       this.scene.add(mesh);
       this.envMeshes.push(mesh);
+
+      if (b.h >= 3.0 && b.y <= 0.1) {
+        const cap = new THREE.Mesh(
+          new RoundedBoxGeometry(b.w + 0.28, 0.32, b.d + 0.28, 2, 0.07),
+          b.kind === 'obsidian' ? this.materials.gold : this.materials.deepslate
+        );
+        cap.position.set(b.x, b.y + b.h - 0.1, b.z);
+        cap.castShadow = !this.isSoftwareGl;
+        cap.receiveShadow = !this.isSoftwareGl;
+        this.scene.add(cap);
+      }
     }
 
+    // Polished Amethyst Crystal Nodes + Floating Orbit Rings
     const crystalCoords = [
       new THREE.Vector3(-5, 12.1, -26),
       new THREE.Vector3(5, 12.1, -26),
@@ -604,73 +655,179 @@ export class UnstableArenaEngine {
       new THREE.Vector3(70, 13.5, 0),
       new THREE.Vector3(-70, 13.5, 0),
     ];
-    const crystalGeo = new THREE.OctahedronGeometry(0.78, 0);
-    const crystalMat = new THREE.MeshStandardMaterial({
+    const crystalGeo = new THREE.IcosahedronGeometry(0.76, 1);
+    const crystalMat = new THREE.MeshPhysicalMaterial({
       color: 0xd8b4fe,
       emissive: 0x9333ea,
-      emissiveIntensity: 0.9,
-      roughness: 0.12,
-      metalness: 0.35,
+      emissiveIntensity: 0.78,
+      roughness: 0.08,
+      metalness: 0.25,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.06,
     });
+    const crystalHaloGeo = new THREE.TorusGeometry(1.05, 0.045, 10, 28);
     for (const coord of crystalCoords) {
       const cMesh = new THREE.Mesh(crystalGeo, crystalMat);
       cMesh.position.copy(coord);
+      const halo = new THREE.Mesh(crystalHaloGeo, ringMat);
+      halo.rotation.x = Math.PI / 2;
+      cMesh.add(halo);
       this.scene.add(cMesh);
       this.crystalMeshes.push(cMesh);
     }
 
-    const spireGeo = new THREE.BoxGeometry(7.5, 28, 7.5);
-    const spireCount = 54;
-    const spires = new THREE.InstancedMesh(spireGeo, this.materials.cliff, spireCount);
+    // Natural Sculpted Foothill Ridges & Boulders around Perimeter (InstancedMesh)
+    const hillGeo = new THREE.IcosahedronGeometry(1.0, 2);
+    const hillCount = 68;
+    const hills = new THREE.InstancedMesh(hillGeo, this.materials.cliff, hillCount);
+    hills.receiveShadow = !this.isSoftwareGl;
     const dummy = new THREE.Object3D();
-    for (let i = 0; i < spireCount; i++) {
-      const angle = (i / spireCount) * Math.PI * 2;
-      const dist = ARENA_RADIUS + 6 + (i % 3) * 6.5;
-      const hScale = 0.75 + ((i * 17) % 10) * 0.16;
-      dummy.position.set(Math.cos(angle) * dist, -4 + hScale * 5, Math.sin(angle) * dist);
-      dummy.rotation.y = angle + (i % 4) * 0.3;
-      dummy.scale.set(0.95 + (i % 3) * 0.28, hScale, 0.95 + ((i + 1) % 3) * 0.28);
+    const hillPalette = [0x4c7c3e, 0x5c8b47, 0x3f6a34, 0x67795c];
+    for (let i = 0; i < hillCount; i++) {
+      const angle = (i / hillCount) * Math.PI * 2 + (i % 3) * 0.04;
+      const dist = ARENA_RADIUS + 6.5 + (i % 4) * 5.2;
+      const rx = 7.5 + (i % 3) * 3.2;
+      const ry = 8.5 + ((i * 7) % 10) * 1.85;
+      const rz = 6.5 + ((i + 1) % 3) * 2.8;
+      dummy.position.set(Math.cos(angle) * dist, ry * 0.28 - 2.5, Math.sin(angle) * dist);
+      dummy.rotation.set(0.12 * ((i % 3) - 1), angle + i * 0.4, 0.08 * ((i % 2) - 0.5));
+      dummy.scale.set(rx, ry, rz);
       dummy.updateMatrix();
-      spires.setMatrixAt(i, dummy.matrix);
+      hills.setMatrixAt(i, dummy.matrix);
+      hills.setColorAt(i, _color.setHex(hillPalette[i % hillPalette.length]));
     }
-    spires.instanceMatrix.needsUpdate = true;
-    spires.computeBoundingSphere();
-    this.scene.add(spires);
+    hills.instanceMatrix.needsUpdate = true;
+    if (hills.instanceColor) hills.instanceColor.needsUpdate = true;
+    hills.computeBoundingSphere();
+    this.scene.add(hills);
 
-    const starCount = 240;
-    const starPositions = new Float32Array(starCount * 3);
-    for (let i = 0; i < starCount; i++) {
-      const theta = ((i * 73) % 360) * (Math.PI / 180);
-      const y = 28 + ((i * 29) % 68);
-      const r = 128 + ((i * 19) % 64);
-      starPositions[i * 3] = Math.cos(theta) * r;
-      starPositions[i * 3 + 1] = y;
-      starPositions[i * 3 + 2] = Math.sin(theta) * r;
+    // Outer Meadow Trees (28 sculpted multi-puff trees)
+    const treeCount = 28;
+    const trunkGeo = new THREE.CylinderGeometry(0.32, 0.52, 4.6, 12);
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.9, metalness: 0.02 });
+    const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, treeCount);
+    const canopyGeo = new THREE.SphereGeometry(2.6, 16, 12);
+    const canopyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.84, metalness: 0.02 });
+    const canopies = new THREE.InstancedMesh(canopyGeo, canopyMat, treeCount * 2);
+    const leafColors = [0x3b8c32, 0x4ba13f, 0x2f7529, 0x5cb349];
+    for (let i = 0; i < treeCount; i++) {
+      const a = (i / treeCount) * Math.PI * 2 + 0.11;
+      const r = 82 + ((i * 19) % 24);
+      const tx = Math.cos(a) * r;
+      const tz = Math.sin(a) * r;
+      const sc = 0.85 + ((i * 13) % 7) * 0.12;
+      dummy.position.set(tx, 2.1 * sc, tz);
+      dummy.rotation.set(0, a, 0);
+      dummy.scale.set(sc, sc, sc);
+      dummy.updateMatrix();
+      trunks.setMatrixAt(i, dummy.matrix);
+
+      dummy.position.set(tx, 5.1 * sc, tz);
+      dummy.scale.set(1.05 * sc, 0.88 * sc, 1.05 * sc);
+      dummy.updateMatrix();
+      canopies.setMatrixAt(i * 2, dummy.matrix);
+      canopies.setColorAt(i * 2, _color.setHex(leafColors[i % leafColors.length]));
+
+      dummy.position.set(tx + Math.cos(a) * 0.9 * sc, 6.2 * sc, tz + Math.sin(a) * 0.9 * sc);
+      dummy.scale.set(0.76 * sc, 0.72 * sc, 0.76 * sc);
+      dummy.updateMatrix();
+      canopies.setMatrixAt(i * 2 + 1, dummy.matrix);
+      canopies.setColorAt(i * 2 + 1, _color.setHex(leafColors[(i + 1) % leafColors.length]));
     }
-    const starGeo = new THREE.BufferGeometry();
-    starGeo.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
-    const starMat = new THREE.PointsMaterial({ color: 0xe2e8f0, size: 0.55, sizeAttenuation: true });
-    this.scene.add(new THREE.Points(starGeo, starMat));
+    trunks.instanceMatrix.needsUpdate = true;
+    canopies.instanceMatrix.needsUpdate = true;
+    if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
+    trunks.computeBoundingSphere();
+    canopies.computeBoundingSphere();
+    this.scene.add(trunks, canopies);
 
-    const brazierGeo = new THREE.BoxGeometry(0.9, 1.4, 0.9);
-    const flameGeo = new THREE.OctahedronGeometry(0.45, 0);
+    // Meadow Grass Blades / Tufts across open ground
+    const tuftCount = 520;
+    const tuftGeo = new THREE.ConeGeometry(0.14, 0.52, 5);
+    tuftGeo.translate(0, 0.24, 0);
+    const tuftMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.02 });
+    const tufts = new THREE.InstancedMesh(tuftGeo, tuftMat, tuftCount);
+    const grassTints = [0x65b949, 0x79cb59, 0x519f39, 0x8ad666];
+    let placedTufts = 0;
+    for (let i = 0; i < tuftCount * 2 && placedTufts < tuftCount; i++) {
+      const a = (i * 2.39996) % (Math.PI * 2);
+      const r = 15 + ((i * 37) % 86);
+      const gx = Math.cos(a) * r;
+      const gz = Math.sin(a) * r;
+      const blocked = this.blocks.some(
+        (b) => Math.abs(gx - b.x) < b.w * 0.65 && Math.abs(gz - b.z) < b.d * 0.65
+      );
+      if (blocked) continue;
+      dummy.position.set(gx, 0, gz);
+      dummy.rotation.set(((i % 5) - 2) * 0.08, a, (((i + 2) % 5) - 2) * 0.08);
+      const s = 0.75 + (i % 4) * 0.25;
+      dummy.scale.set(s, s, s);
+      dummy.updateMatrix();
+      tufts.setMatrixAt(placedTufts, dummy.matrix);
+      tufts.setColorAt(placedTufts, _color.setHex(grassTints[placedTufts % grassTints.length]));
+      placedTufts++;
+    }
+    tufts.count = placedTufts;
+    tufts.instanceMatrix.needsUpdate = true;
+    if (tufts.instanceColor) tufts.instanceColor.needsUpdate = true;
+    tufts.computeBoundingSphere();
+    this.scene.add(tufts);
+
+    // Sculpted Multi-Puff Volumetric Clouds
+    const puffGeo = new THREE.SphereGeometry(3.4, 14, 10);
+    const cloudMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.96,
+      metalness: 0.0,
+      transparent: true,
+      opacity: 0.9,
+    });
+    for (let i = 0; i < 18; i++) {
+      const angle = (i / 18) * Math.PI * 2 + (i % 3) * 0.14;
+      const r = 46 + ((i * 29) % 92);
+      const cloudGroup = new THREE.Group();
+      const puffs = [
+        { x: 0, y: 0.4, z: 0, sx: 1.4, sy: 0.7, sz: 1.0 },
+        { x: -2.6, y: 0, z: 0.4, sx: 1.0, sy: 0.58, sz: 0.85 },
+        { x: 2.7, y: 0.1, z: -0.3, sx: 1.05, sy: 0.6, sz: 0.85 },
+        { x: 0.6, y: 0.9, z: 0.5, sx: 0.85, sy: 0.6, sz: 0.75 },
+      ];
+      for (const pf of puffs) {
+        const m = new THREE.Mesh(puffGeo, cloudMat);
+        m.position.set(pf.x, pf.y, pf.z);
+        m.scale.set(pf.sx, pf.sy, pf.sz);
+        cloudGroup.add(m);
+      }
+      cloudGroup.position.set(Math.cos(angle) * r, 48 + (i % 5) * 4.0, Math.sin(angle) * r);
+      cloudGroup.scale.setScalar(0.95 + (i % 3) * 0.3);
+      cloudGroup.rotation.y = angle;
+      this.scene.add(cloudGroup);
+    }
+
+    // Sculpted Obsidian & Gold Braziers with Warm Firelight
+    const pedestalGeo = new THREE.CylinderGeometry(0.45, 0.68, 1.35, 16);
+    const bowlGeo = new THREE.CylinderGeometry(0.75, 0.42, 0.38, 16);
+    const flameGeo = new THREE.ConeGeometry(0.42, 0.95, 14);
     const flameMat = new THREE.MeshStandardMaterial({
       color: 0xfef08a,
       emissive: 0xf59e0b,
       emissiveIntensity: 1.4,
-      roughness: 0.2,
+      roughness: 0.18,
     });
     for (const bx of [-7.5, 7.5]) {
-      const stand = new THREE.Mesh(brazierGeo, this.materials.obsidian);
-      stand.position.set(bx, 0.7, -18);
+      const stand = new THREE.Mesh(pedestalGeo, this.materials.obsidian);
+      stand.position.set(bx, 0.68, -18);
+      stand.castShadow = !this.isSoftwareGl;
+      const bowl = new THREE.Mesh(bowlGeo, this.materials.gold);
+      bowl.position.set(bx, 1.45, -18);
       const flame = new THREE.Mesh(flameGeo, flameMat);
-      flame.position.set(bx, 1.85, -18);
-      this.scene.add(stand, flame);
+      flame.position.set(bx, 2.02, -18);
+      this.scene.add(stand, bowl, flame);
     }
   }
 
   private initPools(): void {
-    const slashGeo = new THREE.RingGeometry(1.1, 2.25, 18, 1, -Math.PI * 0.42, Math.PI * 0.84);
+    const slashGeo = new THREE.RingGeometry(1.1, 2.25, 28, 1, -Math.PI * 0.42, Math.PI * 0.84);
     const slashMat = new THREE.MeshBasicMaterial({
       color: 0xfef08a,
       transparent: true,
@@ -684,7 +841,7 @@ export class UnstableArenaEngine {
     this.scene.add(this.slashMesh);
 
     const maxParticles = 180;
-    const pGeo = new THREE.BoxGeometry(0.22, 0.22, 0.22);
+    const pGeo = new THREE.IcosahedronGeometry(0.14, 1);
     const pMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     this.particleMesh = new THREE.InstancedMesh(pGeo, pMat, maxParticles);
     this.particleMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -775,6 +932,7 @@ export class UnstableArenaEngine {
         life: 0,
         ownerGrace: 0,
         hp: 3,
+        breakProgress: 0,
         mesh: webMesh,
       });
     }
@@ -782,7 +940,7 @@ export class UnstableArenaEngine {
     // 10 pooled Lava & Water pools
     for (let i = 0; i < 10; i++) {
       const kind = i % 2 === 0 ? 'lava' : 'water';
-      const mesh = createHazardPoolMesh(kind, 2.1);
+      const mesh = createHazardPoolMesh(kind, 2.1, this.materials.lavaTex);
       mesh.visible = false;
       this.scene.add(mesh);
       this.hazardPools.push({
@@ -899,7 +1057,26 @@ export class UnstableArenaEngine {
   }
 
   public sendChatMessage(text: string): void {
-    this.net.sendChat(text);
+    const clean = text.trim().slice(0, 160);
+    if (!clean) return;
+    if (this.mpState.roomCode) {
+      this.net.sendChat(clean);
+    } else {
+      this.chatMessages = [
+        ...this.chatMessages,
+        {
+          id: `local-${Date.now()}-${Math.random()}`,
+          senderId: 'local',
+          senderName: this.mpState.playerName || 'Player',
+          text: clean,
+        },
+      ].slice(-40);
+      this.emitHud(true);
+    }
+  }
+
+  public resetNetworkConnection(): void {
+    this.net.resetConnection();
   }
 
   public createMultiplayerRoom(name: string, includeBots: boolean): void {
@@ -1083,6 +1260,8 @@ export class UnstableArenaEngine {
     this.playerVel.set(0, 0, 0);
     this.playerYaw = 0;
     this.playerPitch = -0.14;
+    this.targetYaw = 0;
+    this.targetPitch = -0.14;
     this.playerOnGround = true;
     this.playerFallStartY = 0;
     this.playerMaxHp = profile.maxHp;
@@ -1093,13 +1272,23 @@ export class UnstableArenaEngine {
     this.initSlotChargesFromProfile();
     this.elytraCooldown = 0;
     this.isGliding = false;
+    this.glideSpeed = 18;
+    this.fireworkBoostTimer = 0;
+    this.fireworkCooldown = 0;
+    this.elytraHealAccum = 0;
+    this.elytraHealSyncTimer = 0;
+    this.elytraHealParticleTimer = 0;
     this.isBlocking = false;
     this.stealthTimer = 0;
     this.playerInCobweb = false;
+    this.cobwebBreakProgress = 0;
+    this.cobwebHoldSoundTimer = 0;
     this.playerInLava = false;
+    this.wasInLava = false;
     this.playerInWater = false;
     this.playerBurnTimer = 0;
     this.playerBurnTickTimer = 0;
+    this.mobileAttackHeld = false;
     this.localRespawnTimer = 0;
     this.cameraMode = 'firstperson';
     this.swingTimer = 0;
@@ -1130,6 +1319,8 @@ export class UnstableArenaEngine {
     this.fpRig.setActiveWeapon(profile.loadout[0].id);
     this.playerRig.root.position.copy(this.playerPos);
     this.playerRig.root.rotation.set(0, this.playerYaw + Math.PI, 0);
+    this.camPos.set(0, 1.58, 10);
+    this.camLook.set(0, 1.3, 0);
 
     for (const p of this.projectiles) {
       p.active = false;
@@ -1449,7 +1640,12 @@ export class UnstableArenaEngine {
       this.triggerPrimaryAction();
     } else if (e.button === 2) {
       this.mouseDownRight = true;
-      this.isBlocking = true;
+      if (this.isGliding) {
+        this.isBlocking = false;
+        this.triggerFireworkBoost();
+      } else {
+        this.isBlocking = true;
+      }
     }
   };
 
@@ -1466,8 +1662,8 @@ export class UnstableArenaEngine {
     if (this.screen !== 'playing') return;
 
     if (this.pointerLocked) {
-      this.playerYaw -= e.movementX * 0.0028;
-      this.playerPitch = THREE.MathUtils.clamp(this.playerPitch - e.movementY * 0.0024, -1.48, 1.42);
+      this.targetYaw -= e.movementX * 0.0028;
+      this.targetPitch = THREE.MathUtils.clamp(this.targetPitch - e.movementY * 0.0024, -1.46, 1.42);
       this.edgeTurnDir = 0;
       this.edgePitchDir = 0;
       return;
@@ -1479,8 +1675,8 @@ export class UnstableArenaEngine {
         const dx = e.clientX - this.lastMouseX;
         const dy = e.clientY - this.lastMouseY;
         if (Math.abs(dx) < 160 && Math.abs(dy) < 160) {
-          this.playerYaw -= dx * 0.0038;
-          this.playerPitch = THREE.MathUtils.clamp(this.playerPitch - dy * 0.0032, -1.48, 1.42);
+          this.targetYaw -= dx * 0.0038;
+          this.targetPitch = THREE.MathUtils.clamp(this.targetPitch - dy * 0.0032, -1.46, 1.42);
         }
       }
       this.lastMouseX = e.clientX;
@@ -1632,6 +1828,16 @@ export class UnstableArenaEngine {
       this.removePlacedBlocksByIds(ids);
     } else if (kind === 'cobweb_spawn') {
       this.spawnCobwebAt(Number(msg.x || 0), Number(msg.y || 0), Number(msg.z || 0), false);
+    } else if (kind === 'cobweb_clear') {
+      const cx = Number(msg.x || 0);
+      const cz = Number(msg.z || 0);
+      for (const w of this.cobwebs) {
+        if (w.active && Math.hypot(w.x - cx, w.z - cz) < 1.2) {
+          w.active = false;
+          w.breakProgress = 0;
+          w.mesh.visible = false;
+        }
+      }
     } else if (kind === 'hazard_spawn') {
       this.spawnHazardPool(
         msg.poolKind === 'water' ? 'water' : 'lava',
@@ -1654,24 +1860,57 @@ export class UnstableArenaEngine {
     if (this.elytraCooldown > 0 || this.localRespawnTimer > 0) return;
     this.elytraCooldown = 3.8;
     this.isGliding = true;
+    this.isBlocking = false;
+    this.glideSpeed = 22;
+    this.fireworkBoostTimer = 0.22;
+    this.fireworkCooldown = 0.25;
     this.audio.playWindCharge();
 
     _aimDir
       .set(
         -Math.sin(this.playerYaw) * Math.cos(this.playerPitch),
-        Math.sin(this.playerPitch) + 0.4,
+        Math.sin(this.playerPitch) + 0.42,
         -Math.cos(this.playerYaw) * Math.cos(this.playerPitch)
       )
       .normalize();
 
-    this.playerVel.x = _aimDir.x * 21;
-    this.playerVel.y = Math.max(11, _aimDir.y * 17.5);
-    this.playerVel.z = _aimDir.z * 21;
+    this.playerVel.x = _aimDir.x * 22;
+    this.playerVel.y = Math.max(12, _aimDir.y * 18);
+    this.playerVel.z = _aimDir.z * 22;
     this.playerOnGround = false;
     this.playerFallStartY = Math.max(this.playerFallStartY, this.playerPos.y + 5);
     this.fovCurrent = 82;
     this.spawnParticles(this.playerPos.x, this.playerPos.y + 1, this.playerPos.z, 14, 0x38bdf8, 6);
     this.emitHud(true);
+  }
+
+  private triggerFireworkBoost(): void {
+    if (!this.isGliding || this.fireworkCooldown > 0 || this.localRespawnTimer > 0) return;
+    this.fireworkCooldown = 0.85;
+    this.fireworkBoostTimer = 0.55;
+    this.audio.playFireworkBoost();
+
+    _aimDir
+      .set(
+        -Math.sin(this.playerYaw) * Math.cos(this.playerPitch),
+        Math.sin(this.playerPitch),
+        -Math.cos(this.playerYaw) * Math.cos(this.playerPitch)
+      )
+      .normalize();
+
+    const boostSpeed = 27;
+    this.glideSpeed = Math.max(this.glideSpeed, boostSpeed);
+    this.playerVel.set(_aimDir.x * boostSpeed, _aimDir.y * boostSpeed, _aimDir.z * boostSpeed);
+    this.playerOnGround = false;
+    this.fovCurrent = Math.max(this.fovCurrent, 84);
+
+    // Firework burst behind player
+    const bx = this.playerPos.x - _aimDir.x * 0.8;
+    const by = this.playerPos.y + 1.0 - _aimDir.y * 0.8;
+    const bz = this.playerPos.z - _aimDir.z * 0.8;
+    this.spawnParticles(bx, by, bz, 12, 0xf43f5e, 7);
+    this.spawnParticles(bx, by, bz, 10, 0xfbbf24, 6.5);
+    this.spawnParticles(bx, by, bz, 8, 0xffffff, 5);
   }
 
   private triggerPrimaryAction(): void {
@@ -1711,22 +1950,6 @@ export class UnstableArenaEngine {
         this.audio.playSwing();
       }
       this.performMeleeStrike('sword', slotId === 'fire_sword', false);
-
-      for (let i = this.cobwebs.length - 1; i >= 0; i--) {
-        const w = this.cobwebs[i];
-        if (!w.active) continue;
-        const dist = Math.hypot(w.x - this.playerPos.x, w.y - this.playerPos.y, w.z - this.playerPos.z);
-        if (dist <= 3.8) {
-          w.hp = (w.hp ?? 3) - 1;
-          this.audio.playCobwebSlice();
-          this.spawnParticles(w.x, w.y + 0.5, w.z, 8, 0xe2e8f0, 5);
-          if (w.hp <= 0) {
-            w.active = false;
-            w.mesh.visible = false;
-            this.pushCallout('거미줄을 칼로 베어냈습니다!', '#38bdf8');
-          }
-        }
-      }
     } else if (slotId === 'spear') {
       this.swingTimer = 0.26;
       this.audio.playSpearThrust();
@@ -1780,11 +2003,12 @@ export class UnstableArenaEngine {
       this.spawnParticles(this.playerPos.x, this.playerPos.y + 1, this.playerPos.z, 18, 0x818cf8, 7);
       this.pushCallout('은신 망토 · 2.6초 투명화 & 이속 상승', '#818cf8');
     } else if (slotId === 'gapple') {
-      this.playerHp = Math.min(this.playerMaxHp, this.playerHp + 35);
+      this.playerHp = this.playerMaxHp;
+      this.playerBurnTimer = 0;
       this.playerAbsorption = Math.min(30, this.playerAbsorption + 20);
       this.audio.playGapple();
-      this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.1, this.playerPos.z, 16, 0xfbbf24, 5);
-      this.pushCallout('황금 사과 · +35 HP & 흡수 보호막', '#fbbf24');
+      this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.1, this.playerPos.z, 20, 0xfbbf24, 5.5);
+      this.pushCallout('황금 사과 · HP 100% 풀피 회복 & 보호막!', '#fbbf24');
       this.syncVitalsToServer();
     } else if (slotId === 'potion') {
       this.playerHp = Math.min(this.playerMaxHp, this.playerHp + 42);
@@ -1864,7 +2088,7 @@ export class UnstableArenaEngine {
       ownerId,
     };
     const mat = kind === 'obsidian' ? this.materials.obsidian : this.materials.player_block;
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(GRID, GRID, GRID), mat);
+    const mesh = new THREE.Mesh(new RoundedBoxGeometry(GRID, GRID, GRID, 3, 0.1), mat);
     mesh.position.set(x, y + GRID * 0.5, z);
     mesh.castShadow = !this.isSoftwareGl;
     mesh.receiveShadow = !this.isSoftwareGl;
@@ -1965,7 +2189,10 @@ export class UnstableArenaEngine {
     } else {
       this.audio.playLavaBucket();
       this.spawnParticles(x, y + 0.5, z, 18, 0xf97316, 6);
-      this.pushCallout('용암 장판 설치!', '#f97316');
+      this.pushCallout(
+        ownerId === (this.mpState.selfId ?? 'player') ? '용암 장판 설치! (본인 피해 없음)' : '용암 장판 설치!',
+        '#f97316'
+      );
     }
 
     // Find matching kind slot or update mesh colors
@@ -1975,7 +2202,7 @@ export class UnstableArenaEngine {
       this.hazardCursor = (this.hazardCursor + 1) % this.hazardPools.length;
       if (slot.kind !== kind) {
         this.scene.remove(slot.mesh);
-        slot.mesh = createHazardPoolMesh(kind, 2.1);
+        slot.mesh = createHazardPoolMesh(kind, 2.1, this.materials.lavaTex);
         this.scene.add(slot.mesh);
         slot.kind = kind;
       }
@@ -2027,6 +2254,7 @@ export class UnstableArenaEngine {
     w.life = 9.0;
     w.ownerGrace = 0.55;
     w.hp = 3;
+    w.breakProgress = 0;
     w.mesh.position.set(x, y, z);
     w.mesh.visible = true;
     this.audio.playCobweb();
@@ -2340,7 +2568,7 @@ export class UnstableArenaEngine {
     enemy.rig.telegraphRing.visible = false;
     this.kills += 1;
     this.comboStreak += 1;
-    this.audio.playKo();
+    this.audio.playDeath(false);
     this.spawnParticles(enemy.pos.x, enemy.pos.y + 1.0, enemy.pos.z, 24, 0xc084fc, 9);
     this.addKillFeed(`${enemy.name} 처치 (${cause})`, '#c084fc');
 
@@ -2566,6 +2794,14 @@ export class UnstableArenaEngine {
     const supY = getSupportHeightAt(rx, rz, 20, PLAYER_RADIUS, this.blocks);
     this.playerPos.set(rx, supY + 0.5, rz);
     this.playerVel.set(0, 0, 0);
+    this.isGliding = false;
+    this.fireworkBoostTimer = 0;
+    this.camPos.set(rx, supY + 2.08, rz);
+    this.camLook.set(
+      rx - Math.sin(this.playerYaw) * 18,
+      supY + 2.08 + Math.sin(this.playerPitch) * 18,
+      rz - Math.cos(this.playerYaw) * 18
+    );
     this.playerHp = this.playerMaxHp;
     this.playerAbsorption = 0;
     this.playerBurnTimer = 0;
@@ -2582,9 +2818,6 @@ export class UnstableArenaEngine {
     this.mouseDownLeft = false;
     this.mouseDownRight = false;
     document.exitPointerLock?.();
-    if (outcome === 'victory') {
-      this.audio.playKo();
-    }
     this.onMatchEnd?.({
       mode: this.mode,
       won: outcome === 'victory',
@@ -2706,12 +2939,9 @@ export class UnstableArenaEngine {
     }
 
     this.shakeTrauma = Math.max(0, this.shakeTrauma - dt * 2.1);
-    this.fovCurrent = THREE.MathUtils.damp(
-      this.fovCurrent,
-      this.isGliding ? 79 : this.stealthTimer > 0 ? 75 : 68,
-      10,
-      dt
-    );
+    const desiredFov =
+      this.fireworkBoostTimer > 0 ? 85 : this.isGliding ? 79 : this.stealthTimer > 0 ? 75 : 68;
+    this.fovCurrent = THREE.MathUtils.damp(this.fovCurrent, desiredFov, 9, dt);
     if (Math.abs(this.camera.fov - this.fovCurrent) > 0.05) {
       this.camera.fov = this.fovCurrent;
       this.camera.updateProjectionMatrix();
@@ -2769,6 +2999,8 @@ export class UnstableArenaEngine {
     );
 
     if (this.elytraCooldown > 0) this.elytraCooldown = Math.max(0, this.elytraCooldown - dt);
+    if (this.fireworkCooldown > 0) this.fireworkCooldown = Math.max(0, this.fireworkCooldown - dt);
+    if (this.fireworkBoostTimer > 0) this.fireworkBoostTimer = Math.max(0, this.fireworkBoostTimer - dt);
     if (this.stealthTimer > 0) {
       this.stealthTimer = Math.max(0, this.stealthTimer - dt);
       if (this.stealthTimer <= 0) this.playerRig.setOpacity(1);
@@ -2824,14 +3056,64 @@ export class UnstableArenaEngine {
   }
 
   private updateCobwebs(dt: number): void {
+    const holdingBreak =
+      this.screen === 'playing' &&
+      this.localRespawnTimer <= 0 &&
+      (this.mouseDownLeft || this.keys.has('KeyJ') || this.mobileAttackHeld);
+
+    let targetWeb: ActiveCobweb | null = null;
+    let bestDist = 4.2;
+
     for (const w of this.cobwebs) {
       if (!w.active) continue;
       w.life -= dt;
       if (w.ownerGrace > 0) w.ownerGrace = Math.max(0, w.ownerGrace - dt);
       if (w.life <= 0) {
         w.active = false;
+        w.breakProgress = 0;
         w.mesh.visible = false;
+        continue;
       }
+
+      const d = Math.hypot(w.x - this.playerPos.x, w.y - this.playerPos.y, w.z - this.playerPos.z);
+      if (holdingBreak && d < bestDist) {
+        bestDist = d;
+        targetWeb = w;
+      }
+    }
+
+    for (const w of this.cobwebs) {
+      if (!w.active || w === targetWeb) continue;
+      if (w.breakProgress > 0) {
+        w.breakProgress = Math.max(0, w.breakProgress - dt * 1.2);
+      }
+    }
+
+    if (targetWeb) {
+      targetWeb.breakProgress = Math.min(3.0, targetWeb.breakProgress + dt);
+      this.cobwebBreakProgress = targetWeb.breakProgress / 3.0;
+      if (this.swingTimer <= 0.05) {
+        this.swingTimer = 0.24;
+      }
+      this.cobwebHoldSoundTimer -= dt;
+      if (this.cobwebHoldSoundTimer <= 0) {
+        this.cobwebHoldSoundTimer = 0.42;
+        this.audio.playCobwebHoldTick();
+        this.spawnParticles(targetWeb.x, targetWeb.y + 0.65, targetWeb.z, 4, 0xf8fafc, 3.2);
+      }
+      if (targetWeb.breakProgress >= 3.0) {
+        targetWeb.active = false;
+        targetWeb.breakProgress = 0;
+        targetWeb.mesh.visible = false;
+        this.cobwebBreakProgress = 0;
+        this.audio.playCobwebSlice();
+        this.spawnParticles(targetWeb.x, targetWeb.y + 0.7, targetWeb.z, 18, 0xf8fafc, 6.2);
+        this.pushCallout('거미줄을 제거했습니다!', '#0284c7');
+        this.emitWorldEvent({ kind: 'cobweb_clear', x: targetWeb.x, z: targetWeb.z });
+      }
+    } else {
+      this.cobwebBreakProgress = 0;
+      this.cobwebHoldSoundTimer = 0;
     }
   }
 
@@ -2930,16 +3212,20 @@ export class UnstableArenaEngine {
     const prof = CHARACTERS[this.selectedCharId];
     const lockedMode = this.cameraMode !== 'free';
 
-    if (this.keys.has('ArrowLeft') || this.keys.has('KeyQ')) this.playerYaw += dt * 2.8;
-    if (this.keys.has('ArrowRight') || this.keys.has('KeyE')) this.playerYaw -= dt * 2.8;
+    if (this.keys.has('ArrowLeft') || this.keys.has('KeyQ')) this.targetYaw += dt * 2.8;
+    if (this.keys.has('ArrowRight') || this.keys.has('KeyE')) this.targetYaw -= dt * 2.8;
     if (this.edgeTurnDir !== 0 && lockedMode && !this.pointerLocked) {
-      this.playerYaw += this.edgeTurnDir * dt * 2.5;
+      this.targetYaw += this.edgeTurnDir * dt * 2.5;
     }
     if (this.edgePitchDir !== 0 && lockedMode && !this.pointerLocked) {
-      this.playerPitch = THREE.MathUtils.clamp(this.playerPitch + this.edgePitchDir * dt * 1.9, -1.48, 1.42);
+      this.targetPitch = THREE.MathUtils.clamp(this.targetPitch + this.edgePitchDir * dt * 1.9, -1.46, 1.42);
     }
-    if (this.keys.has('ArrowUp')) this.playerPitch = Math.min(1.42, this.playerPitch + dt * 1.9);
-    if (this.keys.has('ArrowDown')) this.playerPitch = Math.max(-1.48, this.playerPitch - dt * 1.9);
+    if (this.keys.has('ArrowUp')) this.targetPitch = Math.min(1.42, this.targetPitch + dt * 1.9);
+    if (this.keys.has('ArrowDown')) this.targetPitch = Math.max(-1.46, this.targetPitch - dt * 1.9);
+
+    const rotSmooth = this.isGliding ? 16 : 30;
+    this.playerYaw = THREE.MathUtils.damp(this.playerYaw, this.targetYaw, rotSmooth, dt);
+    this.playerPitch = THREE.MathUtils.damp(this.playerPitch, this.targetPitch, rotSmooth, dt);
 
     let moveForward = 0;
     let moveRight = 0;
@@ -2965,34 +3251,68 @@ export class UnstableArenaEngine {
     }
     this.playerInCobweb = inWeb;
 
+    const selfOwnerId = this.mpState.selfId ?? 'player';
     const activePools = this.hazardPools.filter((h) => h.active);
-    const inLava = isInsideHazardPool(this.playerPos.x, this.playerPos.y, this.playerPos.z, activePools, 'lava');
+    const hostilePools = activePools.filter((h) => h.kind !== 'lava' || h.ownerId !== selfOwnerId);
+    const inLava = isInsideHazardPool(this.playerPos.x, this.playerPos.y, this.playerPos.z, hostilePools, 'lava');
     const inWater = isInsideHazardPool(this.playerPos.x, this.playerPos.y, this.playerPos.z, activePools, 'water');
     this.playerInLava = inLava;
     this.playerInWater = inWater;
 
     if (inWater) {
       this.playerBurnTimer = 0;
+      this.wasInLava = false;
       this.playerFallStartY = this.playerPos.y;
     } else if (inLava) {
-      this.playerBurnTimer = 2.5;
+      if (!this.wasInLava) {
+        // Immediate heavy burst when stepping into lava
+        this.playerHp = Math.max(0, this.playerHp - 16);
+        this.playerBurnTickTimer = 0.35;
+        this.audio.playLavaSizzle();
+        this.audio.playPlayerHurt();
+        this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.25);
+        this.spawnParticles(this.playerPos.x, this.playerPos.y + 0.8, this.playerPos.z, 10, 0xf97316, 5.2);
+        if (this.isNetworkedMode()) {
+          this.net.send({ type: 'heal_sync', hp: this.playerHp, absorption: this.playerAbsorption });
+        }
+        if (this.playerHp <= 0 && this.defeatDelayTimer <= 0 && this.localRespawnTimer <= 0) {
+          this.deaths += 1;
+          this.audio.playDeath(true);
+          if (this.mode === 'online_world' || this.mode === 'multiplayer') {
+            this.localRespawnTimer = 2.2;
+            this.pushCallout('용암에 녹아 처치됨 · 2.2초 후 부활', '#f97316');
+          } else {
+            this.defeatDelayTimer = 0.4;
+          }
+          this.addKillFeed('용암 화상으로 사망', '#f97316');
+        }
+      }
+      this.wasInLava = true;
+      this.playerBurnTimer = 3.0;
+    } else {
+      this.wasInLava = false;
     }
 
     if (this.playerBurnTimer > 0) {
       this.playerBurnTimer -= dt;
       this.playerBurnTickTimer -= dt;
       if (this.playerBurnTickTimer <= 0) {
-        this.playerBurnTickTimer = 0.6;
-        this.playerHp = Math.max(0, this.playerHp - 4);
+        const lavaTickDmg = inLava ? 22 : 9;
+        this.playerBurnTickTimer = inLava ? 0.35 : 0.45;
+        this.playerHp = Math.max(0, this.playerHp - lavaTickDmg);
         this.audio.playPlayerHurt();
-        this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.0, this.playerPos.z, 6, 0xf97316, 4);
+        this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.0, this.playerPos.z, 8, 0xf97316, 4.5);
+        if (this.isNetworkedMode()) {
+          this.net.send({ type: 'heal_sync', hp: this.playerHp, absorption: this.playerAbsorption });
+        }
         if (this.playerHp <= 0 && this.defeatDelayTimer <= 0 && this.localRespawnTimer <= 0) {
           this.deaths += 1;
+          this.audio.playDeath(true);
           if (this.mode === 'online_world' || this.mode === 'multiplayer') {
             this.localRespawnTimer = 2.2;
             this.pushCallout('용암 화상으로 처치됨 · 2.2초 후 부활', '#f97316');
           } else {
-            this.defeatDelayTimer = 0.5;
+            this.defeatDelayTimer = 0.45;
           }
           this.addKillFeed('용암 화상으로 사망', '#f97316');
         }
@@ -3005,13 +3325,66 @@ export class UnstableArenaEngine {
     const baseSpeed =
       (this.isBlocking ? 5.2 : sprinting ? 11.4 : 8.8) * prof.speedMult * stealthMult * terrainMult;
 
+    if (this.isGliding && this.playerHp > 0 && this.playerHp < this.playerMaxHp && !inLava) {
+      this.elytraHealAccum += 8.0 * dt;
+      if (this.elytraHealAccum >= 1) {
+        const healAmt = Math.floor(this.elytraHealAccum);
+        this.elytraHealAccum -= healAmt;
+        this.playerHp = Math.min(this.playerMaxHp, this.playerHp + healAmt);
+      }
+      this.elytraHealParticleTimer -= dt;
+      if (this.elytraHealParticleTimer <= 0) {
+        this.elytraHealParticleTimer = 0.24;
+        this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.0, this.playerPos.z, 3, 0x22c55e, 2.5);
+      }
+      this.elytraHealSyncTimer -= dt;
+      if (this.elytraHealSyncTimer <= 0 && this.isNetworkedMode()) {
+        this.elytraHealSyncTimer = 0.35;
+        this.net.send({ type: 'heal_sync', hp: this.playerHp, absorption: this.playerAbsorption });
+      }
+    } else {
+      this.elytraHealAccum = 0;
+    }
+
     if (!this.isGliding) {
       const accel = this.playerOnGround ? 28 : 11;
       this.playerVel.x = THREE.MathUtils.damp(this.playerVel.x, _v1.x * baseSpeed, accel, dt);
       this.playerVel.z = THREE.MathUtils.damp(this.playerVel.z, _v1.z * baseSpeed, accel, dt);
     } else {
-      this.playerVel.x = THREE.MathUtils.damp(this.playerVel.x, _forward.x * 17 + _v1.x * 6, 3.5, dt);
-      this.playerVel.z = THREE.MathUtils.damp(this.playerVel.z, _forward.z * 17 + _v1.z * 6, 3.5, dt);
+      this.isBlocking = false;
+      _aimDir
+        .set(
+          -Math.sin(this.playerYaw) * Math.cos(this.playerPitch),
+          Math.sin(this.playerPitch),
+          -Math.cos(this.playerYaw) * Math.cos(this.playerPitch)
+        )
+        .normalize();
+
+      if (this.fireworkBoostTimer > 0) {
+        this.glideSpeed = THREE.MathUtils.damp(this.glideSpeed, 28, 7.5, dt);
+        if (Math.random() < 0.75) {
+          this.spawnParticles(
+            this.playerPos.x - _aimDir.x * 0.7,
+            this.playerPos.y + 1.0 - _aimDir.y * 0.7,
+            this.playerPos.z - _aimDir.z * 0.7,
+            2,
+            Math.random() < 0.5 ? 0xf43f5e : 0xfbbf24,
+            3.5
+          );
+        }
+      } else {
+        // Diving picks up speed; climbing trades momentum gently while keeping smooth cruise
+        const diveAccel = -_aimDir.y * 16;
+        this.glideSpeed = THREE.MathUtils.clamp(this.glideSpeed + diveAccel * dt - 1.4 * dt, 12, 31);
+      }
+
+      const targetVx = _aimDir.x * this.glideSpeed + _v1.x * 4.5;
+      const targetVy = _aimDir.y * this.glideSpeed + (this.fireworkBoostTimer > 0 ? 0 : -1.5);
+      const targetVz = _aimDir.z * this.glideSpeed + _v1.z * 4.5;
+      const glideTurnSteer = this.fireworkBoostTimer > 0 ? 8.5 : 5.5;
+      this.playerVel.x = THREE.MathUtils.damp(this.playerVel.x, targetVx, glideTurnSteer, dt);
+      this.playerVel.y = THREE.MathUtils.damp(this.playerVel.y, targetVy, glideTurnSteer, dt);
+      this.playerVel.z = THREE.MathUtils.damp(this.playerVel.z, targetVz, glideTurnSteer, dt);
     }
 
     if (this.playerOnGround) {
@@ -3031,10 +3404,8 @@ export class UnstableArenaEngine {
       }
     }
 
-    const g = this.isGliding && this.playerVel.y < 0 ? GRAVITY * 0.24 : GRAVITY;
-    this.playerVel.y += g * dt;
-    if (this.isGliding && this.playerVel.y < -4.0) {
-      this.playerVel.y = -4.0;
+    if (!this.isGliding) {
+      this.playerVel.y += GRAVITY * dt;
     }
     if (inWeb) {
       this.playerVel.y = Math.max(-1.6, this.playerVel.y * 0.85);
@@ -3084,10 +3455,14 @@ export class UnstableArenaEngine {
     this.playerRig.root.position.copy(this.playerPos);
 
     let targetRotY = this.playerYaw + Math.PI;
-    if (this.cameraMode === 'free' && hasMoveInput) {
+    if (this.cameraMode === 'free' && hasMoveInput && !this.isGliding) {
       targetRotY = Math.atan2(_v1.x, _v1.z);
     }
-    this.playerRig.root.rotation.y = targetRotY;
+    const curY = this.playerRig.root.rotation.y;
+    let diffY = (targetRotY - curY) % (Math.PI * 2);
+    if (diffY > Math.PI) diffY -= Math.PI * 2;
+    if (diffY < -Math.PI) diffY += Math.PI * 2;
+    this.playerRig.root.rotation.y = curY + diffY * (1 - Math.exp(-18 * dt));
 
     this.squashY = THREE.MathUtils.damp(this.squashY, 1, 16, dt);
     const invSquash = 1 / Math.sqrt(this.squashY);
@@ -3128,18 +3503,17 @@ export class UnstableArenaEngine {
 
     this.playerRig.wingsGroup.visible = this.isGliding || !this.playerOnGround;
     if (this.isGliding) {
-      this.playerRig.leftWing.rotation.z = 0.85;
-      this.playerRig.rightWing.rotation.z = -0.85;
-      this.playerRig.bodyGroup.rotation.x = 0.45;
+      this.playerRig.leftWing.rotation.z = THREE.MathUtils.damp(this.playerRig.leftWing.rotation.z, 0.92, 10, dt);
+      this.playerRig.rightWing.rotation.z = THREE.MathUtils.damp(this.playerRig.rightWing.rotation.z, -0.92, 10, dt);
+      const glideBodyPitch = THREE.MathUtils.clamp(0.55 - this.playerPitch * 0.52, 0.12, 1.05);
+      const bankRoll = THREE.MathUtils.clamp((this.targetYaw - this.playerYaw) * 2.4, -0.45, 0.45);
+      this.playerRig.bodyGroup.rotation.x = THREE.MathUtils.damp(this.playerRig.bodyGroup.rotation.x, glideBodyPitch, 10, dt);
+      this.playerRig.bodyGroup.rotation.z = THREE.MathUtils.damp(this.playerRig.bodyGroup.rotation.z, bankRoll, 10, dt);
     } else {
-      this.playerRig.leftWing.rotation.z = 0.18;
-      this.playerRig.rightWing.rotation.z = -0.18;
-      this.playerRig.bodyGroup.rotation.x = THREE.MathUtils.damp(
-        this.playerRig.bodyGroup.rotation.x,
-        0,
-        12,
-        dt
-      );
+      this.playerRig.leftWing.rotation.z = THREE.MathUtils.damp(this.playerRig.leftWing.rotation.z, 0.18, 12, dt);
+      this.playerRig.rightWing.rotation.z = THREE.MathUtils.damp(this.playerRig.rightWing.rotation.z, -0.18, 12, dt);
+      this.playerRig.bodyGroup.rotation.x = THREE.MathUtils.damp(this.playerRig.bodyGroup.rotation.x, 0, 12, dt);
+      this.playerRig.bodyGroup.rotation.z = THREE.MathUtils.damp(this.playerRig.bodyGroup.rotation.z, 0, 12, dt);
     }
 
     if (this.hitFlashTimer > 0) {
@@ -3307,11 +3681,12 @@ export class UnstableArenaEngine {
         e.burnTimer -= dt;
         e.burnTickTimer -= dt;
         if (e.burnTickTimer <= 0) {
-          e.burnTickTimer = 0.65;
-          e.hp = Math.max(0, e.hp - 4);
+          const tickDmg = enemyInLava ? 22 : 9;
+          e.burnTickTimer = enemyInLava ? 0.35 : 0.45;
+          e.hp = Math.max(0, e.hp - tickDmg);
           e.overhead.updateHp(e.hp / e.maxHp);
-          this.damageDealt += 4;
-          this.spawnParticles(e.pos.x, e.pos.y + 1.1, e.pos.z, 6, 0xf97316, 4);
+          this.damageDealt += tickDmg;
+          this.spawnParticles(e.pos.x, e.pos.y + 1.1, e.pos.z, 8, 0xf97316, 4.5);
           if (e.hp <= 0) {
             this.handleEnemyKo(e, enemyInLava ? '용암 화상' : '화상');
             continue;
@@ -3578,6 +3953,7 @@ export class UnstableArenaEngine {
 
     if (this.playerHp <= 0 && this.defeatDelayTimer <= 0 && this.localRespawnTimer <= 0) {
       this.deaths += 1;
+      this.audio.playDeath(true);
       if (this.mode === 'online_world' || this.mode === 'multiplayer') {
         this.localRespawnTimer = 2.2;
         this.pushCallout(`${e.name}에게 처치됨 · 2.2초 후 부활`, '#ef4444');
@@ -3671,8 +4047,14 @@ export class UnstableArenaEngine {
       _camGoal.set(this.playerPos.x, this.playerPos.y + 1.58, this.playerPos.z);
       _camTarget.copy(_camGoal).addScaledVector(_aimDir, 18);
 
-      this.camPos.copy(_camGoal);
-      this.camLook.copy(_camTarget);
+      const fpPosDamp = this.isGliding ? 24 : 36;
+      const fpLookDamp = this.isGliding ? 28 : 42;
+      this.camPos.x = THREE.MathUtils.damp(this.camPos.x, _camGoal.x, fpPosDamp, dt);
+      this.camPos.y = THREE.MathUtils.damp(this.camPos.y, _camGoal.y, fpPosDamp, dt);
+      this.camPos.z = THREE.MathUtils.damp(this.camPos.z, _camGoal.z, fpPosDamp, dt);
+      this.camLook.x = THREE.MathUtils.damp(this.camLook.x, _camTarget.x, fpLookDamp, dt);
+      this.camLook.y = THREE.MathUtils.damp(this.camLook.y, _camTarget.y, fpLookDamp, dt);
+      this.camLook.z = THREE.MathUtils.damp(this.camLook.z, _camTarget.z, fpLookDamp, dt);
       this.camera.position.copy(this.camPos);
       if (this.shakeTrauma > 0.01) {
         const s = this.shakeTrauma * this.shakeTrauma * 0.22;
@@ -3687,7 +4069,7 @@ export class UnstableArenaEngine {
 
     const isShiftLock = this.cameraMode === 'shiftlock';
     const shoulderOffset = isShiftLock ? 1.15 : 0.0;
-    const camDistance = isShiftLock ? 4.1 : 6.2;
+    const camDistance = (isShiftLock ? 4.1 : 6.2) + (this.isGliding ? 1.1 : 0);
 
     _rayOrigin.set(
       this.playerPos.x + _right.x * shoulderOffset,
@@ -3713,14 +4095,15 @@ export class UnstableArenaEngine {
 
     _camTarget.copy(_rayOrigin).addScaledVector(_aimDir, 18);
 
-    const dampK = this.isSoftwareGl ? 32 : 24;
+    const dampK = this.isGliding ? 14 : this.isSoftwareGl ? 28 : 20;
+    const lookK = this.isGliding ? 18 : dampK + 4;
     this.camPos.x = THREE.MathUtils.damp(this.camPos.x, _camGoal.x, dampK, dt);
     this.camPos.y = THREE.MathUtils.damp(this.camPos.y, _camGoal.y, dampK, dt);
     this.camPos.z = THREE.MathUtils.damp(this.camPos.z, _camGoal.z, dampK, dt);
 
-    this.camLook.x = THREE.MathUtils.damp(this.camLook.x, _camTarget.x, dampK, dt);
-    this.camLook.y = THREE.MathUtils.damp(this.camLook.y, _camTarget.y, dampK, dt);
-    this.camLook.z = THREE.MathUtils.damp(this.camLook.z, _camTarget.z, dampK, dt);
+    this.camLook.x = THREE.MathUtils.damp(this.camLook.x, _camTarget.x, lookK, dt);
+    this.camLook.y = THREE.MathUtils.damp(this.camLook.y, _camTarget.y, lookK, dt);
+    this.camLook.z = THREE.MathUtils.damp(this.camLook.z, _camTarget.z, lookK, dt);
 
     this.camera.position.copy(this.camPos);
     if (this.shakeTrauma > 0.01) {
@@ -3770,6 +4153,7 @@ export class UnstableArenaEngine {
       isBlocking: this.isBlocking,
       isStealthed: this.stealthTimer > 0,
       isInCobweb: this.playerInCobweb,
+      cobwebBreakProgress: this.cobwebBreakProgress,
       isBurning: this.playerBurnTimer > 0,
       isInWater: this.playerInWater,
       cameraMode: this.cameraMode,
@@ -3804,6 +4188,13 @@ export class UnstableArenaEngine {
     this.triggerPrimaryAction();
   }
 
+  public mobileAttackHold(pressed: boolean): void {
+    this.mobileAttackHeld = pressed;
+    if (pressed && this.screen === 'playing') {
+      this.triggerPrimaryAction();
+    }
+  }
+
   public mobileJump(pressed: boolean): void {
     if (pressed) {
       this.keys.add('Space');
@@ -3815,11 +4206,18 @@ export class UnstableArenaEngine {
 
   public mobileBlock(pressed: boolean): void {
     if (pressed) {
-      this.keys.add('KeyB');
-      this.mouseDownRight = true;
+      if (this.isGliding) {
+        this.isBlocking = false;
+        this.triggerFireworkBoost();
+      } else {
+        this.keys.add('KeyB');
+        this.mouseDownRight = true;
+        this.isBlocking = true;
+      }
     } else {
       this.keys.delete('KeyB');
       this.mouseDownRight = false;
+      this.isBlocking = false;
     }
   }
 
@@ -3848,8 +4246,8 @@ export class UnstableArenaEngine {
   }
 
   public mobileLook(dx: number, dy: number): void {
-    this.playerYaw -= dx * 0.0045;
-    this.playerPitch = THREE.MathUtils.clamp(this.playerPitch - dy * 0.0045, -1.48, 1.42);
+    this.targetYaw -= dx * 0.0045;
+    this.targetPitch = THREE.MathUtils.clamp(this.targetPitch - dy * 0.0045, -1.46, 1.42);
   }
 
   public dispose(): void {

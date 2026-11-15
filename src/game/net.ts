@@ -51,6 +51,49 @@ export interface NetEventHandlers {
   onWorldEvent: (msg: Record<string, unknown>) => void;
 }
 
+const CUSTOM_WS_STORAGE_KEY = 'unstable_custom_ws_url';
+
+export function resolveWebSocketUrl(): string {
+  try {
+    const saved = window.localStorage.getItem(CUSTOM_WS_STORAGE_KEY)?.trim();
+    if (saved) {
+      if (saved.startsWith('ws://') || saved.startsWith('wss://')) return saved;
+      if (saved.startsWith('http://')) return `${saved.replace('http://', 'ws://').replace(/\/$/, '')}/ws`;
+      if (saved.startsWith('https://')) return `${saved.replace('https://', 'wss://').replace(/\/$/, '')}/ws`;
+    }
+  } catch {
+    // ignore storage errors
+  }
+
+  const envUrl = (import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_WS_URL?.trim();
+  if (envUrl) return envUrl;
+
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${window.location.host}/ws`;
+}
+
+export function saveCustomServerUrl(raw: string): string {
+  const cleaned = raw.trim();
+  try {
+    if (!cleaned) {
+      window.localStorage.removeItem(CUSTOM_WS_STORAGE_KEY);
+    } else {
+      window.localStorage.setItem(CUSTOM_WS_STORAGE_KEY, cleaned);
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return resolveWebSocketUrl();
+}
+
+export function getCustomServerUrl(): string {
+  try {
+    return window.localStorage.getItem(CUSTOM_WS_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
 export class MultiplayerClient {
   private ws: WebSocket | null = null;
   private handlers: NetEventHandlers;
@@ -68,6 +111,11 @@ export class MultiplayerClient {
   };
   private pendingActions: Array<Record<string, unknown>> = [];
   private disposed = false;
+  private retryCount = 0;
+  private retryTimer: number | null = null;
+  private connectTimeout: number | null = null;
+  private pingTimer: number | null = null;
+  private openedOnce = false;
 
   constructor(handlers: NetEventHandlers) {
     this.handlers = handlers;
@@ -77,25 +125,91 @@ export class MultiplayerClient {
     return { ...this.state, peers: [...this.state.peers] };
   }
 
+  public resetConnection(): void {
+    this.clearTimers();
+    this.retryCount = 0;
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {
+        // ignore
+      }
+      this.ws = null;
+    }
+    this.state.error = null;
+    this.state.status = 'idle';
+    this.handlers.onRoomChange(this.getState());
+  }
+
+  private clearTimers(): void {
+    if (this.retryTimer !== null) {
+      window.clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+    if (this.connectTimeout !== null) {
+      window.clearTimeout(this.connectTimeout);
+      this.connectTimeout = null;
+    }
+    if (this.pingTimer !== null) {
+      window.clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+  }
+
   private ensureSocket(): void {
     if (this.disposed) return;
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${proto}//${window.location.host}/ws`;
+
+    const url = resolveWebSocketUrl();
     this.state.status = 'connecting';
     this.state.error = null;
+    this.openedOnce = false;
     this.handlers.onRoomChange(this.getState());
 
-    const ws = new WebSocket(url);
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(url);
+    } catch {
+      this.handleFatalConnectError('잘못된 웹소켓 서버 주소입니다.');
+      return;
+    }
     this.ws = ws;
+
+    if (this.connectTimeout !== null) {
+      window.clearTimeout(this.connectTimeout);
+    }
+    this.connectTimeout = window.setTimeout(() => {
+      if (this.ws === ws && ws.readyState === WebSocket.CONNECTING) {
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      }
+    }, 12000);
 
     ws.onopen = () => {
       if (this.disposed) {
         ws.close();
         return;
       }
+      if (this.connectTimeout !== null) {
+        window.clearTimeout(this.connectTimeout);
+        this.connectTimeout = null;
+      }
+      this.openedOnce = true;
+      this.retryCount = 0;
+      this.state.error = null;
+
+      if (this.pingTimer !== null) window.clearInterval(this.pingTimer);
+      this.pingTimer = window.setInterval(() => {
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 20000);
+
       while (this.pendingActions.length > 0) {
         const msg = this.pendingActions.shift()!;
         ws.send(JSON.stringify(msg));
@@ -111,6 +225,8 @@ export class MultiplayerClient {
       }
 
       const type = String(msg.type || '');
+      if (type === 'pong') return;
+
       if (type === 'welcome') {
         this.state.selfId = String(msg.clientId || '');
         this.handlers.onRoomChange(this.getState());
@@ -216,23 +332,58 @@ export class MultiplayerClient {
     };
 
     ws.onerror = () => {
-      if (this.disposed) return;
-      this.state.error = '온라인 서버 연결에 실패했습니다.';
-      this.state.linkQueueing = false;
-      this.handlers.onRoomChange(this.getState());
+      // Let onclose handle retry vs fatal error cleanly
     };
 
     ws.onclose = () => {
       if (this.disposed) return;
+      if (this.ws === ws) {
+        this.ws = null;
+      }
+      if (this.connectTimeout !== null) {
+        window.clearTimeout(this.connectTimeout);
+        this.connectTimeout = null;
+      }
+      if (this.pingTimer !== null) {
+        window.clearInterval(this.pingTimer);
+        this.pingTimer = null;
+      }
+
+      if (!this.openedOnce && this.pendingActions.length > 0 && this.retryCount < 2) {
+        this.retryCount += 1;
+        this.retryTimer = window.setTimeout(() => {
+          this.retryTimer = null;
+          this.ensureSocket();
+        }, 700 * this.retryCount);
+        return;
+      }
+
       this.state.linkQueueing = false;
+      if (!this.openedOnce) {
+        this.handleFatalConnectError(
+          '온라인 서버 연결에 실패했습니다. Render Static Site(dist 정적 배포)가 아닌 Web Service(npm start)로 배포되었는지 확인하거나 아래에 서버 주소를 입력하세요.'
+        );
+        return;
+      }
+
       if (this.state.roomCode) {
         this.state.status = 'idle';
         this.state.roomCode = null;
         this.state.peers = [];
         this.state.isHost = false;
+        this.state.error = '서버와의 연결이 끊어졌습니다. 다시 입장해 주세요.';
         this.handlers.onRoomChange(this.getState());
       }
     };
+  }
+
+  private handleFatalConnectError(message: string): void {
+    this.pendingActions = [];
+    this.retryCount = 0;
+    this.state.status = 'idle';
+    this.state.linkQueueing = false;
+    this.state.error = message;
+    this.handlers.onRoomChange(this.getState());
   }
 
   public send(payload: Record<string, unknown>): void {
@@ -253,21 +404,25 @@ export class MultiplayerClient {
 
   public joinGlobal(name: string, characterId: CharacterId): void {
     this.state.playerName = name.trim() || 'Fighter';
+    this.retryCount = 0;
     this.send({ type: 'join_global', name: this.state.playerName, characterId });
   }
 
   public createLinkDuel(name: string, characterId: CharacterId): void {
     this.state.playerName = name.trim() || 'Challenger';
+    this.retryCount = 0;
     this.send({ type: 'create_link_duel', name: this.state.playerName, characterId });
   }
 
   public joinLinkDuel(code: string, name: string, characterId: CharacterId): void {
     this.state.playerName = name.trim() || 'Opponent';
+    this.retryCount = 0;
     this.send({ type: 'join_link_duel', code: code.trim().toUpperCase(), name: this.state.playerName, characterId });
   }
 
   public queueLinkDuel(name: string, characterId: CharacterId): void {
     this.state.playerName = name.trim() || 'Challenger';
+    this.retryCount = 0;
     this.send({ type: 'queue_link_duel', name: this.state.playerName, characterId });
   }
 
@@ -281,11 +436,13 @@ export class MultiplayerClient {
 
   public createRoom(name: string, characterId: CharacterId, includeBots: boolean): void {
     this.state.playerName = name.trim() || 'Player';
+    this.retryCount = 0;
     this.send({ type: 'create_room', name: this.state.playerName, characterId, includeBots });
   }
 
   public joinRoom(code: string, name: string, characterId: CharacterId): void {
     this.state.playerName = name.trim() || 'Friend';
+    this.retryCount = 0;
     this.send({ type: 'join_room', code: code.trim().toUpperCase(), name: this.state.playerName, characterId });
   }
 
@@ -320,6 +477,7 @@ export class MultiplayerClient {
 
   public dispose(): void {
     this.disposed = true;
+    this.clearTimers();
     this.ws?.close();
     this.ws = null;
   }

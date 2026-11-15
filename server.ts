@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,7 +7,11 @@ import { WebSocketServer, WebSocket } from 'ws';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
-const IS_PROD = process.env.NODE_ENV === 'production';
+const DIST_INDEX = path.join(__dirname, 'dist', 'index.html');
+const IS_PROD =
+  process.env.NODE_ENV === 'production' ||
+  (Boolean(process.env.RENDER) && fs.existsSync(DIST_INDEX)) ||
+  (!process.env.DISABLE_HMR && fs.existsSync(DIST_INDEX));
 
 type CharacterId =
   | 'wemmbu'
@@ -173,6 +178,11 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
+  app.use((_req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    next();
+  });
+
   app.get('/api/health', (_req, res) => {
     res.json({
       ok: true,
@@ -183,6 +193,18 @@ async function startServer() {
 
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });
+
+  const heartbeatInterval = setInterval(() => {
+    for (const client of wss.clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.ping();
+      }
+    }
+  }, 20000);
+
+  wss.on('close', () => {
+    clearInterval(heartbeatInterval);
+  });
 
   let nextClientId = 1;
 
@@ -201,6 +223,10 @@ async function startServer() {
       }
 
       const type = String(msg.type || '');
+      if (type === 'ping') {
+        sendJson(ws, { type: 'pong' });
+        return;
+      }
 
       if (type === 'join_global') {
         removeFromQueue(clientId);

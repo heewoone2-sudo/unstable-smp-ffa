@@ -15,8 +15,8 @@
     margin: 0;
     padding: 0;
     overflow: hidden;
-    background-color: #0b0d14;
-    color: #f4f6fb;
+    background-color: #ffffff;
+    color: #0f172a;
     font-family: var(--font-sans);
     user-select: none;
     -webkit-user-select: none;
@@ -33,5 +33,5 @@
 }
 
 .hud-text-stroke {
-  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.9);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
 }

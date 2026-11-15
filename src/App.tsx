@@ -54,6 +54,7 @@ const INITIAL_HUD: HudSnapshot = {
   isBlocking: false,
   isStealthed: false,
   isInCobweb: false,
+  cobwebBreakProgress: 0,
   isBurning: false,
   isInWater: false,
   cameraMode: 'firstperson',
@@ -196,7 +197,7 @@ export default function App() {
   };
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden bg-[#0b0d14]">
+    <main className="relative w-screen h-screen overflow-hidden bg-white">
       <div
         ref={canvasMountRef}
         data-testid="arena-canvas"
@@ -228,6 +229,7 @@ export default function App() {
           onUpdateLobby={(updates) => engineRef.current?.updateMultiplayerLobby(updates)}
           onStartMultiplayer={() => engineRef.current?.startMultiplayerMatch()}
           onLeaveRoom={() => engineRef.current?.leaveMultiplayerRoom()}
+          onResetNetwork={() => engineRef.current?.resetNetworkConnection()}
         />
       )}
 
@@ -239,7 +241,9 @@ export default function App() {
           onToggleMute={() => engineRef.current?.toggleMute()}
           onPause={() => engineRef.current?.pauseGame()}
           onRestart={() => engineRef.current?.startGame()}
+          onSendChat={(text) => engineRef.current?.sendChatMessage(text)}
           onMobileAttack={() => engineRef.current?.mobileAttack()}
+          onMobileAttackHold={(pressed) => engineRef.current?.mobileAttackHold(pressed)}
           onMobileJump={(pressed) => engineRef.current?.mobileJump(pressed)}
           onMobileBlock={(pressed) => engineRef.current?.mobileBlock(pressed)}
           onMobileMove={(fwd, rt) => engineRef.current?.mobileMove(fwd, rt)}
