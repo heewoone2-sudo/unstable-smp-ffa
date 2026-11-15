@@ -2,14 +2,13 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { GameAudio } from './audio';
-import { CHARACTER_LIST, CHARACTERS, GAME_MODES } from './characters';
+import { CHARACTER_LIST, CHARACTERS, DEFAULT_GAME_SETTINGS, GAME_MODES } from './characters';
 import {
   applyCombatDamage,
   computeBlockPlacement,
   computeMaceDamage,
   computeSwordDamage,
   consumeSlotUse,
-  createArenaBlocks,
   getSupportHeightAt,
   isInsideCobweb,
   isInsideHazardPool,
@@ -17,6 +16,14 @@ import {
   tickSlotRecharge,
 } from './combatMath';
 import {
+  canDamageTarget,
+  getArenaBlocksForMap,
+  getNextMapId,
+  MAP_DEFINITIONS,
+  MAP_ROTATION_SECONDS,
+} from './maps';
+import {
+  createArrowProjectileMesh,
   createCobwebMesh,
   createEnemyOverheadBar,
   createFighterModel,
@@ -28,7 +35,7 @@ import {
   type FirstPersonRig,
 } from './models';
 import { MultiplayerClient } from './net';
-import { createArenaMaterials, type ArenaMaterialSet } from './textures';
+import { createArenaMaterials, paintSkyDomeCanvas, type ArenaMaterialSet } from './textures';
 import type {
   AiPolicy,
   ArenaBlock,
@@ -39,12 +46,18 @@ import type {
   CobwebZone,
   GameModeId,
   GameScreenState,
+  GameSettings,
   HazardPoolZone,
   HudSnapshot,
+  MapId,
   MultiplayerHudState,
+  PlayerTeam,
+  ScoreboardEntry,
   SixTuple,
   WeaponSlotId,
 } from './types';
+
+const SETTINGS_STORAGE_KEY = 'skybox_clash_settings_v1';
 
 const ARENA_RADIUS = 108;
 const GRAVITY = -28;
@@ -69,17 +82,21 @@ const _color = new THREE.Color();
 
 interface Projectile {
   active: boolean;
-  kind: 'wind_charge' | 'ender_pearl' | 'trident' | 'cobweb_orb';
+  kind: 'wind_charge' | 'ender_pearl' | 'trident' | 'cobweb_orb' | 'arrow' | 'bolt';
   ownerId: string;
+  ownerTeam: PlayerTeam;
+  damage: number;
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   life: number;
   mesh: THREE.Mesh;
+  arrowGroup: THREE.Group;
 }
 
 interface TntFuseEntity {
   active: boolean;
   ownerId: string;
+  ownerTeam: PlayerTeam;
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   fuse: number;
@@ -131,6 +148,7 @@ interface Shockwave {
 interface AiFighter {
   id: string;
   name: string;
+  team: PlayerTeam;
   profile: CharacterProfile;
   policy: AiPolicy;
   rig: FighterRig;
@@ -141,6 +159,8 @@ interface AiFighter {
   hp: number;
   maxHp: number;
   absorption: number;
+  kills: number;
+  deaths: number;
   onGround: boolean;
   fallStartY: number;
   walkDist: number;
@@ -156,6 +176,9 @@ interface AiFighter {
   strafeTimer: number;
   windCd: number;
   pearlCd: number;
+  specialCd: number;
+  healCd: number;
+  stealthTimer: number;
   isBlocking: boolean;
   koTimer: number;
   alive: boolean;
@@ -166,6 +189,7 @@ interface AiFighter {
 interface RemotePeerActor {
   id: string;
   name: string;
+  team: PlayerTeam;
   characterId: CharacterId;
   rig: FighterRig;
   overhead: EnemyOverheadBar;
@@ -176,6 +200,8 @@ interface RemotePeerActor {
   targetYaw: number;
   hp: number;
   maxHp: number;
+  kills: number;
+  deaths: number;
   activeSlot: WeaponSlotId;
   isBlocking: boolean;
   isGliding: boolean;
@@ -200,6 +226,22 @@ export class UnstableArenaEngine {
   private blocks: ArenaBlock[];
   private placedBlocks: PlacedBlockEntry[] = [];
   private envMeshes: THREE.Mesh[] = [];
+  private mapGroup!: THREE.Group;
+  private groundMesh!: THREE.Mesh;
+  private outerTerrainMesh!: THREE.Mesh;
+  private hemiLight!: THREE.HemisphereLight;
+  private sunLight!: THREE.DirectionalLight;
+  private currentMapId: MapId = 'container_yard';
+  private currentArenaRadius = MAP_DEFINITIONS.container_yard.worldRadius;
+  private offlineMapTimer = 0;
+  private mapStartedAtMs = Date.now();
+  private matchTargetKills = 15;
+  private settings: GameSettings = { ...DEFAULT_GAME_SETTINGS };
+  private fps = 60;
+  private fpsFrames = 0;
+  private fpsAccum = 0;
+  private mobileSprintLocked = false;
+  private mobileForwardInput = 0;
   private raycaster = new THREE.Raycaster();
   private net: MultiplayerClient;
 
@@ -234,8 +276,8 @@ export class UnstableArenaEngine {
   private playerJumpBuffer = 0;
   private attackBuffer = 0;
   private playerWalkDist = 0;
-  private playerHp = 110;
-  private playerMaxHp = 110;
+  private playerHp = 112;
+  private playerMaxHp = 112;
   private playerAbsorption = 0;
   private playerStamina = 100;
   private activeSlot = 0;
@@ -273,7 +315,7 @@ export class UnstableArenaEngine {
   private camLook = new THREE.Vector3(0, 1.5, 0);
   private shakeTrauma = 0;
   private hitstopTimer = 0;
-  private fovCurrent = 68;
+  private fovCurrent = 78;
   private titleOrbitAngle = 0;
 
   // Match stats
@@ -326,12 +368,21 @@ export class UnstableArenaEngine {
   private mpState: MultiplayerHudState = {
     status: 'idle',
     roomKind: 'global',
+    roomMode: 'ffa',
     roomCode: null,
     selfId: null,
     isHost: false,
     playerName: 'Player',
     includeBots: true,
     linkQueueing: false,
+    selectedMap: 'container_yard',
+    mapVotes: {
+      container_yard: 0,
+      emerald_citadel: 0,
+      sky_dock: 0,
+      nether_foundry: 0,
+    },
+    targetKills: 15,
     peers: [],
     error: null,
   };
@@ -339,7 +390,12 @@ export class UnstableArenaEngine {
   constructor(container: HTMLElement, onHudChange: (snapshot: HudSnapshot) => void) {
     this.container = container;
     this.onHudChange = onHudChange;
-    this.blocks = createArenaBlocks();
+    this.settings = this.loadSettings();
+    this.cameraMode = this.settings.cameraMode;
+    this.fovCurrent = this.settings.fov;
+    this.audio.setMuted(this.settings.muted);
+    this.audio.setMasterVolume(this.settings.masterVolume / 100);
+    this.blocks = getArenaBlocksForMap(this.currentMapId);
     this.staticBlockCount = this.blocks.length;
 
     this.isSoftwareGl = (() => {
@@ -372,15 +428,17 @@ export class UnstableArenaEngine {
       container.clientHeight || window.innerHeight
     );
 
+    this.applyGraphicsQuality();
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color('#b6dffb');
-    this.scene.fog = new THREE.FogExp2('#c6e6fb', 0.0020);
+    const initMapDef = MAP_DEFINITIONS[this.currentMapId];
+    this.scene.background = new THREE.Color(initMapDef.fogColor);
+    this.scene.fog = new THREE.FogExp2(initMapDef.fogColor, 0.0020);
 
     const aspect =
       (container.clientWidth || window.innerWidth) / (container.clientHeight || window.innerHeight);
-    this.camera = new THREE.PerspectiveCamera(68, aspect, 0.1, 480);
+    this.camera = new THREE.PerspectiveCamera(this.settings.fov, aspect, 0.1, 480);
     this.scene.add(this.camera);
 
     const pmremGenerator = new THREE.PMREMGenerator(this.renderer);
@@ -397,16 +455,35 @@ export class UnstableArenaEngine {
     this.net = new MultiplayerClient({
       onRoomChange: (state, placed) => {
         this.mpState = state;
+        this.matchTargetKills = state.targetKills || 15;
+        if (state.mapStartedAt) {
+          this.mapStartedAtMs = state.mapStartedAt;
+        }
+        if (state.selectedMap && state.selectedMap !== this.currentMapId && this.screen === 'title') {
+          this.applyArenaMap(state.selectedMap, false);
+        }
         if (placed) {
           this.syncPlacedBlocksFromServer(placed);
         }
         this.syncRemotePeers();
         this.emitHud(true);
       },
-      onMatchStart: (roomKind) => {
+      onMatchStart: (roomKind, selectedMap, mapStartedAt, targetKills) => {
         this.mode =
           roomKind === 'global' ? 'online_world' : roomKind === 'link_duel' ? 'link_duel' : 'multiplayer';
+        if (selectedMap) {
+          this.currentMapId = selectedMap;
+        }
+        this.mapStartedAtMs = mapStartedAt ?? Date.now();
+        if (targetKills) {
+          this.matchTargetKills = targetKills;
+        }
         this.startGameInternal();
+      },
+      onMapChanged: (mapId, mapStartedAt) => {
+        this.mapStartedAtMs = mapStartedAt;
+        this.applyArenaMap(mapId, true);
+        this.emitHud(true);
       },
       onLinkMatchOver: (msg) => {
         const won = msg.winnerId === this.mpState.selfId;
@@ -534,11 +611,13 @@ export class UnstableArenaEngine {
   }
 
   private setupLighting(): void {
-    const hemi = new THREE.HemisphereLight(0xe0f2fe, 0x3b6e28, 1.15);
+    const mapDef = MAP_DEFINITIONS[this.currentMapId];
+    const hemi = new THREE.HemisphereLight(mapDef.ambientSky, mapDef.ambientGround, 1.15);
     hemi.position.set(0, 50, 0);
     this.scene.add(hemi);
+    this.hemiLight = hemi;
 
-    const sun = new THREE.DirectionalLight(0xfff7e6, 2.2);
+    const sun = new THREE.DirectionalLight(mapDef.sunColor, 2.2);
     sun.position.set(52, 82, 40);
     if (!this.isSoftwareGl) {
       sun.castShadow = true;
@@ -554,6 +633,7 @@ export class UnstableArenaEngine {
       sun.shadow.normalBias = 0.02;
     }
     this.scene.add(sun);
+    this.sunLight = sun;
 
     const rim = new THREE.DirectionalLight(0x93c5fd, 0.58);
     rim.position.set(-48, 30, -48);
@@ -561,7 +641,6 @@ export class UnstableArenaEngine {
   }
 
   private buildArenaEnvironment(): void {
-    // Atmospheric sky dome with smooth zenith-to-horizon gradient
     const skyDome = new THREE.Mesh(
       new THREE.SphereGeometry(330, 32, 20),
       new THREE.MeshBasicMaterial({
@@ -573,25 +652,81 @@ export class UnstableArenaEngine {
     );
     this.scene.add(skyDome);
 
-    // Wide meadow basin extending organically into distant hills
-    const outerTerrain = new THREE.Mesh(
+    this.outerTerrainMesh = new THREE.Mesh(
       new THREE.CylinderGeometry(ARENA_RADIUS + 44, ARENA_RADIUS + 54, 4, 64),
       this.materials.ground
     );
-    outerTerrain.position.y = -2.04;
-    outerTerrain.receiveShadow = !this.isSoftwareGl;
-    this.scene.add(outerTerrain);
+    this.outerTerrainMesh.position.y = -2.04;
+    this.outerTerrainMesh.receiveShadow = !this.isSoftwareGl;
+    this.scene.add(this.outerTerrainMesh);
 
     const groundGeo = new THREE.CylinderGeometry(ARENA_RADIUS + 2.5, ARENA_RADIUS + 8, 4, 64);
-    const groundMesh = new THREE.Mesh(groundGeo, this.materials.ground);
-    groundMesh.position.y = -2;
-    groundMesh.receiveShadow = !this.isSoftwareGl;
-    this.scene.add(groundMesh);
+    this.groundMesh = new THREE.Mesh(groundGeo, this.materials.ground);
+    this.groundMesh.position.y = -2;
+    this.groundMesh.receiveShadow = !this.isSoftwareGl;
+    this.scene.add(this.groundMesh);
+
+    this.mapGroup = new THREE.Group();
+    this.scene.add(this.mapGroup);
+    this.applyArenaMap(this.currentMapId, false);
+  }
+
+  private applyArenaMap(mapId: MapId, announce = true): void {
+    this.currentMapId = mapId;
+    const mapDef = MAP_DEFINITIONS[mapId];
+    this.currentArenaRadius = mapDef.worldRadius;
+
+    // Clear placed blocks & transient map group geometry
+    this.clearPlacedBlocks();
+    if (this.mapGroup) {
+      while (this.mapGroup.children.length > 0) {
+        const child = this.mapGroup.children.pop()!;
+        this.mapGroup.remove(child);
+        child.traverse((obj) => {
+          const mesh = obj as THREE.Mesh;
+          if (mesh.geometry) mesh.geometry.dispose();
+        });
+      }
+    }
+    this.envMeshes = [];
+    this.crystalMeshes = [];
+
+    // Update sky dome, fog, lighting, and ground material
+    const skyCanvas = this.materials.skyDomeTex.image as HTMLCanvasElement | undefined;
+    if (skyCanvas && typeof skyCanvas.getContext === 'function') {
+      paintSkyDomeCanvas(skyCanvas, mapDef.skyTop, mapDef.skyMid, mapDef.skyHorizon, mapDef.skyBottom);
+      this.materials.skyDomeTex.needsUpdate = true;
+    }
+    this.scene.background = new THREE.Color(mapDef.fogColor);
+    this.scene.fog = new THREE.FogExp2(mapDef.fogColor, 0.0020);
+    if (this.hemiLight) {
+      this.hemiLight.color.setHex(mapDef.ambientSky);
+      this.hemiLight.groundColor.setHex(mapDef.ambientGround);
+    }
+    if (this.sunLight) {
+      this.sunLight.color.setHex(mapDef.sunColor);
+    }
+
+    const groundMat = this.materials.ground;
+    if (mapId === 'container_yard' || mapId === 'sky_dock') {
+      groundMat.map = this.materials.asphaltGroundTex;
+      groundMat.color.setHex(mapId === 'sky_dock' ? 0xcbd5e1 : 0xffffff);
+    } else if (mapId === 'nether_foundry') {
+      groundMat.map = this.materials.asphaltGroundTex;
+      groundMat.color.setHex(0x64545c);
+    } else {
+      groundMat.map = this.materials.grassGroundTex;
+      groundMat.color.setHex(0xffffff);
+    }
+    groundMat.needsUpdate = true;
+
+    this.blocks = getArenaBlocksForMap(mapId);
+    this.staticBlockCount = this.blocks.length;
 
     const ringGeo = new THREE.RingGeometry(13.85, 14.25, 64);
     const ringMat = new THREE.MeshPhysicalMaterial({
-      color: 0xf59e0b,
-      emissive: 0xb45309,
+      color: mapId === 'container_yard' ? 0xf59e0b : mapId === 'nether_foundry' ? 0xef4444 : 0x38bdf8,
+      emissive: mapId === 'nether_foundry' ? 0xb91c1c : 0xb45309,
       emissiveIntensity: 0.35,
       roughness: 0.22,
       metalness: 0.85,
@@ -601,12 +736,12 @@ export class UnstableArenaEngine {
     const centerRing = new THREE.Mesh(ringGeo, ringMat);
     centerRing.rotation.x = -Math.PI / 2;
     centerRing.position.y = 0.025;
-    this.scene.add(centerRing);
+    this.mapGroup.add(centerRing);
 
     const outerRingGeo = new THREE.RingGeometry(53.6, 54.4, 96);
     const outerRingMat = new THREE.MeshPhysicalMaterial({
-      color: 0xa855f7,
-      emissive: 0x7e22ce,
+      color: mapId === 'container_yard' ? 0x2563eb : mapId === 'nether_foundry' ? 0xf97316 : 0xa855f7,
+      emissive: mapId === 'container_yard' ? 0x1d4ed8 : 0x7e22ce,
       emissiveIntensity: 0.35,
       roughness: 0.25,
       metalness: 0.78,
@@ -616,21 +751,21 @@ export class UnstableArenaEngine {
     const outerRing = new THREE.Mesh(outerRingGeo, outerRingMat);
     outerRing.rotation.x = -Math.PI / 2;
     outerRing.position.y = 0.02;
-    this.scene.add(outerRing);
+    this.mapGroup.add(outerRing);
 
-    // Sculpted beveled architectural blocks & monolith caps
+    // Sculpted beveled architectural blocks & caps
     for (const b of this.blocks) {
-      const bevelR = Math.min(0.16, Math.min(b.w, b.h, b.d) * 0.14);
-      const geo = new RoundedBoxGeometry(b.w, b.h, b.d, 3, bevelR);
+      const bevelR = Math.min(0.14, Math.min(b.w, b.h, b.d) * 0.14);
+      const geo = new RoundedBoxGeometry(b.w, b.h, b.d, 2, bevelR);
       const mat = this.materials[b.kind] ?? this.materials.stone;
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(b.x, b.y + b.h * 0.5, b.z);
       mesh.castShadow = !this.isSoftwareGl;
       mesh.receiveShadow = !this.isSoftwareGl;
-      this.scene.add(mesh);
+      this.mapGroup.add(mesh);
       this.envMeshes.push(mesh);
 
-      if (b.h >= 3.0 && b.y <= 0.1) {
+      if (b.h >= 3.0 && b.y <= 0.1 && !b.kind.startsWith('container_')) {
         const cap = new THREE.Mesh(
           new RoundedBoxGeometry(b.w + 0.28, 0.32, b.d + 0.28, 2, 0.07),
           b.kind === 'obsidian' ? this.materials.gold : this.materials.deepslate
@@ -638,27 +773,50 @@ export class UnstableArenaEngine {
         cap.position.set(b.x, b.y + b.h - 0.1, b.z);
         cap.castShadow = !this.isSoftwareGl;
         cap.receiveShadow = !this.isSoftwareGl;
-        this.scene.add(cap);
+        this.mapGroup.add(cap);
       }
     }
 
-    // Polished Amethyst Crystal Nodes + Floating Orbit Rings
-    const crystalCoords = [
-      new THREE.Vector3(-5, 12.1, -26),
-      new THREE.Vector3(5, 12.1, -26),
-      new THREE.Vector3(-18, 9.0, -16),
-      new THREE.Vector3(18, 9.0, -16),
-      new THREE.Vector3(-18, 8.0, 18),
-      new THREE.Vector3(18, 8.0, 18),
-      new THREE.Vector3(0, 15.0, -72),
-      new THREE.Vector3(0, 14.5, 72),
-      new THREE.Vector3(70, 13.5, 0),
-      new THREE.Vector3(-70, 13.5, 0),
-    ];
+    // Map-specific crystals & orbital beacons
+    const crystalCoords =
+      mapId === 'container_yard'
+        ? [
+            new THREE.Vector3(-25, 11.4, 0),
+            new THREE.Vector3(25, 11.4, 0),
+            new THREE.Vector3(0, 7.6, -24),
+            new THREE.Vector3(0, 7.6, 24),
+          ]
+        : mapId === 'sky_dock'
+          ? [
+              new THREE.Vector3(-24, 12.8, 0),
+              new THREE.Vector3(24, 12.8, 0),
+              new THREE.Vector3(0, 9.6, -28),
+              new THREE.Vector3(0, 9.6, 28),
+            ]
+          : mapId === 'nether_foundry'
+            ? [
+                new THREE.Vector3(-24, 11.6, -22),
+                new THREE.Vector3(24, 11.6, -22),
+                new THREE.Vector3(-24, 11.6, 22),
+                new THREE.Vector3(24, 11.6, 22),
+              ]
+            : [
+                new THREE.Vector3(-18, 9.0, -16),
+                new THREE.Vector3(18, 9.0, -16),
+                new THREE.Vector3(-18, 8.0, 18),
+                new THREE.Vector3(18, 8.0, 18),
+                new THREE.Vector3(0, 15.0, -72),
+                new THREE.Vector3(0, 14.5, 72),
+              ];
+
+    const crystalColor =
+      mapId === 'container_yard' ? 0x38bdf8 : mapId === 'nether_foundry' ? 0xf97316 : 0xd8b4fe;
+    const crystalEmissive =
+      mapId === 'container_yard' ? 0x0284c7 : mapId === 'nether_foundry' ? 0xdc2626 : 0x9333ea;
     const crystalGeo = new THREE.IcosahedronGeometry(0.76, 1);
     const crystalMat = new THREE.MeshPhysicalMaterial({
-      color: 0xd8b4fe,
-      emissive: 0x9333ea,
+      color: crystalColor,
+      emissive: crystalEmissive,
       emissiveIntensity: 0.78,
       roughness: 0.08,
       metalness: 0.25,
@@ -672,125 +830,115 @@ export class UnstableArenaEngine {
       const halo = new THREE.Mesh(crystalHaloGeo, ringMat);
       halo.rotation.x = Math.PI / 2;
       cMesh.add(halo);
-      this.scene.add(cMesh);
+      this.mapGroup.add(cMesh);
       this.crystalMeshes.push(cMesh);
     }
 
-    // Natural Sculpted Foothill Ridges & Boulders around Perimeter (InstancedMesh)
-    const hillGeo = new THREE.IcosahedronGeometry(1.0, 2);
-    const hillCount = 68;
-    const hills = new THREE.InstancedMesh(hillGeo, this.materials.cliff, hillCount);
-    hills.receiveShadow = !this.isSoftwareGl;
     const dummy = new THREE.Object3D();
-    const hillPalette = [0x4c7c3e, 0x5c8b47, 0x3f6a34, 0x67795c];
-    for (let i = 0; i < hillCount; i++) {
-      const angle = (i / hillCount) * Math.PI * 2 + (i % 3) * 0.04;
-      const dist = ARENA_RADIUS + 6.5 + (i % 4) * 5.2;
-      const rx = 7.5 + (i % 3) * 3.2;
-      const ry = 8.5 + ((i * 7) % 10) * 1.85;
-      const rz = 6.5 + ((i + 1) % 3) * 2.8;
-      dummy.position.set(Math.cos(angle) * dist, ry * 0.28 - 2.5, Math.sin(angle) * dist);
-      dummy.rotation.set(0.12 * ((i % 3) - 1), angle + i * 0.4, 0.08 * ((i % 2) - 0.5));
-      dummy.scale.set(rx, ry, rz);
-      dummy.updateMatrix();
-      hills.setMatrixAt(i, dummy.matrix);
-      hills.setColorAt(i, _color.setHex(hillPalette[i % hillPalette.length]));
+
+    // Foothills or Industrial Yard Perimeter Structures
+    if (mapId === 'emerald_citadel') {
+      const hillGeo = new THREE.IcosahedronGeometry(1.0, 2);
+      const hillCount = 68;
+      const hills = new THREE.InstancedMesh(hillGeo, this.materials.cliff, hillCount);
+      hills.receiveShadow = !this.isSoftwareGl;
+      const hillPalette = [0x4c7c3e, 0x5c8b47, 0x3f6a34, 0x67795c];
+      for (let i = 0; i < hillCount; i++) {
+        const angle = (i / hillCount) * Math.PI * 2 + (i % 3) * 0.04;
+        const dist = ARENA_RADIUS + 6.5 + (i % 4) * 5.2;
+        const rx = 7.5 + (i % 3) * 3.2;
+        const ry = 8.5 + ((i * 7) % 10) * 1.85;
+        const rz = 6.5 + ((i + 1) % 3) * 2.8;
+        dummy.position.set(Math.cos(angle) * dist, ry * 0.28 - 2.5, Math.sin(angle) * dist);
+        dummy.rotation.set(0.12 * ((i % 3) - 1), angle + i * 0.4, 0.08 * ((i % 2) - 0.5));
+        dummy.scale.set(rx, ry, rz);
+        dummy.updateMatrix();
+        hills.setMatrixAt(i, dummy.matrix);
+        hills.setColorAt(i, _color.setHex(hillPalette[i % hillPalette.length]));
+      }
+      hills.instanceMatrix.needsUpdate = true;
+      if (hills.instanceColor) hills.instanceColor.needsUpdate = true;
+      hills.computeBoundingSphere();
+      this.mapGroup.add(hills);
+
+      const treeCount = 24;
+      const trunkGeo = new THREE.CylinderGeometry(0.32, 0.52, 4.6, 12);
+      const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.9, metalness: 0.02 });
+      const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, treeCount);
+      const canopyGeo = new THREE.SphereGeometry(2.6, 14, 10);
+      const canopyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.84, metalness: 0.02 });
+      const canopies = new THREE.InstancedMesh(canopyGeo, canopyMat, treeCount * 2);
+      const leafColors = [0x3b8c32, 0x4ba13f, 0x2f7529, 0x5cb349];
+      for (let i = 0; i < treeCount; i++) {
+        const a = (i / treeCount) * Math.PI * 2 + 0.11;
+        const r = 82 + ((i * 19) % 24);
+        const tx = Math.cos(a) * r;
+        const tz = Math.sin(a) * r;
+        const sc = 0.85 + ((i * 13) % 7) * 0.12;
+        dummy.position.set(tx, 2.1 * sc, tz);
+        dummy.rotation.set(0, a, 0);
+        dummy.scale.set(sc, sc, sc);
+        dummy.updateMatrix();
+        trunks.setMatrixAt(i, dummy.matrix);
+
+        dummy.position.set(tx, 5.1 * sc, tz);
+        dummy.scale.set(1.05 * sc, 0.88 * sc, 1.05 * sc);
+        dummy.updateMatrix();
+        canopies.setMatrixAt(i * 2, dummy.matrix);
+        canopies.setColorAt(i * 2, _color.setHex(leafColors[i % leafColors.length]));
+
+        dummy.position.set(tx + Math.cos(a) * 0.9 * sc, 6.2 * sc, tz + Math.sin(a) * 0.9 * sc);
+        dummy.scale.set(0.76 * sc, 0.72 * sc, 0.76 * sc);
+        dummy.updateMatrix();
+        canopies.setMatrixAt(i * 2 + 1, dummy.matrix);
+        canopies.setColorAt(i * 2 + 1, _color.setHex(leafColors[(i + 1) % leafColors.length]));
+      }
+      trunks.instanceMatrix.needsUpdate = true;
+      canopies.instanceMatrix.needsUpdate = true;
+      if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
+      this.mapGroup.add(trunks, canopies);
+    } else if (mapId === 'container_yard') {
+      // Industrial Cargo Yard floodlight masts & caution bollards
+      const mastGeo = new THREE.CylinderGeometry(0.28, 0.42, 16, 10);
+      const lampGeo = new THREE.BoxGeometry(2.6, 0.6, 0.9);
+      const lampMat = new THREE.MeshStandardMaterial({
+        color: 0xfef3c7,
+        emissive: 0xf59e0b,
+        emissiveIntensity: 0.9,
+        roughness: 0.25,
+      });
+      for (const [mx, mz] of [
+        [-42, -42],
+        [42, -42],
+        [-42, 42],
+        [42, 42],
+      ]) {
+        const mast = new THREE.Mesh(mastGeo, this.materials.deepslate);
+        mast.position.set(mx, 8, mz);
+        const lamp = new THREE.Mesh(lampGeo, lampMat);
+        lamp.position.set(mx, 16.2, mz);
+        lamp.lookAt(0, 0, 0);
+        this.mapGroup.add(mast, lamp);
+      }
     }
-    hills.instanceMatrix.needsUpdate = true;
-    if (hills.instanceColor) hills.instanceColor.needsUpdate = true;
-    hills.computeBoundingSphere();
-    this.scene.add(hills);
 
-    // Outer Meadow Trees (28 sculpted multi-puff trees)
-    const treeCount = 28;
-    const trunkGeo = new THREE.CylinderGeometry(0.32, 0.52, 4.6, 12);
-    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4423, roughness: 0.9, metalness: 0.02 });
-    const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, treeCount);
-    const canopyGeo = new THREE.SphereGeometry(2.6, 16, 12);
-    const canopyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.84, metalness: 0.02 });
-    const canopies = new THREE.InstancedMesh(canopyGeo, canopyMat, treeCount * 2);
-    const leafColors = [0x3b8c32, 0x4ba13f, 0x2f7529, 0x5cb349];
-    for (let i = 0; i < treeCount; i++) {
-      const a = (i / treeCount) * Math.PI * 2 + 0.11;
-      const r = 82 + ((i * 19) % 24);
-      const tx = Math.cos(a) * r;
-      const tz = Math.sin(a) * r;
-      const sc = 0.85 + ((i * 13) % 7) * 0.12;
-      dummy.position.set(tx, 2.1 * sc, tz);
-      dummy.rotation.set(0, a, 0);
-      dummy.scale.set(sc, sc, sc);
-      dummy.updateMatrix();
-      trunks.setMatrixAt(i, dummy.matrix);
-
-      dummy.position.set(tx, 5.1 * sc, tz);
-      dummy.scale.set(1.05 * sc, 0.88 * sc, 1.05 * sc);
-      dummy.updateMatrix();
-      canopies.setMatrixAt(i * 2, dummy.matrix);
-      canopies.setColorAt(i * 2, _color.setHex(leafColors[i % leafColors.length]));
-
-      dummy.position.set(tx + Math.cos(a) * 0.9 * sc, 6.2 * sc, tz + Math.sin(a) * 0.9 * sc);
-      dummy.scale.set(0.76 * sc, 0.72 * sc, 0.76 * sc);
-      dummy.updateMatrix();
-      canopies.setMatrixAt(i * 2 + 1, dummy.matrix);
-      canopies.setColorAt(i * 2 + 1, _color.setHex(leafColors[(i + 1) % leafColors.length]));
-    }
-    trunks.instanceMatrix.needsUpdate = true;
-    canopies.instanceMatrix.needsUpdate = true;
-    if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
-    trunks.computeBoundingSphere();
-    canopies.computeBoundingSphere();
-    this.scene.add(trunks, canopies);
-
-    // Meadow Grass Blades / Tufts across open ground
-    const tuftCount = 520;
-    const tuftGeo = new THREE.ConeGeometry(0.14, 0.52, 5);
-    tuftGeo.translate(0, 0.24, 0);
-    const tuftMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0.02 });
-    const tufts = new THREE.InstancedMesh(tuftGeo, tuftMat, tuftCount);
-    const grassTints = [0x65b949, 0x79cb59, 0x519f39, 0x8ad666];
-    let placedTufts = 0;
-    for (let i = 0; i < tuftCount * 2 && placedTufts < tuftCount; i++) {
-      const a = (i * 2.39996) % (Math.PI * 2);
-      const r = 15 + ((i * 37) % 86);
-      const gx = Math.cos(a) * r;
-      const gz = Math.sin(a) * r;
-      const blocked = this.blocks.some(
-        (b) => Math.abs(gx - b.x) < b.w * 0.65 && Math.abs(gz - b.z) < b.d * 0.65
-      );
-      if (blocked) continue;
-      dummy.position.set(gx, 0, gz);
-      dummy.rotation.set(((i % 5) - 2) * 0.08, a, (((i + 2) % 5) - 2) * 0.08);
-      const s = 0.75 + (i % 4) * 0.25;
-      dummy.scale.set(s, s, s);
-      dummy.updateMatrix();
-      tufts.setMatrixAt(placedTufts, dummy.matrix);
-      tufts.setColorAt(placedTufts, _color.setHex(grassTints[placedTufts % grassTints.length]));
-      placedTufts++;
-    }
-    tufts.count = placedTufts;
-    tufts.instanceMatrix.needsUpdate = true;
-    if (tufts.instanceColor) tufts.instanceColor.needsUpdate = true;
-    tufts.computeBoundingSphere();
-    this.scene.add(tufts);
-
-    // Sculpted Multi-Puff Volumetric Clouds
-    const puffGeo = new THREE.SphereGeometry(3.4, 14, 10);
+    // Volumetric Clouds
+    const puffGeo = new THREE.SphereGeometry(3.4, 12, 9);
     const cloudMat = new THREE.MeshStandardMaterial({
-      color: 0xffffff,
+      color: mapId === 'nether_foundry' ? 0xfdba74 : 0xffffff,
       roughness: 0.96,
       metalness: 0.0,
       transparent: true,
-      opacity: 0.9,
+      opacity: mapId === 'nether_foundry' ? 0.45 : 0.88,
     });
-    for (let i = 0; i < 18; i++) {
-      const angle = (i / 18) * Math.PI * 2 + (i % 3) * 0.14;
-      const r = 46 + ((i * 29) % 92);
+    for (let i = 0; i < 14; i++) {
+      const angle = (i / 14) * Math.PI * 2 + (i % 3) * 0.14;
+      const r = 46 + ((i * 29) % 88);
       const cloudGroup = new THREE.Group();
       const puffs = [
         { x: 0, y: 0.4, z: 0, sx: 1.4, sy: 0.7, sz: 1.0 },
         { x: -2.6, y: 0, z: 0.4, sx: 1.0, sy: 0.58, sz: 0.85 },
         { x: 2.7, y: 0.1, z: -0.3, sx: 1.05, sy: 0.6, sz: 0.85 },
-        { x: 0.6, y: 0.9, z: 0.5, sx: 0.85, sy: 0.6, sz: 0.75 },
       ];
       for (const pf of puffs) {
         const m = new THREE.Mesh(puffGeo, cloudMat);
@@ -798,33 +946,29 @@ export class UnstableArenaEngine {
         m.scale.set(pf.sx, pf.sy, pf.sz);
         cloudGroup.add(m);
       }
-      cloudGroup.position.set(Math.cos(angle) * r, 48 + (i % 5) * 4.0, Math.sin(angle) * r);
-      cloudGroup.scale.setScalar(0.95 + (i % 3) * 0.3);
+      cloudGroup.position.set(Math.cos(angle) * r, 48 + (i % 4) * 4.5, Math.sin(angle) * r);
+      cloudGroup.scale.setScalar(0.95 + (i % 3) * 0.25);
       cloudGroup.rotation.y = angle;
-      this.scene.add(cloudGroup);
+      this.mapGroup.add(cloudGroup);
     }
 
-    // Sculpted Obsidian & Gold Braziers with Warm Firelight
-    const pedestalGeo = new THREE.CylinderGeometry(0.45, 0.68, 1.35, 16);
-    const bowlGeo = new THREE.CylinderGeometry(0.75, 0.42, 0.38, 16);
-    const flameGeo = new THREE.ConeGeometry(0.42, 0.95, 14);
-    const flameMat = new THREE.MeshStandardMaterial({
-      color: 0xfef08a,
-      emissive: 0xf59e0b,
-      emissiveIntensity: 1.4,
-      roughness: 0.18,
-    });
-    for (const bx of [-7.5, 7.5]) {
-      const stand = new THREE.Mesh(pedestalGeo, this.materials.obsidian);
-      stand.position.set(bx, 0.68, -18);
-      stand.castShadow = !this.isSoftwareGl;
-      const bowl = new THREE.Mesh(bowlGeo, this.materials.gold);
-      bowl.position.set(bx, 1.45, -18);
-      const flame = new THREE.Mesh(flameGeo, flameMat);
-      flame.position.set(bx, 2.02, -18);
-      this.scene.add(stand, bowl, flame);
+    // Snap player & AI safely onto new map surfaces if already in-match
+    if (this.screen === 'playing') {
+      const supY = getSupportHeightAt(this.playerPos.x, this.playerPos.z, 25, PLAYER_RADIUS, this.blocks);
+      this.playerPos.y = Math.max(this.playerPos.y, supY);
+      for (const e of this.enemies) {
+        if (!e.alive) continue;
+        const eSup = getSupportHeightAt(e.pos.x, e.pos.z, 25, PLAYER_RADIUS, this.blocks);
+        e.pos.y = Math.max(e.pos.y, eSup);
+      }
+    }
+
+    if (announce) {
+      this.pushCallout(`맵 변경 · ${mapDef.name} (${mapDef.englishName})`, mapDef.accentHex);
     }
   }
+
+  private _unusedMapTailMarker = true;
 
   private initPools(): void {
     const slashGeo = new THREE.RingGeometry(1.1, 2.25, 28, 1, -Math.PI * 0.42, Math.PI * 0.84);
@@ -880,7 +1024,7 @@ export class UnstableArenaEngine {
     }
 
     const projGeo = new THREE.OctahedronGeometry(0.28, 1);
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < 24; i++) {
       const mat = new THREE.MeshStandardMaterial({
         color: 0x7dd3fc,
         emissive: 0x38bdf8,
@@ -890,14 +1034,20 @@ export class UnstableArenaEngine {
       const mesh = new THREE.Mesh(projGeo, mat);
       mesh.visible = false;
       this.scene.add(mesh);
+      const arrowGroup = createArrowProjectileMesh(0x38bdf8);
+      arrowGroup.visible = false;
+      this.scene.add(arrowGroup);
       this.projectiles.push({
         active: false,
         kind: 'wind_charge',
         ownerId: 'player',
+        ownerTeam: 'ffa',
+        damage: 0,
         pos: new THREE.Vector3(),
         vel: new THREE.Vector3(),
         life: 0,
         mesh,
+        arrowGroup,
       });
     }
 
@@ -909,6 +1059,7 @@ export class UnstableArenaEngine {
       this.tntFuses.push({
         active: false,
         ownerId: 'player',
+        ownerTeam: 'ffa',
         pos: new THREE.Vector3(),
         vel: new THREE.Vector3(),
         fuse: 0,
@@ -998,6 +1149,98 @@ export class UnstableArenaEngine {
     this.playerHp = profile.maxHp;
   }
 
+  private loadSettings(): GameSettings {
+    try {
+      const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+      if (!raw) return { ...DEFAULT_GAME_SETTINGS };
+      const parsed = JSON.parse(raw) as Partial<GameSettings>;
+      return {
+        ...DEFAULT_GAME_SETTINGS,
+        ...parsed,
+        fov: Math.max(60, Math.min(100, Number(parsed.fov ?? DEFAULT_GAME_SETTINGS.fov))),
+        sensitivity: Math.max(0.4, Math.min(2.5, Number(parsed.sensitivity ?? DEFAULT_GAME_SETTINGS.sensitivity))),
+        masterVolume: Math.max(0, Math.min(100, Number(parsed.masterVolume ?? DEFAULT_GAME_SETTINGS.masterVolume))),
+      };
+    } catch {
+      return { ...DEFAULT_GAME_SETTINGS };
+    }
+  }
+
+  private saveSettings(): void {
+    try {
+      window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(this.settings));
+    } catch {
+      // ignore storage quota errors
+    }
+  }
+
+  public getSettings(): GameSettings {
+    return { ...this.settings };
+  }
+
+  public updateSettings(partial: Partial<GameSettings>): void {
+    this.settings = { ...this.settings, ...partial };
+    this.saveSettings();
+    if (partial.cameraMode !== undefined) {
+      this.cameraMode = this.settings.cameraMode;
+      this.syncCameraVisibility();
+    }
+    if (partial.fov !== undefined) {
+      this.fovCurrent = this.settings.fov;
+      this.camera.fov = this.settings.fov;
+      this.camera.updateProjectionMatrix();
+    }
+    if (partial.muted !== undefined) {
+      this.audio.setMuted(this.settings.muted);
+    }
+    if (partial.masterVolume !== undefined) {
+      this.audio.setMasterVolume(this.settings.masterVolume / 100);
+    }
+    if (partial.graphicsQuality !== undefined) {
+      this.applyGraphicsQuality();
+    }
+    this.emitHud(true);
+  }
+
+  public resetSettings(): void {
+    this.updateSettings({ ...DEFAULT_GAME_SETTINGS });
+  }
+
+  private applyGraphicsQuality(): void {
+    if (!this.renderer) return;
+    const q = this.settings.graphicsQuality;
+    const dpr = this.isSoftwareGl || q === 'low' ? 1 : q === 'medium' ? Math.min(window.devicePixelRatio || 1, 1.35) : Math.min(window.devicePixelRatio || 1, 2);
+    this.renderer.setPixelRatio(dpr);
+    this.renderer.shadowMap.enabled = !this.isSoftwareGl && q !== 'low';
+  }
+
+  public getLocalPlayerTeam(): PlayerTeam {
+    if (this.mode !== 'multiplayer' || this.mpState.roomMode !== 'team') return 'ffa';
+    const selfPeer = this.mpState.peers.find((p) => p.id === this.mpState.selfId);
+    if (selfPeer && (selfPeer.team === 'red' || selfPeer.team === 'blue')) return selfPeer.team;
+    return 'red';
+  }
+
+  public voteMap(mapId: MapId): void {
+    if (this.mpState.roomCode) {
+      this.net.voteMap(mapId);
+    } else {
+      this.applyArenaMap(mapId, false);
+      this.emitHud(true);
+    }
+  }
+
+  public toggleMobileSprint(): void {
+    this.mobileSprintLocked = !this.mobileSprintLocked;
+    this.pushCallout(this.mobileSprintLocked ? '모바일 자동 질주 ON' : '모바일 질주 OFF', '#38bdf8');
+    this.emitHud(true);
+  }
+
+  public mobileElytra(): void {
+    if (this.screen !== 'playing') return;
+    this.triggerElytraBoost();
+  }
+
   public setCharacter(id: CharacterId): void {
     this.selectedCharId = id;
     this.activeSlot = 0;
@@ -1069,6 +1312,7 @@ export class UnstableArenaEngine {
           senderId: 'local',
           senderName: this.mpState.playerName || 'Player',
           text: clean,
+          team: this.getLocalPlayerTeam(),
         },
       ].slice(-40);
       this.emitHud(true);
@@ -1089,7 +1333,14 @@ export class UnstableArenaEngine {
     this.net.joinRoom(code, name, this.selectedCharId, team);
   }
 
-  public updateMultiplayerLobby(updates: { name?: string; includeBots?: boolean; team?: 'red' | 'blue' | 'ffa'; roomMode?: 'ffa' | 'team' }): void {
+  public updateMultiplayerLobby(updates: {
+    name?: string;
+    includeBots?: boolean;
+    team?: 'red' | 'blue' | 'ffa';
+    roomMode?: 'ffa' | 'team';
+    targetKills?: number;
+    selectedMap?: MapId;
+  }): void {
     this.net.updateLobby(updates);
   }
 
@@ -1125,7 +1376,10 @@ export class UnstableArenaEngine {
   }
 
   public toggleMute(): void {
-    this.audio.setMuted(!this.audio.isMuted());
+    const nextMuted = !this.audio.isMuted();
+    this.audio.setMuted(nextMuted);
+    this.settings = { ...this.settings, muted: nextMuted };
+    this.saveSettings();
     this.emitHud(true);
   }
 
@@ -1133,6 +1387,8 @@ export class UnstableArenaEngine {
     const order: CameraViewMode[] = ['firstperson', 'shiftlock', 'free'];
     const idx = order.indexOf(this.cameraMode);
     this.cameraMode = order[(idx + 1) % order.length];
+    this.settings = { ...this.settings, cameraMode: this.cameraMode };
+    this.saveSettings();
     this.lastMouseX = null;
     this.lastMouseY = null;
 
@@ -1256,11 +1512,18 @@ export class UnstableArenaEngine {
 
   private resetMatch(): void {
     const profile = CHARACTERS[this.selectedCharId];
-    this.playerPos.set(0, 0, 10);
+    const team = this.getLocalPlayerTeam();
+    const spawnZ = this.mode === 'multiplayer' && this.mpState.roomMode === 'team' ? (team === 'blue' ? -18 : 18) : 10;
+    const spawnYaw = this.mode === 'multiplayer' && this.mpState.roomMode === 'team' && team === 'blue' ? Math.PI : 0;
+
+    this.applyArenaMap(this.currentMapId, false);
+    this.offlineMapTimer = 0;
+
+    this.playerPos.set(0, 0, spawnZ);
     this.playerVel.set(0, 0, 0);
-    this.playerYaw = 0;
+    this.playerYaw = spawnYaw;
     this.playerPitch = -0.14;
-    this.targetYaw = 0;
+    this.targetYaw = spawnYaw;
     this.targetPitch = -0.14;
     this.playerOnGround = true;
     this.playerFallStartY = 0;
@@ -1289,8 +1552,10 @@ export class UnstableArenaEngine {
     this.playerBurnTimer = 0;
     this.playerBurnTickTimer = 0;
     this.mobileAttackHeld = false;
+    this.mobileSprintLocked = false;
     this.localRespawnTimer = 0;
-    this.cameraMode = 'firstperson';
+    this.cameraMode = this.settings.cameraMode;
+    this.fovCurrent = this.settings.fov;
     this.swingTimer = 0;
     this.slashTimer = 0;
     this.slashMesh.visible = false;
@@ -1319,12 +1584,13 @@ export class UnstableArenaEngine {
     this.fpRig.setActiveWeapon(profile.loadout[0].id);
     this.playerRig.root.position.copy(this.playerPos);
     this.playerRig.root.rotation.set(0, this.playerYaw + Math.PI, 0);
-    this.camPos.set(0, 1.58, 10);
+    this.camPos.set(0, 1.58, spawnZ);
     this.camLook.set(0, 1.3, 0);
 
     for (const p of this.projectiles) {
       p.active = false;
       p.mesh.visible = false;
+      p.arrowGroup.visible = false;
     }
     for (const t of this.tntFuses) {
       t.active = false;
@@ -1350,6 +1616,17 @@ export class UnstableArenaEngine {
     this.enemies = [];
   }
 
+  private policyForCharacter(prof: CharacterProfile, fallbackIdx: number): AiPolicy {
+    if (prof.archetype === 'ranged_sniper' || prof.archetype === 'ranged_skirmisher') {
+      return 'ranged_kite';
+    }
+    if (prof.archetype === 'mace_diver') return 'wind_diver';
+    if (prof.archetype === 'trickster' || prof.archetype === 'assassin') return 'pearl_flanker';
+    if (prof.archetype === 'heavy_tank' || prof.archetype === 'brawler') return 'bruiser_charger';
+    const fallbacks: AiPolicy[] = ['sword_duelist', 'wind_diver', 'pearl_flanker', 'ranged_kite'];
+    return fallbacks[fallbackIdx % fallbacks.length];
+  }
+
   private spawnEnemiesForMode(): void {
     this.clearEnemies();
     if (this.mode === 'multiplayer' && !this.mpState.includeBots) {
@@ -1359,32 +1636,69 @@ export class UnstableArenaEngine {
     const rivals = CHARACTER_LIST.filter((c) => c.id !== this.selectedCharId);
 
     if (this.mode === 'multiplayer' && this.mpState.includeBots) {
-      for (let i = 0; i < 2; i++) {
-        this.enemies.push(
-          this.createEnemy(
-            rivals[i],
-            i === 0 ? 'wind_diver' : 'sword_duelist',
-            new THREE.Vector3(i === 0 ? -14 : 14, 0, -14),
-            `mp-bot-${i}`
-          )
-        );
+      if (this.mpState.roomMode === 'team') {
+        const redCount = this.mpState.peers.filter((p) => p.team === 'red').length;
+        const blueCount = this.mpState.peers.filter((p) => p.team === 'blue').length;
+        const redNeed = Math.max(0, 3 - redCount);
+        const blueNeed = Math.max(1, 3 - blueCount);
+        let idx = 0;
+        for (let i = 0; i < redNeed; i++) {
+          const prof = rivals[idx % rivals.length];
+          this.enemies.push(
+            this.createEnemy(
+              prof,
+              this.policyForCharacter(prof, idx),
+              new THREE.Vector3(-10 + i * 10, 0, 18),
+              `mp-bot-r-${i}`,
+              false,
+              'red'
+            )
+          );
+          idx++;
+        }
+        for (let i = 0; i < blueNeed; i++) {
+          const prof = rivals[idx % rivals.length];
+          this.enemies.push(
+            this.createEnemy(
+              prof,
+              this.policyForCharacter(prof, idx),
+              new THREE.Vector3(-10 + i * 10, 0, -18),
+              `mp-bot-b-${i}`,
+              false,
+              'blue'
+            )
+          );
+          idx++;
+        }
+      } else {
+        for (let i = 0; i < 3; i++) {
+          const prof = rivals[i % rivals.length];
+          this.enemies.push(
+            this.createEnemy(
+              prof,
+              this.policyForCharacter(prof, i),
+              new THREE.Vector3(i === 0 ? -14 : i === 1 ? 14 : 0, 0, -16),
+              `mp-bot-${i}`,
+              false,
+              'ffa'
+            )
+          );
+        }
       }
       return;
     }
 
     if (this.mode === 'link_duel') {
-      // If networked 1v1 human link duel is active, fight the real opponent without AI bots
       if (this.mpState.roomCode && this.mpState.roomKind === 'link_duel') {
         return;
       }
       const rival = rivals[0];
       this.enemies.push(
-        this.createEnemy(rival, 'wind_diver', new THREE.Vector3(0, 0, -24), 'rival-1')
+        this.createEnemy(rival, this.policyForCharacter(rival, 0), new THREE.Vector3(0, 0, -24), 'rival-1')
       );
       return;
     }
 
-    const policies: AiPolicy[] = ['wind_diver', 'sword_duelist', 'pearl_flanker', 'bruiser_charger'];
     const spawns =
       this.mode === 'online_world'
         ? [
@@ -1404,9 +1718,12 @@ export class UnstableArenaEngine {
             new THREE.Vector3(34, 0, 0),
           ];
 
+    // Ensure at least one ranged character (Kestrel/Vexor) spawns in FFA/Open World
+    const rangedChars = rivals.filter((c) => c.id === 'kestrel' || c.id === 'vexor');
     for (let i = 0; i < spawns.length; i++) {
+      const prof = i === spawns.length - 1 && rangedChars.length > 0 ? rangedChars[0] : rivals[i % rivals.length];
       this.enemies.push(
-        this.createEnemy(rivals[i % rivals.length], policies[i % policies.length], spawns[i], `world-${i}`)
+        this.createEnemy(prof, this.policyForCharacter(prof, i), spawns[i], `world-${i}`, false, 'ffa')
       );
     }
   }
@@ -1417,30 +1734,42 @@ export class UnstableArenaEngine {
       if (p.id === this.mpState.selfId) continue;
       activeIds.add(p.id);
 
+      const barColor =
+        this.mpState.roomMode === 'team'
+          ? p.team === 'red'
+            ? '#ef4444'
+            : p.team === 'blue'
+              ? '#3b82f6'
+              : CHARACTERS[p.characterId]?.trimColor ?? '#94a3b8'
+          : CHARACTERS[p.characterId]?.trimColor ?? '#94a3b8';
+
       const existing = this.remotePeers.get(p.id);
-      if (!existing || existing.characterId !== p.characterId) {
+      if (!existing || existing.characterId !== p.characterId || existing.team !== p.team) {
         if (existing) {
           this.scene.remove(existing.rig.root);
         }
         const prof = CHARACTERS[p.characterId] ?? CHARACTERS.flamefrags;
         const rig = createFighterModel(prof, this.materials.shadowDisc, !this.isSoftwareGl);
-        const overhead = createEnemyOverheadBar(p.name, prof.trimColor);
+        const overhead = createEnemyOverheadBar(p.name, barColor);
         rig.root.add(overhead.group);
         rig.root.position.set(0, 0, -12);
         this.scene.add(rig.root);
         this.remotePeers.set(p.id, {
           id: p.id,
           name: p.name,
+          team: p.team || 'ffa',
           characterId: p.characterId,
           rig,
           overhead,
-          pos: new THREE.Vector3(0, 0, -12),
-          targetPos: new THREE.Vector3(0, 0, -12),
+          pos: existing ? existing.pos.clone() : new THREE.Vector3(0, 0, -12),
+          targetPos: existing ? existing.targetPos.clone() : new THREE.Vector3(0, 0, -12),
           vel: new THREE.Vector3(),
           yaw: 0,
           targetYaw: 0,
           hp: p.hp,
           maxHp: p.maxHp,
+          kills: p.kills || 0,
+          deaths: p.deaths || 0,
           activeSlot: prof.loadout[0].id,
           isBlocking: false,
           isGliding: false,
@@ -1453,8 +1782,11 @@ export class UnstableArenaEngine {
           alive: p.hp > 0,
         });
       } else {
+        existing.name = p.name;
         existing.hp = p.hp;
         existing.maxHp = p.maxHp;
+        existing.kills = p.kills || 0;
+        existing.deaths = p.deaths || 0;
         existing.overhead.updateHp(p.hp / p.maxHp);
       }
     }
@@ -1491,7 +1823,8 @@ export class UnstableArenaEngine {
     policy: AiPolicy,
     pos: THREE.Vector3,
     id: string,
-    isBoss = false
+    isBoss = false,
+    team: PlayerTeam = 'ffa'
   ): AiFighter {
     const rig = createFighterModel(profile, this.materials.shadowDisc, !this.isSoftwareGl);
     if (isBoss) {
@@ -1499,13 +1832,15 @@ export class UnstableArenaEngine {
     }
     rig.setActiveWeapon(profile.loadout[0].id);
     rig.root.position.copy(pos);
-    const overhead = createEnemyOverheadBar(profile.name, profile.trimColor);
+    const barColor = team === 'red' ? '#ef4444' : team === 'blue' ? '#3b82f6' : profile.trimColor;
+    const overhead = createEnemyOverheadBar(profile.name, barColor);
     rig.root.add(overhead.group);
     this.scene.add(rig.root);
 
     return {
       id,
       name: profile.name,
+      team,
       profile,
       policy,
       rig,
@@ -1516,6 +1851,8 @@ export class UnstableArenaEngine {
       hp: profile.maxHp,
       maxHp: profile.maxHp,
       absorption: 0,
+      kills: 0,
+      deaths: 0,
       onGround: true,
       fallStartY: pos.y,
       walkDist: 0,
@@ -1531,6 +1868,9 @@ export class UnstableArenaEngine {
       strafeTimer: 1.5,
       windCd: 2 + Math.random() * 2,
       pearlCd: 4 + Math.random() * 3,
+      specialCd: 2.2 + Math.random() * 2.2,
+      healCd: 4.5 + Math.random() * 2.5,
+      stealthTimer: 0,
       isBlocking: false,
       koTimer: 0,
       alive: true,
@@ -1661,9 +2001,16 @@ export class UnstableArenaEngine {
   private handleMouseMove = (e: MouseEvent): void => {
     if (this.screen !== 'playing') return;
 
+    const sens = this.settings.sensitivity;
+    const ySign = this.settings.invertY ? -1 : 1;
+
     if (this.pointerLocked) {
-      this.targetYaw -= e.movementX * 0.0028;
-      this.targetPitch = THREE.MathUtils.clamp(this.targetPitch - e.movementY * 0.0024, -1.46, 1.42);
+      this.targetYaw -= e.movementX * 0.0028 * sens;
+      this.targetPitch = THREE.MathUtils.clamp(
+        this.targetPitch - e.movementY * 0.0024 * sens * ySign,
+        -1.46,
+        1.42
+      );
       this.edgeTurnDir = 0;
       this.edgePitchDir = 0;
       return;
@@ -1675,8 +2022,12 @@ export class UnstableArenaEngine {
         const dx = e.clientX - this.lastMouseX;
         const dy = e.clientY - this.lastMouseY;
         if (Math.abs(dx) < 160 && Math.abs(dy) < 160) {
-          this.targetYaw -= dx * 0.0038;
-          this.targetPitch = THREE.MathUtils.clamp(this.targetPitch - dy * 0.0032, -1.46, 1.42);
+          this.targetYaw -= dx * 0.0038 * sens;
+          this.targetPitch = THREE.MathUtils.clamp(
+            this.targetPitch - dy * 0.0032 * sens * ySign,
+            -1.46,
+            1.42
+          );
         }
       }
       this.lastMouseX = e.clientX;
@@ -1919,12 +2270,12 @@ export class UnstableArenaEngine {
     const loadout = this.getCurrentLoadout();
     const item = loadout[this.activeSlot];
     const maxCds: [number, number, number, number, number, number] = [
-      loadout[0].cooldown,
-      loadout[1].cooldown,
-      loadout[2].cooldown,
-      loadout[3].cooldown,
-      loadout[4].cooldown,
-      loadout[5].cooldown,
+      loadout[0].id === 'crossbow' ? 1.35 : loadout[0].cooldown,
+      loadout[1].id === 'crossbow' ? 1.35 : loadout[1].cooldown,
+      loadout[2].id === 'crossbow' ? 1.35 : loadout[2].cooldown,
+      loadout[3].id === 'crossbow' ? 1.35 : loadout[3].cooldown,
+      loadout[4].id === 'crossbow' ? 1.35 : loadout[4].cooldown,
+      loadout[5].id === 'crossbow' ? 1.35 : loadout[5].cooldown,
     ];
 
     const used = consumeSlotUse(
@@ -1934,7 +2285,7 @@ export class UnstableArenaEngine {
       this.slotCooldowns,
       maxCds,
       this.slotUseDelays,
-      item.useDelay ?? (item.cooldown <= 0 ? 0 : 0.25)
+      item.useDelay ?? (item.id === 'crossbow' ? 0.22 : item.cooldown <= 0 ? 0 : 0.25)
     );
     if (!used) return;
     this.attackBuffer = 0;
@@ -1966,6 +2317,12 @@ export class UnstableArenaEngine {
       this.swingTimer = 0.34;
       this.audio.playHeavySwing();
       this.performMeleeStrike('mace', false, true);
+    } else if (slotId === 'bow') {
+      this.swingTimer = 0.24;
+      this.fireProjectile('arrow');
+    } else if (slotId === 'crossbow') {
+      this.swingTimer = 0.16;
+      this.fireProjectile('bolt');
     } else if (slotId === 'wind_charge') {
       this.swingTimer = 0.18;
       this.fireProjectile('wind_charge');
@@ -2000,8 +2357,12 @@ export class UnstableArenaEngine {
       this.stealthTimer = 2.6;
       this.playerRig.setOpacity(0.28);
       this.audio.playShadowStep();
+      const aimX = -Math.sin(this.playerYaw);
+      const aimZ = -Math.cos(this.playerYaw);
+      this.playerVel.x += aimX * 12;
+      this.playerVel.z += aimZ * 12;
       this.spawnParticles(this.playerPos.x, this.playerPos.y + 1, this.playerPos.z, 18, 0x818cf8, 7);
-      this.pushCallout('은신 망토 · 2.6초 투명화 & 이속 상승', '#818cf8');
+      this.pushCallout('그림자 도약 · 2.6초 은신 & 이속 상승', '#818cf8');
     } else if (slotId === 'gapple') {
       this.playerHp = this.playerMaxHp;
       this.playerBurnTimer = 0;
@@ -2011,10 +2372,10 @@ export class UnstableArenaEngine {
       this.pushCallout('황금 사과 · HP 100% 풀피 회복 & 보호막!', '#fbbf24');
       this.syncVitalsToServer();
     } else if (slotId === 'potion') {
-      this.playerHp = Math.min(this.playerMaxHp, this.playerHp + 42);
+      this.playerHp = Math.min(this.playerMaxHp, this.playerHp + 65);
       this.audio.playPotionSplash();
       this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.1, this.playerPos.z, 20, 0xf43f5e, 6);
-      this.pushCallout('치유 포션 · +42 HP 즉시 회복', '#fb7185');
+      this.pushCallout('치유 물약 · +65 HP 즉시 회복', '#fb7185');
       this.syncVitalsToServer();
     }
 
@@ -2050,7 +2411,7 @@ export class UnstableArenaEngine {
       this.playerPos.y,
       this.playerPos.z,
       this.blocks,
-      ARENA_RADIUS
+      this.currentArenaRadius
     );
 
     if (!pos) return false;
@@ -2136,13 +2497,13 @@ export class UnstableArenaEngine {
     const reach = this.playerPitch < -0.45 ? 1.5 : 4.2;
     const tx = THREE.MathUtils.clamp(
       this.playerPos.x + _aimDir.x * reach,
-      -ARENA_RADIUS + 2,
-      ARENA_RADIUS - 2
+      -this.currentArenaRadius + 2,
+      this.currentArenaRadius - 2
     );
     const tz = THREE.MathUtils.clamp(
       this.playerPos.z + _aimDir.z * reach,
-      -ARENA_RADIUS + 2,
-      ARENA_RADIUS - 2
+      -this.currentArenaRadius + 2,
+      this.currentArenaRadius - 2
     );
     const ty = getSupportHeightAt(tx, tz, this.playerPos.y + 1.5, 0.4, this.blocks);
     this.spawnHazardPool(kind, tx, ty, tz, this.mpState.selfId ?? 'player', true);
@@ -2265,27 +2626,40 @@ export class UnstableArenaEngine {
     }
   }
 
-  private throwTntBlock(): void {
+  private throwTntBlock(custom?: {
+    ownerId: string;
+    ownerTeam: PlayerTeam;
+    origin: THREE.Vector3;
+    dir: THREE.Vector3;
+  }): void {
     const slot = this.tntFuses.find((t) => !t.active);
     if (!slot) return;
 
-    _aimDir
-      .set(
-        -Math.sin(this.playerYaw) * Math.cos(this.playerPitch),
-        Math.sin(this.playerPitch) + 0.12,
-        -Math.cos(this.playerYaw) * Math.cos(this.playerPitch)
-      )
-      .normalize();
+    if (custom) {
+      _aimDir.copy(custom.dir).normalize();
+      slot.pos.copy(custom.origin);
+      slot.ownerId = custom.ownerId;
+      slot.ownerTeam = custom.ownerTeam;
+    } else {
+      _aimDir
+        .set(
+          -Math.sin(this.playerYaw) * Math.cos(this.playerPitch),
+          Math.sin(this.playerPitch) + 0.12,
+          -Math.cos(this.playerYaw) * Math.cos(this.playerPitch)
+        )
+        .normalize();
+      slot.pos.set(
+        this.playerPos.x - Math.sin(this.playerYaw) * 0.7,
+        this.playerPos.y + 1.45,
+        this.playerPos.z - Math.cos(this.playerYaw) * 0.7
+      );
+      slot.ownerId = this.mpState.selfId ?? 'player';
+      slot.ownerTeam = this.getLocalPlayerTeam();
+    }
 
     slot.active = true;
-    slot.ownerId = this.mpState.selfId ?? 'player';
     slot.fuse = 1.05;
     slot.grounded = false;
-    slot.pos.set(
-      this.playerPos.x - Math.sin(this.playerYaw) * 0.7,
-      this.playerPos.y + 1.45,
-      this.playerPos.z - Math.cos(this.playerYaw) * 0.7
-    );
     slot.vel.copy(_aimDir).multiplyScalar(18.5);
     slot.vel.y += 3.5;
     slot.mesh.position.copy(slot.pos);
@@ -2321,11 +2695,13 @@ export class UnstableArenaEngine {
     const aimZ = -Math.cos(this.playerYaw);
     const reach = kind === 'spear' ? 6.2 : kind === 'mace' ? 4.4 : 4.1;
 
+    const localTeam = this.getLocalPlayerTeam();
     let hitEnemy: AiFighter | null = null;
     let bestScore = Infinity;
 
     for (const enemy of this.enemies) {
       if (!enemy.alive || enemy.koTimer > 0) continue;
+      if (!canDamageTarget(this.mpState.roomMode, localTeam, enemy.team)) continue;
       const dx = enemy.pos.x - this.playerPos.x;
       const dy = enemy.pos.y - this.playerPos.y;
       const dz = enemy.pos.z - this.playerPos.z;
@@ -2343,6 +2719,7 @@ export class UnstableArenaEngine {
     let bestPeerScore = Infinity;
     for (const peer of this.remotePeers.values()) {
       if (!peer.alive) continue;
+      if (!canDamageTarget(this.mpState.roomMode, localTeam, peer.team)) continue;
       const dx = peer.pos.x - this.playerPos.x;
       const dy = peer.pos.y - this.playerPos.y;
       const dz = peer.pos.z - this.playerPos.z;
@@ -2356,8 +2733,8 @@ export class UnstableArenaEngine {
     }
 
     if (kind !== 'mace') {
-      const base = kind === 'axe' ? 42 : kind === 'spear' ? 16 : 15;
-      const mult = kind === 'sword' ? prof.swordMult : 1.05;
+      const base = kind === 'axe' ? 22 : kind === 'spear' ? 16 : 15;
+      const mult = prof.damageMult;
       const { damage, isCrit } = computeSwordDamage(base, mult, this.playerVel.y, this.playerOnGround);
       this.showSlashArc(
         isCrit ? 0xfbbf24 : isFire ? 0xf97316 : kind === 'spear' ? 0xc084fc : 0xe2e8f0,
@@ -2389,7 +2766,7 @@ export class UnstableArenaEngine {
 
     const { damage, isSmash, shockwaveRadius } = computeMaceDamage(
       14,
-      prof.maceMult,
+      prof.damageMult,
       fallDist,
       this.playerOnGround
     );
@@ -2417,6 +2794,7 @@ export class UnstableArenaEngine {
       let totalHit = 0;
       for (const enemy of this.enemies) {
         if (!enemy.alive || enemy.koTimer > 0) continue;
+        if (!canDamageTarget(this.mpState.roomMode, localTeam, enemy.team)) continue;
         const d = Math.hypot(enemy.pos.x - impactX, enemy.pos.z - impactZ);
         if (d <= shockwaveRadius) {
           const splashDmg = enemy === hitEnemy ? damage : Math.round(damage * 0.68);
@@ -2428,6 +2806,7 @@ export class UnstableArenaEngine {
       }
       for (const peer of this.remotePeers.values()) {
         if (!peer.alive) continue;
+        if (!canDamageTarget(this.mpState.roomMode, localTeam, peer.team)) continue;
         const d = Math.hypot(peer.pos.x - impactX, peer.pos.z - impactZ);
         if (d <= shockwaveRadius) {
           const splashDmg = peer === hitPeer ? damage : Math.round(damage * 0.68);
@@ -2564,6 +2943,7 @@ export class UnstableArenaEngine {
 
   private handleEnemyKo(enemy: AiFighter, cause: string): void {
     enemy.koTimer = 0.42;
+    enemy.deaths += 1;
     enemy.telegraphTimer = 0;
     enemy.rig.telegraphRing.visible = false;
     this.kills += 1;
@@ -2572,80 +2952,131 @@ export class UnstableArenaEngine {
     this.spawnParticles(enemy.pos.x, enemy.pos.y + 1.0, enemy.pos.z, 24, 0xc084fc, 9);
     this.addKillFeed(`${enemy.name} 처치 (${cause})`, '#c084fc');
 
-    if (this.mode === 'ffa' && this.kills >= 12) {
+    if (this.mode === 'ffa' && this.kills >= this.matchTargetKills) {
       this.triggerEndGame('victory');
     } else if (this.mode === 'link_duel' && !this.mpState.roomCode && this.kills >= 3) {
       this.triggerEndGame('victory');
     }
   }
 
-  private fireProjectile(kind: 'wind_charge' | 'ender_pearl' | 'trident' | 'cobweb_orb'): void {
+  private fireProjectile(
+    kind: 'wind_charge' | 'ender_pearl' | 'trident' | 'cobweb_orb' | 'arrow' | 'bolt',
+    custom?: {
+      ownerId: string;
+      ownerTeam: PlayerTeam;
+      origin: THREE.Vector3;
+      dir: THREE.Vector3;
+      damage?: number;
+    }
+  ): void {
     const slot = this.projectiles.find((p) => !p.active);
     if (!slot) return;
 
-    _aimDir
-      .set(
-        -Math.sin(this.playerYaw) * Math.cos(this.playerPitch),
-        Math.sin(this.playerPitch) + (kind === 'ender_pearl' ? 0.08 : 0.0),
-        -Math.cos(this.playerYaw) * Math.cos(this.playerPitch)
-      )
-      .normalize();
+    const prof = CHARACTERS[this.selectedCharId];
+    if (custom) {
+      slot.pos.copy(custom.origin);
+      _v2.copy(custom.dir).normalize();
+      slot.ownerId = custom.ownerId;
+      slot.ownerTeam = custom.ownerTeam;
+    } else {
+      _aimDir
+        .set(
+          -Math.sin(this.playerYaw) * Math.cos(this.playerPitch),
+          Math.sin(this.playerPitch) + (kind === 'ender_pearl' ? 0.08 : 0.0),
+          -Math.cos(this.playerYaw) * Math.cos(this.playerPitch)
+        )
+        .normalize();
 
-    _right.set(Math.cos(this.playerYaw), 0, -Math.sin(this.playerYaw));
-    const shoulderOffset = this.cameraMode === 'shiftlock' ? 1.05 : 0.0;
+      _right.set(Math.cos(this.playerYaw), 0, -Math.sin(this.playerYaw));
+      const shoulderOffset = this.cameraMode === 'shiftlock' ? 1.05 : 0.0;
 
-    _v1
-      .set(
-        this.playerPos.x + _right.x * shoulderOffset,
-        this.playerPos.y + 1.62,
-        this.playerPos.z + _right.z * shoulderOffset
-      )
-      .addScaledVector(_aimDir, 20);
+      _v1
+        .set(
+          this.playerPos.x + _right.x * shoulderOffset,
+          this.playerPos.y + 1.62,
+          this.playerPos.z + _right.z * shoulderOffset
+        )
+        .addScaledVector(_aimDir, 22);
 
-    slot.pos
-      .set(
-        this.playerPos.x + _right.x * 0.4,
-        this.playerPos.y + 1.44,
-        this.playerPos.z + _right.z * 0.4
-      )
-      .addScaledVector(_aimDir, 0.75);
+      slot.pos
+        .set(
+          this.playerPos.x + _right.x * 0.4,
+          this.playerPos.y + 1.44,
+          this.playerPos.z + _right.z * 0.4
+        )
+        .addScaledVector(_aimDir, 0.75);
 
-    _v2.copy(_v1).sub(slot.pos).normalize();
+      _v2.copy(_v1).sub(slot.pos).normalize();
+      slot.ownerId = this.mpState.selfId ?? 'player';
+      slot.ownerTeam = this.getLocalPlayerTeam();
+    }
 
     slot.active = true;
     slot.kind = kind;
-    slot.ownerId = this.mpState.selfId ?? 'player';
-    slot.life = 2.6;
+    slot.life = kind === 'arrow' || kind === 'bolt' ? 2.2 : 2.6;
     const speed =
-      kind === 'wind_charge' ? 35 : kind === 'trident' ? 38 : kind === 'cobweb_orb' ? 28 : 30;
+      kind === 'arrow'
+        ? 56
+        : kind === 'bolt'
+          ? 48
+          : kind === 'wind_charge'
+            ? 35
+            : kind === 'trident'
+              ? 38
+              : kind === 'cobweb_orb'
+                ? 28
+                : 30;
     slot.vel.copy(_v2).multiplyScalar(speed);
     if (kind === 'ender_pearl' || kind === 'cobweb_orb') {
       slot.vel.y += 3.8;
     }
 
-    const mat = slot.mesh.material as THREE.MeshStandardMaterial;
-    if (kind === 'wind_charge') {
-      mat.color.setHex(0xe0f2fe);
-      mat.emissive.setHex(0x38bdf8);
-      this.audio.playWindCharge();
-    } else if (kind === 'trident') {
-      mat.color.setHex(0x2dd4bf);
-      mat.emissive.setHex(0x14b8a6);
-      this.audio.playTridentThrow();
-    } else if (kind === 'cobweb_orb') {
-      mat.color.setHex(0xf8fafc);
-      mat.emissive.setHex(0xcbd5e1);
-      this.audio.playCobweb();
+    slot.damage =
+      custom?.damage ??
+      (kind === 'arrow'
+        ? Math.round(24 * prof.damageMult)
+        : kind === 'bolt'
+          ? Math.round(15 * prof.damageMult)
+          : kind === 'trident'
+            ? Math.round(24 * prof.damageMult)
+            : 0);
+
+    const isArrowType = kind === 'arrow' || kind === 'bolt';
+    slot.mesh.visible = !isArrowType;
+    slot.arrowGroup.visible = isArrowType;
+
+    if (isArrowType) {
+      slot.arrowGroup.position.copy(slot.pos);
+      slot.arrowGroup.lookAt(
+        slot.pos.x + slot.vel.x,
+        slot.pos.y + slot.vel.y,
+        slot.pos.z + slot.vel.z
+      );
+      this.audio.playBowShoot(kind === 'bolt');
     } else {
-      mat.color.setHex(0x2dd4bf);
-      mat.emissive.setHex(0xa855f7);
-      this.audio.playSwing();
+      const mat = slot.mesh.material as THREE.MeshStandardMaterial;
+      if (kind === 'wind_charge') {
+        mat.color.setHex(0xe0f2fe);
+        mat.emissive.setHex(0x38bdf8);
+        this.audio.playWindCharge();
+      } else if (kind === 'trident') {
+        mat.color.setHex(0x2dd4bf);
+        mat.emissive.setHex(0x14b8a6);
+        this.audio.playTridentThrow();
+      } else if (kind === 'cobweb_orb') {
+        mat.color.setHex(0xf8fafc);
+        mat.emissive.setHex(0xcbd5e1);
+        this.audio.playCobweb();
+      } else {
+        mat.color.setHex(0x2dd4bf);
+        mat.emissive.setHex(0xa855f7);
+        this.audio.playSwing();
+      }
+      slot.mesh.position.copy(slot.pos);
     }
-    slot.mesh.position.copy(slot.pos);
-    slot.mesh.visible = true;
   }
 
-  private detonateWindCharge(pos: THREE.Vector3, ownerId: string, broadcast: boolean): void {
+  private detonateWindCharge(pos: THREE.Vector3, ownerId: string, broadcast: boolean, ownerTeam: PlayerTeam = 'ffa'): void {
     this.spawnShockwave(pos.x, Math.max(0.05, pos.y), pos.z, 4.5, 0xbae6fd);
     this.spawnParticles(pos.x, pos.y + 0.2, pos.z, 18, 0xe0f2fe, 9);
     this.audio.playWindCharge();
@@ -2653,7 +3084,8 @@ export class UnstableArenaEngine {
     const pDist = Math.hypot(this.playerPos.x - pos.x, this.playerPos.z - pos.z);
     const pDy = this.playerPos.y + 0.8 - pos.y;
     const p3D = Math.hypot(pDist, pDy);
-    if (p3D < 5.4) {
+    const isLocalOwner = ownerId === (this.mpState.selfId ?? 'player');
+    if (p3D < 5.4 && (isLocalOwner || canDamageTarget(this.mpState.roomMode, ownerTeam, this.getLocalPlayerTeam()))) {
       const strength = 1 - p3D / 5.4;
       this.playerVel.y = Math.max(this.playerVel.y, 14.0 + strength * 5.5);
       if (pDist > 0.2) {
@@ -2664,10 +3096,10 @@ export class UnstableArenaEngine {
       this.playerFallStartY = this.playerPos.y + 8;
     }
 
-    const isLocalOwner = ownerId === (this.mpState.selfId ?? 'player');
     if (isLocalOwner) {
       for (const enemy of this.enemies) {
         if (!enemy.alive || enemy.koTimer > 0) continue;
+        if (!canDamageTarget(this.mpState.roomMode, ownerTeam, enemy.team)) continue;
         const d = Math.hypot(enemy.pos.x - pos.x, enemy.pos.z - pos.z);
         const dy = enemy.pos.y + 0.8 - pos.y;
         if (Math.hypot(d, dy) < 5.6) {
@@ -2682,6 +3114,7 @@ export class UnstableArenaEngine {
       }
       for (const peer of this.remotePeers.values()) {
         if (!peer.alive) continue;
+        if (!canDamageTarget(this.mpState.roomMode, ownerTeam, peer.team)) continue;
         const d = Math.hypot(peer.pos.x - pos.x, peer.pos.z - pos.z);
         if (d < 5.6) {
           const dirX = d > 0.1 ? (peer.pos.x - pos.x) / d : 0;
@@ -2695,7 +3128,7 @@ export class UnstableArenaEngine {
     }
   }
 
-  private detonateTnt(pos: THREE.Vector3, ownerId: string, broadcast: boolean): void {
+  private detonateTnt(pos: THREE.Vector3, ownerId: string, broadcast: boolean, ownerTeam: PlayerTeam = 'ffa'): void {
     this.spawnShockwave(pos.x, Math.max(0.06, pos.y), pos.z, 6.4, 0xf97316);
     this.spawnParticles(pos.x, pos.y + 0.4, pos.z, 32, 0xf97316, 12);
     this.audio.playExplosion();
@@ -2720,22 +3153,31 @@ export class UnstableArenaEngine {
       }
     }
 
-    // Blast self upward if nearby
+    const isLocalOwner = ownerId === (this.mpState.selfId ?? 'player');
+    const localTeam = this.getLocalPlayerTeam();
+
+    // Blast self or take AI explosion damage if hostile
     const pDist = Math.hypot(this.playerPos.x - pos.x, this.playerPos.z - pos.z);
     if (pDist < 5.6 && Math.abs(this.playerPos.y - pos.y) < 4.5) {
       const falloff = 1 - pDist / 5.6;
-      this.playerVel.y = Math.max(this.playerVel.y, 11.5 + falloff * 5.0);
-      if (pDist > 0.15) {
-        this.playerVel.x += ((this.playerPos.x - pos.x) / pDist) * 11 * falloff;
-        this.playerVel.z += ((this.playerPos.z - pos.z) / pDist) * 11 * falloff;
+      if (isLocalOwner) {
+        this.playerVel.y = Math.max(this.playerVel.y, 11.5 + falloff * 5.0);
+        if (pDist > 0.15) {
+          this.playerVel.x += ((this.playerPos.x - pos.x) / pDist) * 11 * falloff;
+          this.playerVel.z += ((this.playerPos.z - pos.z) / pDist) * 11 * falloff;
+        }
+        this.playerOnGround = false;
+      } else if (canDamageTarget(this.mpState.roomMode, ownerTeam, localTeam)) {
+        const dirX = pDist > 0.1 ? (this.playerPos.x - pos.x) / pDist : 0;
+        const dirZ = pDist > 0.1 ? (this.playerPos.z - pos.z) / pDist : 1;
+        this.applyDamageToLocalPlayer(Math.round(12 + falloff * 14), true, dirX, dirZ, 10.5, 'TNT 폭탄');
       }
-      this.playerOnGround = false;
     }
 
-    const isLocalOwner = ownerId === (this.mpState.selfId ?? 'player');
     if (isLocalOwner) {
       for (const enemy of this.enemies) {
         if (!enemy.alive || enemy.koTimer > 0) continue;
+        if (!canDamageTarget(this.mpState.roomMode, ownerTeam, enemy.team)) continue;
         const d = Math.hypot(enemy.pos.x - pos.x, enemy.pos.z - pos.z);
         if (d < 6.4) {
           const falloff = 1 - d / 6.4;
@@ -2747,6 +3189,7 @@ export class UnstableArenaEngine {
       }
       for (const peer of this.remotePeers.values()) {
         if (!peer.alive) continue;
+        if (!canDamageTarget(this.mpState.roomMode, ownerTeam, peer.team)) continue;
         const d = Math.hypot(peer.pos.x - pos.x, peer.pos.z - pos.z);
         if (d < 6.4) {
           const falloff = 1 - d / 6.4;
@@ -2777,7 +3220,7 @@ export class UnstableArenaEngine {
       PLAYER_RADIUS,
       PLAYER_HEIGHT,
       this.blocks,
-      ARENA_RADIUS - 1
+      this.currentArenaRadius - 1
     );
     const sup = getSupportHeightAt(clamped.x, clamped.z, pos.y + 1.5, PLAYER_RADIUS, this.blocks);
     this.playerPos.set(clamped.x, Math.max(sup, pos.y), clamped.z);
@@ -2847,6 +3290,7 @@ export class UnstableArenaEngine {
     hex: number,
     speed: number
   ): void {
+    if (!this.settings.particlesEnabled) return;
     for (let i = 0; i < count; i++) {
       const p = this.particles[this.particleCursor];
       this.particleCursor = (this.particleCursor + 1) % this.particles.length;
@@ -2912,6 +3356,14 @@ export class UnstableArenaEngine {
   }
 
   private update(dt: number, timeSec: number): void {
+    this.fpsFrames += 1;
+    this.fpsAccum += dt;
+    if (this.fpsAccum >= 0.5) {
+      this.fps = Math.max(1, Math.round(this.fpsFrames / this.fpsAccum));
+      this.fpsFrames = 0;
+      this.fpsAccum = 0;
+    }
+
     for (let i = 0; i < this.crystalMeshes.length; i++) {
       const c = this.crystalMeshes[i];
       c.rotation.y += dt * 1.4;
@@ -2939,8 +3391,15 @@ export class UnstableArenaEngine {
     }
 
     this.shakeTrauma = Math.max(0, this.shakeTrauma - dt * 2.1);
+    const baseFov = this.settings.fov;
     const desiredFov =
-      this.fireworkBoostTimer > 0 ? 85 : this.isGliding ? 79 : this.stealthTimer > 0 ? 75 : 68;
+      this.fireworkBoostTimer > 0
+        ? Math.min(110, baseFov + 8)
+        : this.isGliding
+          ? Math.min(106, baseFov + 4)
+          : this.stealthTimer > 0
+            ? Math.max(58, baseFov - 2)
+            : baseFov;
     this.fovCurrent = THREE.MathUtils.damp(this.fovCurrent, desiredFov, 9, dt);
     if (Math.abs(this.camera.fov - this.fovCurrent) > 0.05) {
       this.camera.fov = this.fovCurrent;
@@ -2980,14 +3439,22 @@ export class UnstableArenaEngine {
     }
 
     this.elapsedTime += dt;
+    if (!this.isNetworkedMode()) {
+      this.offlineMapTimer += dt;
+      if (this.offlineMapTimer >= MAP_ROTATION_SECONDS) {
+        this.offlineMapTimer = 0;
+        this.applyArenaMap(getNextMapId(this.currentMapId), true);
+      }
+    }
+
     const loadout = this.getCurrentLoadout();
     const maxCds = [
-      loadout[0].cooldown,
-      loadout[1].cooldown,
-      loadout[2].cooldown,
-      loadout[3].cooldown,
-      loadout[4].cooldown,
-      loadout[5].cooldown,
+      loadout[0].id === 'crossbow' ? 1.35 : loadout[0].cooldown,
+      loadout[1].id === 'crossbow' ? 1.35 : loadout[1].cooldown,
+      loadout[2].id === 'crossbow' ? 1.35 : loadout[2].cooldown,
+      loadout[3].id === 'crossbow' ? 1.35 : loadout[3].cooldown,
+      loadout[4].id === 'crossbow' ? 1.35 : loadout[4].cooldown,
+      loadout[5].id === 'crossbow' ? 1.35 : loadout[5].cooldown,
     ];
     tickSlotRecharge(
       this.slotCharges,
@@ -3162,19 +3629,35 @@ export class UnstableArenaEngine {
       t.mesh.position.copy(t.pos);
       t.mesh.scale.setScalar(pulse);
 
-      // Direct hit on enemy triggers instant explosion!
+      // Direct hit on hostile enemy or player triggers instant explosion!
       let directHit = false;
       for (const e of this.enemies) {
-        if (e.alive && e.koTimer <= 0 && Math.hypot(t.pos.x - e.pos.x, t.pos.z - e.pos.z) < 1.35 && Math.abs(t.pos.y - (e.pos.y + 1)) < 1.35) {
+        if (
+          e.alive &&
+          e.koTimer <= 0 &&
+          e.id !== t.ownerId &&
+          canDamageTarget(this.mpState.roomMode, t.ownerTeam, e.team) &&
+          Math.hypot(t.pos.x - e.pos.x, t.pos.z - e.pos.z) < 1.35 &&
+          Math.abs(t.pos.y - (e.pos.y + 1)) < 1.35
+        ) {
           directHit = true;
           break;
         }
+      }
+      if (
+        !directHit &&
+        t.ownerId !== (this.mpState.selfId ?? 'player') &&
+        canDamageTarget(this.mpState.roomMode, t.ownerTeam, this.getLocalPlayerTeam()) &&
+        Math.hypot(t.pos.x - this.playerPos.x, t.pos.z - this.playerPos.z) < 1.35 &&
+        Math.abs(t.pos.y - (this.playerPos.y + 1)) < 1.35
+      ) {
+        directHit = true;
       }
 
       if (t.fuse <= 0 || directHit) {
         t.active = false;
         t.mesh.visible = false;
-        this.detonateTnt(t.pos, t.ownerId, t.ownerId === (this.mpState.selfId ?? 'player'));
+        this.detonateTnt(t.pos, t.ownerId, t.ownerId === (this.mpState.selfId ?? 'player'), t.ownerTeam);
       }
     }
   }
@@ -3319,7 +3802,11 @@ export class UnstableArenaEngine {
       }
     }
 
-    const sprinting = this.keys.has('ShiftLeft') && hasMoveInput && !this.isBlocking;
+    const autoMobileSprint = this.settings.mobileAutoSprint && this.mobileForwardInput > 0.65;
+    const sprinting =
+      (this.keys.has('ShiftLeft') || this.mobileSprintLocked || autoMobileSprint) &&
+      hasMoveInput &&
+      !this.isBlocking;
     const stealthMult = this.stealthTimer > 0 ? 1.35 : 1.0;
     const terrainMult = inWeb ? 0.08 : inLava ? 0.55 : inWater ? 0.78 : 1.0;
     const baseSpeed =
@@ -3421,7 +3908,7 @@ export class UnstableArenaEngine {
       PLAYER_RADIUS,
       PLAYER_HEIGHT,
       this.blocks,
-      ARENA_RADIUS
+      this.currentArenaRadius
     );
     this.playerPos.x = resolved.x;
     this.playerPos.z = resolved.z;
@@ -3526,23 +4013,34 @@ export class UnstableArenaEngine {
   }
 
   private updateProjectiles(dt: number): void {
+    const localSelfId = this.mpState.selfId ?? 'player';
+    const localTeam = this.getLocalPlayerTeam();
+
     for (const p of this.projectiles) {
       if (!p.active) continue;
       p.life -= dt;
       if (p.kind === 'ender_pearl' || p.kind === 'cobweb_orb') {
         p.vel.y += GRAVITY * 0.52 * dt;
+      } else if (p.kind === 'arrow' || p.kind === 'bolt') {
+        p.vel.y += GRAVITY * 0.16 * dt;
       }
       p.pos.addScaledVector(p.vel, dt);
-      p.mesh.position.copy(p.pos);
-      p.mesh.rotation.y += dt * 12;
 
-      const sup = getSupportHeightAt(p.pos.x, p.pos.z, p.pos.y, 0.25, this.blocks);
+      if (p.kind === 'arrow' || p.kind === 'bolt') {
+        p.arrowGroup.position.copy(p.pos);
+        p.arrowGroup.lookAt(p.pos.x + p.vel.x, p.pos.y + p.vel.y, p.pos.z + p.vel.z);
+      } else {
+        p.mesh.position.copy(p.pos);
+        p.mesh.rotation.y += dt * 12;
+      }
+
+      const sup = getSupportHeightAt(p.pos.x, p.pos.z, p.pos.y, 0.22, this.blocks);
       let hitBlock = p.pos.y <= sup;
       if (!hitBlock) {
         for (const b of this.blocks) {
           if (
-            Math.abs(p.pos.x - b.x) <= b.w * 0.5 + 0.25 &&
-            Math.abs(p.pos.z - b.z) <= b.d * 0.5 + 0.25 &&
+            Math.abs(p.pos.x - b.x) <= b.w * 0.5 + 0.2 &&
+            Math.abs(p.pos.z - b.z) <= b.d * 0.5 + 0.2 &&
             p.pos.y >= b.y &&
             p.pos.y <= b.y + b.h
           ) {
@@ -3554,24 +4052,30 @@ export class UnstableArenaEngine {
 
       let hitEnemy: AiFighter | null = null;
       let hitPeer: RemotePeerActor | null = null;
+      let hitLocalPlayer = false;
+
       for (const e of this.enemies) {
-        if (!e.alive || e.koTimer > 0) continue;
+        if (!e.alive || e.koTimer > 0 || e.id === p.ownerId) continue;
+        if (p.ownerId !== localSelfId && !canDamageTarget(this.mpState.roomMode, p.ownerTeam, e.team)) continue;
+        if (p.ownerId === localSelfId && !canDamageTarget(this.mpState.roomMode, localTeam, e.team)) continue;
         if (
           Math.hypot(p.pos.x - e.pos.x, p.pos.z - e.pos.z) < 1.25 &&
           p.pos.y >= e.pos.y &&
-          p.pos.y <= e.pos.y + 2.1
+          p.pos.y <= e.pos.y + 2.15
         ) {
           hitEnemy = e;
           break;
         }
       }
-      if (!hitEnemy) {
+
+      if (!hitEnemy && p.ownerId === localSelfId) {
         for (const peer of this.remotePeers.values()) {
           if (!peer.alive) continue;
+          if (!canDamageTarget(this.mpState.roomMode, localTeam, peer.team)) continue;
           if (
             Math.hypot(p.pos.x - peer.pos.x, p.pos.z - peer.pos.z) < 1.25 &&
             p.pos.y >= peer.pos.y &&
-            p.pos.y <= peer.pos.y + 2.1
+            p.pos.y <= peer.pos.y + 2.15
           ) {
             hitPeer = peer;
             break;
@@ -3579,44 +4083,106 @@ export class UnstableArenaEngine {
         }
       }
 
-      if (hitBlock || hitEnemy || hitPeer || p.life <= 0) {
+      if (
+        !hitEnemy &&
+        !hitPeer &&
+        p.ownerId !== localSelfId &&
+        this.localRespawnTimer <= 0 &&
+        canDamageTarget(this.mpState.roomMode, p.ownerTeam, localTeam) &&
+        Math.hypot(p.pos.x - this.playerPos.x, p.pos.z - this.playerPos.z) < 1.2 &&
+        p.pos.y >= this.playerPos.y &&
+        p.pos.y <= this.playerPos.y + 2.1
+      ) {
+        hitLocalPlayer = true;
+      }
+
+      if (hitBlock || hitEnemy || hitPeer || hitLocalPlayer || p.life <= 0) {
         p.active = false;
         p.mesh.visible = false;
+        p.arrowGroup.visible = false;
+
+        const dLen = Math.hypot(p.vel.x, p.vel.z) || 1;
+        const dirX = p.vel.x / dLen;
+        const dirZ = p.vel.z / dLen;
+
         if (p.kind === 'wind_charge') {
-          this.detonateWindCharge(p.pos, p.ownerId, true);
+          this.detonateWindCharge(p.pos, p.ownerId, p.ownerId === localSelfId, p.ownerTeam);
         } else if (p.kind === 'ender_pearl') {
-          this.detonateEnderPearl(p.pos);
+          if (p.ownerId === localSelfId) {
+            this.detonateEnderPearl(p.pos);
+          }
         } else if (p.kind === 'cobweb_orb') {
           const wy = hitEnemy
             ? hitEnemy.pos.y
             : hitPeer
               ? hitPeer.pos.y
-              : getSupportHeightAt(p.pos.x, p.pos.z, p.pos.y + 0.6, 0.5, this.blocks);
-          this.spawnCobwebAt(p.pos.x, wy, p.pos.z, true);
+              : hitLocalPlayer
+                ? this.playerPos.y
+                : getSupportHeightAt(p.pos.x, p.pos.z, p.pos.y + 0.6, 0.5, this.blocks);
+          this.spawnCobwebAt(p.pos.x, wy, p.pos.z, p.ownerId === localSelfId);
           if (hitEnemy) {
             this.pushCallout(`${hitEnemy.name} 거미줄 포박!`, '#e2e8f0');
           } else if (hitPeer) {
             this.pushCallout(`${hitPeer.name} 거미줄 포박!`, '#e2e8f0');
           }
-        } else if (p.kind === 'trident') {
-          const dLen = Math.hypot(p.vel.x, p.vel.z) || 1;
+        } else if (p.kind === 'trident' || p.kind === 'arrow' || p.kind === 'bolt') {
+          const isArrow = p.kind === 'arrow' || p.kind === 'bolt';
+          const label = p.kind === 'arrow' ? '정밀 장궁' : p.kind === 'bolt' ? '속사 석궁' : '삼지창';
+          const kb = p.kind === 'arrow' ? 8.5 : p.kind === 'bolt' ? 5.2 : 11;
+
           if (hitPeer) {
-            this.applyHitToRemotePeer(hitPeer, 24, true, false, p.vel.x / dLen, p.vel.z / dLen, 11, false);
+            const isCrit =
+              !isArrow ||
+              p.pos.y >= hitPeer.pos.y + 1.42 ||
+              !this.playerOnGround;
+            const dmg = isArrow && isCrit ? Math.round(p.damage * 1.35) : p.damage || 24;
+            this.applyHitToRemotePeer(hitPeer, dmg, isCrit, false, dirX, dirZ, kb, false);
           } else if (hitEnemy) {
-            this.applyHitToEnemy(
-              hitEnemy,
-              24,
-              true,
-              false,
-              false,
-              p.vel.x / dLen,
-              p.vel.z / dLen,
-              11,
-              '삼지창'
-            );
+            const isHeadOrAir =
+              !isArrow ||
+              p.pos.y >= hitEnemy.pos.y + 1.42 ||
+              !hitEnemy.onGround ||
+              !this.playerOnGround;
+            const dmg = isArrow && isHeadOrAir ? Math.round((p.damage || 20) * 1.35) : p.damage || 24;
+            if (p.ownerId === localSelfId) {
+              this.applyHitToEnemy(hitEnemy, dmg, isHeadOrAir, false, false, dirX, dirZ, kb, label);
+            } else {
+              // AI vs AI projectile hit
+              const res = applyCombatDamage(
+                { hp: hitEnemy.hp, maxHp: hitEnemy.maxHp, absorption: hitEnemy.absorption, isBlocking: hitEnemy.isBlocking },
+                dmg,
+                false
+              );
+              hitEnemy.hp = res.remainingHp;
+              hitEnemy.absorption = res.remainingAbsorption;
+              hitEnemy.overhead.updateHp(hitEnemy.hp / hitEnemy.maxHp);
+              hitEnemy.hitFlashTimer = 0.11;
+              hitEnemy.rig.setHitFlash(true);
+              hitEnemy.vel.x += dirX * kb * 0.7;
+              hitEnemy.vel.z += dirZ * kb * 0.7;
+              this.spawnParticles(hitEnemy.pos.x, hitEnemy.pos.y + 1.2, hitEnemy.pos.z, 10, 0xef4444, 5.5);
+              if (hitEnemy.hp <= 0) {
+                hitEnemy.koTimer = 0.42;
+                hitEnemy.deaths += 1;
+                const shooter = this.enemies.find((e) => e.id === p.ownerId);
+                if (shooter) shooter.kills += 1;
+                this.addKillFeed(`${shooter?.name ?? 'AI'} ⚔ ${hitEnemy.name} (${label})`, '#94a3b8');
+              }
+            }
+          } else if (hitLocalPlayer) {
+            const isCrit = isArrow && p.pos.y >= this.playerPos.y + 1.45;
+            const dmg = isCrit ? Math.round((p.damage || 16) * 1.3) : Math.max(8, p.damage || 16);
+            const attacker = this.enemies.find((e) => e.id === p.ownerId);
+            this.applyDamageToLocalPlayer(dmg, isCrit, dirX, dirZ, kb * 0.75, attacker?.name ?? label);
           } else {
-            this.spawnParticles(p.pos.x, p.pos.y + 0.2, p.pos.z, 10, 0x2dd4bf, 5);
-            this.audio.playHit(false);
+            this.spawnParticles(
+              p.pos.x,
+              p.pos.y + 0.15,
+              p.pos.z,
+              8,
+              isArrow ? 0xe0f2fe : 0x2dd4bf,
+              4.2
+            );
           }
         }
       }
@@ -3630,6 +4196,8 @@ export class UnstableArenaEngine {
     }
 
     const activePools = this.hazardPools.filter((h) => h.active);
+    const localTeam = this.getLocalPlayerTeam();
+    const localSelfId = this.mpState.selfId ?? 'player';
 
     for (const e of this.enemies) {
       if (!e.alive) {
@@ -3697,6 +4265,13 @@ export class UnstableArenaEngine {
       e.attackCooldown = Math.max(0, e.attackCooldown - dt);
       e.windCd = Math.max(0, e.windCd - dt);
       e.pearlCd = Math.max(0, e.pearlCd - dt);
+      e.specialCd = Math.max(0, e.specialCd - dt);
+      e.healCd = Math.max(0, e.healCd - dt);
+      if (e.stealthTimer > 0) {
+        e.stealthTimer = Math.max(0, e.stealthTimer - dt);
+        e.rig.setOpacity(e.stealthTimer > 0 ? 0.28 : 1);
+      }
+
       e.strafeTimer -= dt;
       if (e.strafeTimer <= 0) {
         e.strafeDir *= -1;
@@ -3705,8 +4280,88 @@ export class UnstableArenaEngine {
 
       const enemyWebbed = isInsideCobweb(e.pos.x, e.pos.y, e.pos.z, this.cobwebs);
 
-      const dx = this.stealthTimer > 0 ? Math.sin(this.elapsedTime + e.pos.x) * 8 : this.playerPos.x - e.pos.x;
-      const dz = this.stealthTimer > 0 ? Math.cos(this.elapsedTime + e.pos.z) * 8 : this.playerPos.z - e.pos.z;
+      // Extinguish self with water_bucket if burning
+      if (
+        e.burnTimer > 0 &&
+        e.specialCd <= 0 &&
+        e.profile.loadout.some((item) => item.id === 'water_bucket')
+      ) {
+        e.specialCd = 5.5;
+        e.burnTimer = 0;
+        this.spawnHazardPool('water', e.pos.x, e.pos.y, e.pos.z, e.id, false);
+      }
+
+      // Smart healing skill (gapple / potion) with proper cooldown
+      if (e.hp < e.maxHp * 0.42 && e.healCd <= 0) {
+        const hasGapple = e.profile.loadout.some((item) => item.id === 'gapple');
+        const hasPotion = e.profile.loadout.some((item) => item.id === 'potion');
+        if (hasGapple) {
+          e.healCd = 11.0;
+          e.hp = e.maxHp;
+          e.absorption = Math.min(20, e.absorption + 15);
+          this.spawnParticles(e.pos.x, e.pos.y + 1.1, e.pos.z, 18, 0xfacc15, 7);
+        } else if (hasPotion) {
+          e.healCd = 7.5;
+          e.hp = Math.min(e.maxHp, e.hp + 65);
+          this.spawnParticles(e.pos.x, e.pos.y + 1.1, e.pos.z, 16, 0xf43f5e, 6.5);
+        } else {
+          e.healCd = 10.0;
+          e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.35);
+          this.spawnParticles(e.pos.x, e.pos.y + 1.1, e.pos.z, 14, 0xfacc15, 6);
+        }
+        e.overhead.updateHp(e.hp / e.maxHp);
+      }
+
+      // Acquire nearest hostile target (player, remote peer, or opposing team AI)
+      let targetKind: 'player' | 'enemy' | 'peer' | null = null;
+      let targetEnemy: AiFighter | null = null;
+      let targetPeer: RemotePeerActor | null = null;
+      let targetPos = this.playerPos;
+      let bestTargetDist = Infinity;
+
+      if (
+        this.stealthTimer <= 0 &&
+        this.localRespawnTimer <= 0 &&
+        canDamageTarget(this.mpState.roomMode, e.team, localTeam)
+      ) {
+        const dPlayer = Math.hypot(this.playerPos.x - e.pos.x, this.playerPos.z - e.pos.z);
+        bestTargetDist = dPlayer;
+        targetKind = 'player';
+        targetPos = this.playerPos;
+      }
+
+      for (const other of this.enemies) {
+        if (other === e || !other.alive || other.koTimer > 0 || other.stealthTimer > 0) continue;
+        if (!canDamageTarget(this.mpState.roomMode, e.team, other.team)) continue;
+        // In FFA, prefer engaging the player unless player is far/stealthed or bot is much closer
+        const dOther = Math.hypot(other.pos.x - e.pos.x, other.pos.z - e.pos.z);
+        const weight = this.mpState.roomMode === 'team' ? dOther : dOther + 5.0;
+        if (weight < bestTargetDist) {
+          bestTargetDist = weight;
+          targetKind = 'enemy';
+          targetEnemy = other;
+          targetPos = other.pos;
+        }
+      }
+
+      for (const peer of this.remotePeers.values()) {
+        if (!peer.alive || peer.isStealthed) continue;
+        if (!canDamageTarget(this.mpState.roomMode, e.team, peer.team)) continue;
+        const dPeer = Math.hypot(peer.pos.x - e.pos.x, peer.pos.z - e.pos.z);
+        if (dPeer < bestTargetDist) {
+          bestTargetDist = dPeer;
+          targetKind = 'peer';
+          targetPeer = peer;
+          targetPos = peer.pos;
+        }
+      }
+
+      const dx = targetKind
+        ? targetPos.x - e.pos.x
+        : Math.sin(this.elapsedTime * 0.8 + e.pos.x) * 8;
+      const dz = targetKind
+        ? targetPos.z - e.pos.z
+        : Math.cos(this.elapsedTime * 0.8 + e.pos.z) * 8;
       const dist = Math.hypot(dx, dz) || 0.01;
       const dirX = dx / dist;
       const dirZ = dz / dist;
@@ -3715,9 +4370,64 @@ export class UnstableArenaEngine {
       let moveX = 0;
       let moveZ = 0;
       const hazardMult = enemyWebbed ? 0.16 : enemyInLava ? 0.55 : enemyInWater ? 0.8 : 1.0;
-      const speed = (e.isBoss ? 6.4 : 6.0) * e.profile.speedMult * hazardMult;
+      const stealthSpeedMult = e.stealthTimer > 0 ? 1.28 : 1.0;
+      const speed = (e.isBoss ? 6.6 : 6.2) * e.profile.speedMult * hazardMult * stealthSpeedMult;
 
-      if (e.policy === 'wind_diver') {
+      const hasWeapon = (id: WeaponSlotId) => e.profile.loadout.some((item) => item.id === id);
+
+      if (e.policy === 'ranged_kite') {
+        const isCrossbow = hasWeapon('crossbow');
+        e.rig.setActiveWeapon(isCrossbow ? 'crossbow' : 'bow');
+        if (dist > 22) {
+          moveX = dirX + -dirZ * 0.3 * e.strafeDir;
+          moveZ = dirZ + dirX * 0.3 * e.strafeDir;
+        } else if (dist < 9.5) {
+          moveX = -dirX * 0.9 + -dirZ * 0.65 * e.strafeDir;
+          moveZ = -dirZ * 0.9 + dirX * 0.65 * e.strafeDir;
+        } else {
+          moveX = -dirZ * e.strafeDir;
+          moveZ = dirX * e.strafeDir;
+        }
+
+        // Defensive peel skill when enemy gets close
+        if (targetKind && !enemyWebbed && e.specialCd <= 0 && dist < 10.5) {
+          e.specialCd = 5.2;
+          _v1.set(e.pos.x, e.pos.y + 1.45, e.pos.z);
+          _v2.set(dx, (targetPos.y + 1.1) - (e.pos.y + 1.45), dz).normalize();
+          if (hasWeapon('wind_charge')) {
+            this.fireProjectile('wind_charge', { ownerId: e.id, ownerTeam: e.team, origin: _v1, dir: _v2 });
+          } else if (hasWeapon('cobweb')) {
+            this.fireProjectile('cobweb_orb', { ownerId: e.id, ownerTeam: e.team, origin: _v1, dir: _v2 });
+          } else if (hasWeapon('shadow_step')) {
+            e.stealthTimer = 2.0;
+            e.rig.setOpacity(0.28);
+            e.vel.x -= dirX * 12;
+            e.vel.z -= dirZ * 12;
+            this.spawnParticles(e.pos.x, e.pos.y + 1, e.pos.z, 14, 0x818cf8, 6);
+          }
+        }
+
+        // Fire bow / crossbow projectile!
+        if (targetKind && e.attackCooldown <= 0 && dist < 44 && Math.abs(targetPos.y - e.pos.y) < 16) {
+          e.attackCooldown = isCrossbow ? 0.85 : 1.35;
+          e.swingTimer = 0.22;
+          _v1.set(e.pos.x, e.pos.y + 1.48, e.pos.z);
+          _v2
+            .set(
+              targetPos.x - e.pos.x,
+              (targetPos.y + 1.25) - (e.pos.y + 1.48) + dist * 0.015,
+              targetPos.z - e.pos.z
+            )
+            .normalize();
+          this.fireProjectile(isCrossbow ? 'bolt' : 'arrow', {
+            ownerId: e.id,
+            ownerTeam: e.team,
+            origin: _v1,
+            dir: _v2,
+            damage: Math.round((isCrossbow ? 13 : 19) * e.profile.damageMult),
+          });
+        }
+      } else if (e.policy === 'wind_diver') {
         if (dist > 3.8) {
           moveX = dirX + -dirZ * 0.45 * e.strafeDir;
           moveZ = dirZ + dirX * 0.45 * e.strafeDir;
@@ -3728,7 +4438,12 @@ export class UnstableArenaEngine {
           e.onGround = false;
           e.fallStartY = e.pos.y + 8;
           this.spawnParticles(e.pos.x, e.pos.y + 0.3, e.pos.z, 16, 0x38bdf8, 8);
-          this.audio.playHit(false);
+          this.audio.playWindCharge();
+        } else if (targetKind && e.specialCd <= 0 && dist >= 7 && dist < 20 && hasWeapon('wind_charge')) {
+          e.specialCd = 4.6;
+          _v1.set(e.pos.x, e.pos.y + 1.45, e.pos.z);
+          _v2.set(dx, (targetPos.y + 0.8) - (e.pos.y + 1.45), dz).normalize();
+          this.fireProjectile('wind_charge', { ownerId: e.id, ownerTeam: e.team, origin: _v1, dir: _v2 });
         }
       } else if (e.policy === 'pearl_flanker') {
         if (dist > 8) {
@@ -3741,21 +4456,35 @@ export class UnstableArenaEngine {
           moveX = -dirZ * e.strafeDir;
           moveZ = dirX * e.strafeDir;
         }
-        if (!enemyWebbed && e.pearlCd <= 0 && dist > 6 && dist < 22 && this.stealthTimer <= 0) {
+        if (targetKind && !enemyWebbed && e.specialCd <= 0 && dist > 4 && dist < 15) {
+          e.specialCd = 5.8;
+          if (hasWeapon('shadow_step')) {
+            e.stealthTimer = 2.1;
+            e.rig.setOpacity(0.28);
+            e.vel.x += dirX * 13;
+            e.vel.z += dirZ * 13;
+            this.spawnParticles(e.pos.x, e.pos.y + 1, e.pos.z, 16, 0x818cf8, 7);
+          } else if (hasWeapon('cobweb')) {
+            _v1.set(e.pos.x, e.pos.y + 1.45, e.pos.z);
+            _v2.set(dx, (targetPos.y + 0.9) - (e.pos.y + 1.45) + 0.14, dz).normalize();
+            this.fireProjectile('cobweb_orb', { ownerId: e.id, ownerTeam: e.team, origin: _v1, dir: _v2 });
+          }
+        }
+        if (targetKind && !enemyWebbed && e.pearlCd <= 0 && dist > 6 && dist < 24) {
           e.pearlCd = 4.5;
           this.spawnParticles(e.pos.x, e.pos.y + 1, e.pos.z, 14, 0xc084fc, 6);
           e.pos.x = THREE.MathUtils.clamp(
-            this.playerPos.x - dirX * 4.0 + dirZ * 2.2,
-            -ARENA_RADIUS + 2,
-            ARENA_RADIUS - 2
+            targetPos.x - dirX * 4.0 + dirZ * 2.2,
+            -this.currentArenaRadius + 2,
+            this.currentArenaRadius - 2
           );
           e.pos.z = THREE.MathUtils.clamp(
-            this.playerPos.z - dirZ * 4.0 - dirX * 2.2,
-            -ARENA_RADIUS + 2,
-            ARENA_RADIUS - 2
+            targetPos.z - dirZ * 4.0 - dirX * 2.2,
+            -this.currentArenaRadius + 2,
+            this.currentArenaRadius - 2
           );
           this.spawnParticles(e.pos.x, e.pos.y + 1, e.pos.z, 18, 0xa855f7, 8);
-          this.audio.playHit(false);
+          this.audio.playPearlWarp();
         }
       } else if (e.policy === 'bruiser_charger') {
         moveX = dirX;
@@ -3765,6 +4494,16 @@ export class UnstableArenaEngine {
           e.windCd = 4.0;
           e.vel.y = 12.0;
           e.onGround = false;
+        }
+        if (targetKind && e.specialCd <= 0 && dist > 6 && dist < 17 && hasWeapon('tnt_charge')) {
+          e.specialCd = 7.0;
+          _v1.set(e.pos.x, e.pos.y + 1.45, e.pos.z);
+          _v2.set(dx, (targetPos.y + 1.0) - (e.pos.y + 1.45) + 0.18, dz).normalize();
+          this.throwTntBlock({ ownerId: e.id, ownerTeam: e.team, origin: _v1, dir: _v2 });
+        } else if (targetKind && e.pearlCd <= 0 && dist < 6 && hasWeapon('lava_bucket')) {
+          e.pearlCd = 8.5;
+          const ly = getSupportHeightAt(targetPos.x, targetPos.z, targetPos.y + 1.2, 0.4, this.blocks);
+          this.spawnHazardPool('lava', targetPos.x, ly, targetPos.z, e.id, false);
         }
       } else {
         if (dist > 2.6) {
@@ -3778,11 +4517,30 @@ export class UnstableArenaEngine {
           e.vel.y = 10.5;
           e.onGround = false;
         }
-      }
-
-      if (e.hp < e.maxHp * 0.45 && Math.random() < 0.025) {
-        e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.5);
-        this.spawnParticles(e.pos.x, e.pos.y + 1, e.pos.z, 20, 0xfacc15, 8);
+        if (targetKind && e.specialCd <= 0 && dist > 7 && dist < 24) {
+          if (hasWeapon('trident')) {
+            e.specialCd = 4.8;
+            _v1.set(e.pos.x, e.pos.y + 1.48, e.pos.z);
+            _v2.set(dx, (targetPos.y + 1.1) - (e.pos.y + 1.48), dz).normalize();
+            this.fireProjectile('trident', {
+              ownerId: e.id,
+              ownerTeam: e.team,
+              origin: _v1,
+              dir: _v2,
+              damage: Math.round(20 * e.profile.damageMult),
+            });
+          } else if (hasWeapon('tnt_charge') && dist < 16) {
+            e.specialCd = 7.2;
+            _v1.set(e.pos.x, e.pos.y + 1.45, e.pos.z);
+            _v2.set(dx, (targetPos.y + 1.0) - (e.pos.y + 1.45) + 0.18, dz).normalize();
+            this.throwTntBlock({ ownerId: e.id, ownerTeam: e.team, origin: _v1, dir: _v2 });
+          } else if (hasWeapon('wind_charge') && dist < 14) {
+            e.specialCd = 4.5;
+            _v1.set(e.pos.x, e.pos.y + 1.45, e.pos.z);
+            _v2.set(dx, (targetPos.y + 0.8) - (e.pos.y + 1.45), dz).normalize();
+            this.fireProjectile('wind_charge', { ownerId: e.id, ownerTeam: e.team, origin: _v1, dir: _v2 });
+          }
+        }
       }
 
       const mLen = Math.hypot(moveX, moveZ);
@@ -3807,7 +4565,7 @@ export class UnstableArenaEngine {
         PLAYER_RADIUS,
         PLAYER_HEIGHT,
         this.blocks,
-        ARENA_RADIUS
+        this.currentArenaRadius
       );
       e.pos.x = resPos.x;
       e.pos.z = resPos.z;
@@ -3831,22 +4589,34 @@ export class UnstableArenaEngine {
           e.rig.telegraphRing.visible = false;
           e.rig.setHitFlash(false);
           e.swingTimer = 0.25;
-          this.executeEnemyAttack(e, dist, dirX, dirZ);
+          this.executeEnemyAttack(e, dist, dirX, dirZ, targetKind, targetEnemy, targetPeer);
         }
       } else if (
-        this.stealthTimer <= 0 &&
+        targetKind !== null &&
+        e.policy !== 'ranged_kite' &&
         e.attackCooldown <= 0 &&
         dist < 3.6 &&
-        Math.abs(this.playerPos.y - e.pos.y) < 3.0
+        Math.abs(targetPos.y - e.pos.y) < 3.0
       ) {
-        if (activeTokens < 2) {
+        if (activeTokens < 2 || targetKind === 'enemy') {
           activeTokens++;
           e.isBlocking = false;
           e.telegraphKind = e.policy === 'wind_diver' && !e.onGround ? 'smash' : 'melee';
           e.telegraphTimer = 0.36;
-          e.attackCooldown = e.isBoss ? 1.05 : 1.45;
-          this.audio.playTelegraph();
+          e.attackCooldown = e.isBoss ? 1.05 : 1.4;
+          if (targetKind === 'player') this.audio.playTelegraph();
         }
+      } else if (
+        targetKind !== null &&
+        e.policy === 'ranged_kite' &&
+        e.attackCooldown <= 0 &&
+        dist < 3.4 &&
+        Math.abs(targetPos.y - e.pos.y) < 3.0
+      ) {
+        e.isBlocking = false;
+        e.telegraphKind = 'melee';
+        e.telegraphTimer = 0.28;
+        e.attackCooldown = 1.25;
       }
 
       e.rig.root.position.copy(e.pos);
@@ -3921,18 +4691,16 @@ export class UnstableArenaEngine {
     }
   }
 
-  private executeEnemyAttack(e: AiFighter, dist: number, dirX: number, dirZ: number): void {
-    const isSmash = e.telegraphKind === 'smash';
-    if (isSmash) {
-      this.spawnShockwave(e.pos.x, e.pos.y + 0.08, e.pos.z, 3.8, 0xef4444);
-      this.audio.playMaceSmash(0.8);
-    } else {
-      this.audio.playSwing();
-    }
+  private applyDamageToLocalPlayer(
+    rawDmg: number,
+    canBreakShield: boolean,
+    dirX: number,
+    dirZ: number,
+    knockback: number,
+    attackerLabel: string
+  ): void {
+    if (this.outcome !== null || this.defeatDelayTimer > 0 || this.localRespawnTimer > 0) return;
 
-    if (dist > (isSmash ? 4.1 : 3.5) || Math.abs(this.playerPos.y - e.pos.y) > 2.8) return;
-
-    const rawDmg = isSmash ? 22 : e.isBoss ? 17 : 12;
     const res = applyCombatDamage(
       {
         hp: this.playerHp,
@@ -3941,7 +4709,7 @@ export class UnstableArenaEngine {
         isBlocking: this.isBlocking,
       },
       rawDmg,
-      isSmash
+      canBreakShield
     );
 
     this.playerHp = res.remainingHp;
@@ -3949,8 +4717,8 @@ export class UnstableArenaEngine {
     this.hitFlashTimer = 0.1;
     this.playerRig.setHitFlash(true, res.blocked ? 0x38bdf8 : 0xef4444);
 
-    this.playerVel.x += dirX * (res.blocked ? 4.5 : 8.5);
-    this.playerVel.z += dirZ * (res.blocked ? 4.5 : 8.5);
+    this.playerVel.x += dirX * (res.blocked ? knockback * 0.5 : knockback);
+    this.playerVel.z += dirZ * (res.blocked ? knockback * 0.5 : knockback);
     this.playerVel.y = Math.max(this.playerVel.y, res.blocked ? 2.0 : 4.2);
 
     if (res.blocked) {
@@ -3968,14 +4736,69 @@ export class UnstableArenaEngine {
       this.audio.playDeath(true);
       if (this.mode === 'online_world' || this.mode === 'multiplayer') {
         this.localRespawnTimer = 2.2;
-        this.pushCallout(`${e.name}에게 처치됨 · 2.2초 후 부활`, '#ef4444');
+        this.pushCallout(`${attackerLabel}에게 처치됨 · 2.2초 후 부활`, '#ef4444');
       } else {
         this.defeatDelayTimer = 0.5;
       }
-      this.addKillFeed(`${e.name}에게 처치됨`, '#ef4444');
+      this.addKillFeed(`${attackerLabel}에게 처치됨`, '#ef4444');
     }
 
     this.emitHud(true);
+  }
+
+  private executeEnemyAttack(
+    e: AiFighter,
+    dist: number,
+    dirX: number,
+    dirZ: number,
+    targetKind: 'player' | 'enemy' | 'peer' | null,
+    targetEnemy: AiFighter | null,
+    _targetPeer: RemotePeerActor | null
+  ): void {
+    const isSmash = e.telegraphKind === 'smash';
+    if (isSmash) {
+      this.spawnShockwave(e.pos.x, e.pos.y + 0.08, e.pos.z, 3.8, 0xef4444);
+      this.audio.playMaceSmash(0.8);
+    } else {
+      this.audio.playSwing();
+    }
+
+    if (dist > (isSmash ? 4.1 : 3.6)) return;
+    const rawDmg = isSmash ? 22 : e.isBoss ? 17 : 12;
+
+    if (targetKind === 'enemy' && targetEnemy && targetEnemy.alive && targetEnemy.koTimer <= 0) {
+      if (Math.abs(targetEnemy.pos.y - e.pos.y) > 2.8) return;
+      const res = applyCombatDamage(
+        {
+          hp: targetEnemy.hp,
+          maxHp: targetEnemy.maxHp,
+          absorption: targetEnemy.absorption,
+          isBlocking: targetEnemy.isBlocking,
+        },
+        rawDmg,
+        isSmash
+      );
+      targetEnemy.hp = res.remainingHp;
+      targetEnemy.absorption = res.remainingAbsorption;
+      targetEnemy.overhead.updateHp(targetEnemy.hp / targetEnemy.maxHp);
+      targetEnemy.hitFlashTimer = 0.11;
+      targetEnemy.rig.setHitFlash(true);
+      targetEnemy.vel.x += dirX * 7.5;
+      targetEnemy.vel.z += dirZ * 7.5;
+      this.spawnParticles(targetEnemy.pos.x, targetEnemy.pos.y + 1.1, targetEnemy.pos.z, 10, 0xef4444, 5.5);
+      if (targetEnemy.hp <= 0) {
+        targetEnemy.koTimer = 0.42;
+        targetEnemy.deaths += 1;
+        e.kills += 1;
+        this.addKillFeed(`${e.name} ⚔ ${targetEnemy.name}`, '#94a3b8');
+      }
+      return;
+    }
+
+    if (targetKind === 'player') {
+      if (Math.abs(this.playerPos.y - e.pos.y) > 2.8) return;
+      this.applyDamageToLocalPlayer(rawDmg, isSmash, dirX, dirZ, 8.5, e.name);
+    }
   }
 
   private respawnEnemy(e: AiFighter): void {
@@ -4130,18 +4953,82 @@ export class UnstableArenaEngine {
     document.body.dataset.state = this.screen;
   }
 
+  private buildScoreboard(): ScoreboardEntry[] {
+    const entries: ScoreboardEntry[] = [
+      {
+        id: this.mpState.selfId ?? 'local',
+        name: this.mpState.playerName || 'Player',
+        characterId: this.selectedCharId,
+        team: this.getLocalPlayerTeam(),
+        kills: this.kills,
+        deaths: this.deaths,
+        hp: Math.round(this.playerHp),
+        maxHp: this.playerMaxHp,
+        isLocal: true,
+        isBot: false,
+      },
+    ];
+
+    for (const peer of this.remotePeers.values()) {
+      entries.push({
+        id: peer.id,
+        name: peer.name,
+        characterId: peer.characterId,
+        team: peer.team,
+        kills: peer.kills,
+        deaths: peer.deaths,
+        hp: Math.round(peer.hp),
+        maxHp: peer.maxHp,
+        isLocal: false,
+        isBot: false,
+      });
+    }
+
+    for (const e of this.enemies) {
+      entries.push({
+        id: e.id,
+        name: e.name,
+        characterId: e.profile.id,
+        team: e.team,
+        kills: e.kills,
+        deaths: e.deaths,
+        hp: Math.round(e.hp),
+        maxHp: e.maxHp,
+        isLocal: false,
+        isBot: true,
+      });
+    }
+
+    entries.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+    return entries;
+  }
+
   private emitHud(force: boolean): void {
     if (!force && this.disposed) return;
-    const targetKills = GAME_MODES.find((m) => m.id === this.mode)?.targetKills ?? 12;
+    const targetKills =
+      this.mode === 'multiplayer'
+        ? this.matchTargetKills
+        : GAME_MODES.find((m) => m.id === this.mode)?.targetKills ?? 15;
     const fallHeightReady = this.playerOnGround
       ? 0
       : Math.max(0, Math.round(this.playerFallStartY - this.playerPos.y));
     const loadout = this.getCurrentLoadout();
 
+    const mapTimeRemaining = this.isNetworkedMode()
+      ? Math.max(
+          0,
+          Math.ceil((MAP_ROTATION_SECONDS * 1000 - (Date.now() - this.mapStartedAtMs)) / 1000)
+        )
+      : Math.max(0, Math.ceil(MAP_ROTATION_SECONDS - this.offlineMapTimer));
+
     this.onHudChange({
       screen: this.screen,
       mode: this.mode,
       characterId: this.selectedCharId,
+      roomMode: this.mpState.roomMode,
+      playerTeam: this.getLocalPlayerTeam(),
+      currentMapId: this.currentMapId,
+      mapTimeRemaining,
       hp: Math.round(this.playerHp),
       maxHp: this.playerMaxHp,
       absorption: Math.round(this.playerAbsorption),
@@ -4150,12 +5037,12 @@ export class UnstableArenaEngine {
       loadout,
       slotCooldowns: [...this.slotCooldowns] as SixTuple<number>,
       slotMaxCooldowns: [
-        loadout[0].cooldown,
-        loadout[1].cooldown,
-        loadout[2].cooldown,
-        loadout[3].cooldown,
-        loadout[4].cooldown,
-        loadout[5].cooldown,
+        loadout[0].id === 'crossbow' ? 1.35 : loadout[0].cooldown,
+        loadout[1].id === 'crossbow' ? 1.35 : loadout[1].cooldown,
+        loadout[2].id === 'crossbow' ? 1.35 : loadout[2].cooldown,
+        loadout[3].id === 'crossbow' ? 1.35 : loadout[3].cooldown,
+        loadout[4].id === 'crossbow' ? 1.35 : loadout[4].cooldown,
+        loadout[5].id === 'crossbow' ? 1.35 : loadout[5].cooldown,
       ],
       slotCharges: [...this.slotCharges] as SixTuple<number>,
       slotMaxCharges: [...this.slotMaxCharges] as SixTuple<number>,
@@ -4186,11 +5073,14 @@ export class UnstableArenaEngine {
       calloutTimer: this.calloutTimer,
       killFeed: this.killFeed,
       chatMessages: this.chatMessages,
+      scoreboard: this.buildScoreboard(),
       hitmarkerTimer: this.hitmarkerTimer,
       hitmarkerCrit: this.hitmarkerCrit,
       lastHitText: this.lastHitText,
       fallHeightReady,
       muted: this.audio.isMuted(),
+      fps: this.fps,
+      settings: { ...this.settings },
       multiplayer: this.mpState,
     });
   }
@@ -4234,6 +5124,7 @@ export class UnstableArenaEngine {
   }
 
   public mobileMove(forward: number, right: number): void {
+    this.mobileForwardInput = forward;
     if (forward > 0.15) {
       this.keys.add('KeyW');
       this.keys.delete('KeyS');
@@ -4258,8 +5149,10 @@ export class UnstableArenaEngine {
   }
 
   public mobileLook(dx: number, dy: number): void {
-    this.targetYaw -= dx * 0.0045;
-    this.targetPitch = THREE.MathUtils.clamp(this.targetPitch - dy * 0.0045, -1.46, 1.42);
+    const sens = this.settings.sensitivity;
+    const ySign = this.settings.invertY ? -1 : 1;
+    this.targetYaw -= dx * 0.0045 * sens;
+    this.targetPitch = THREE.MathUtils.clamp(this.targetPitch - dy * 0.0045 * sens * ySign, -1.46, 1.42);
   }
 
   public dispose(): void {

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AuthModal } from './components/AuthModal';
 import { GameHud } from './components/GameHud';
+import { SettingsModal } from './components/SettingsModal';
 import { StatusModal } from './components/StatusModal';
 import { TitleScreen } from './components/TitleScreen';
 import {
@@ -9,7 +10,7 @@ import {
   subscribeAuthState,
   type PlayerAccountProfile,
 } from './firebase';
-import { CHARACTERS } from './game/characters';
+import { CHARACTERS, DEFAULT_GAME_SETTINGS } from './game/characters';
 import { UnstableArenaEngine } from './game/engine';
 import type { CharacterId, GameModeId, HudSnapshot } from './game/types';
 
@@ -17,6 +18,10 @@ const INITIAL_HUD: HudSnapshot = {
   screen: 'title',
   mode: 'online_world',
   characterId: 'wemmbu',
+  roomMode: 'ffa',
+  playerTeam: 'ffa',
+  currentMapId: 'container_yard',
+  mapTimeRemaining: 180,
   hp: 110,
   maxHp: 110,
   absorption: 0,
@@ -75,20 +80,32 @@ const INITIAL_HUD: HudSnapshot = {
   calloutTimer: 0,
   killFeed: [],
   chatMessages: [],
+  scoreboard: [],
   hitmarkerTimer: 0,
   hitmarkerCrit: false,
   lastHitText: '',
   fallHeightReady: 0,
   muted: false,
+  fps: 60,
+  settings: DEFAULT_GAME_SETTINGS,
   multiplayer: {
     status: 'idle',
     roomKind: 'global',
+    roomMode: 'ffa',
     roomCode: null,
     selfId: null,
     isHost: false,
     playerName: 'Player',
     includeBots: true,
     linkQueueing: false,
+    selectedMap: 'container_yard',
+    mapVotes: {
+      container_yard: 0,
+      emerald_citadel: 0,
+      sky_dock: 0,
+      nether_foundry: 0,
+    },
+    targetKills: 15,
     peers: [],
     error: null,
   },
@@ -104,6 +121,7 @@ export default function App() {
   const [account, setAccount] = useState<PlayerAccountProfile | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalTab, setAuthModalTab] = useState<'auth' | 'leaderboard'>('auth');
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [initialRoomCode] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -209,6 +227,8 @@ export default function App() {
           selectedCharacter={hud.characterId}
           selectedMode={hud.mode}
           multiplayer={hud.multiplayer}
+          settings={hud.settings}
+          chatMessages={hud.chatMessages}
           account={account}
           initialRoomCode={initialRoomCode}
           initialLinkCode={initialLinkCode}
@@ -220,6 +240,7 @@ export default function App() {
             setAuthModalTab(tab);
             setAuthModalOpen(true);
           }}
+          onOpenSettings={() => setSettingsOpen(true)}
           onCreateLinkDuel={(name) => engineRef.current?.createLinkDuelRoom(name)}
           onJoinLinkDuel={(code, name) => engineRef.current?.joinLinkDuelRoom(code, name)}
           onQueueLinkDuel={(name) => engineRef.current?.queueLinkDuel(name)}
@@ -227,6 +248,8 @@ export default function App() {
           onCreateRoom={(name, includeBots, roomMode, team) => engineRef.current?.createMultiplayerRoom(name, includeBots, roomMode, team)}
           onJoinRoom={(code, name, team) => engineRef.current?.joinMultiplayerRoom(code, name, team)}
           onUpdateLobby={(updates) => engineRef.current?.updateMultiplayerLobby(updates)}
+          onVoteMap={(mapId) => engineRef.current?.voteMap(mapId)}
+          onSendChat={(text) => engineRef.current?.sendChatMessage(text)}
           onStartMultiplayer={() => engineRef.current?.startMultiplayerMatch()}
           onLeaveRoom={() => engineRef.current?.leaveMultiplayerRoom()}
           onResetNetwork={() => engineRef.current?.resetNetworkConnection()}
@@ -239,9 +262,15 @@ export default function App() {
           onSelectSlot={(idx) => engineRef.current?.selectSlot(idx)}
           onCycleCameraMode={() => engineRef.current?.cycleCameraMode()}
           onToggleMute={() => engineRef.current?.toggleMute()}
+          onOpenSettings={() => {
+            document.exitPointerLock?.();
+            setSettingsOpen(true);
+          }}
           onPause={() => engineRef.current?.pauseGame()}
           onRestart={() => engineRef.current?.startGame()}
           onSendChat={(text) => engineRef.current?.sendChatMessage(text)}
+          onToggleMobileSprint={() => engineRef.current?.toggleMobileSprint()}
+          onMobileElytra={() => engineRef.current?.mobileElytra()}
           onMobileAttack={() => engineRef.current?.mobileAttack()}
           onMobileAttackHold={(pressed) => engineRef.current?.mobileAttackHold(pressed)}
           onMobileJump={(pressed) => engineRef.current?.mobileJump(pressed)}
@@ -259,6 +288,7 @@ export default function App() {
           onRestart={() => engineRef.current?.startGame()}
           onTitle={() => engineRef.current?.returnToTitle()}
           onLeaveRoom={() => engineRef.current?.leaveMultiplayerRoom()}
+          onOpenSettings={() => setSettingsOpen(true)}
         />
       )}
 
@@ -269,6 +299,14 @@ export default function App() {
         selectedCharacter={hud.characterId}
         onClose={() => setAuthModalOpen(false)}
         onAccountUpdated={(profile) => setAccount(profile)}
+      />
+
+      <SettingsModal
+        open={settingsOpen}
+        settings={hud.settings}
+        onUpdate={(partial) => engineRef.current?.updateSettings(partial)}
+        onReset={() => engineRef.current?.resetSettings()}
+        onClose={() => setSettingsOpen(false)}
       />
     </main>
   );

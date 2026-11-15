@@ -1,9 +1,3 @@
-export type GameScreenState = 'title' | 'playing' | 'paused' | 'gameover';
-
-export type GameModeId = 'online_world' | 'link_duel' | 'ffa' | 'multiplayer';
-
-export type CameraViewMode = 'shiftlock' | 'firstperson' | 'free';
-
 export type CharacterId =
   | 'wemmbu'
   | 'flamefrags'
@@ -13,7 +7,23 @@ export type CharacterId =
   | 'clownpierce'
   | 'princezam'
   | 'jumperwho'
-  | 'minutetech';
+  | 'minutetech'
+  | 'kestrel'
+  | 'vexor';
+
+export type GameModeId = 'online_world' | 'ffa' | 'link_duel' | 'multiplayer';
+export type RoomMode = 'ffa' | 'team';
+export type PlayerTeam = 'red' | 'blue' | 'ffa';
+export type MapId = 'container_yard' | 'emerald_citadel' | 'sky_dock' | 'nether_foundry';
+export type CameraMode = 'firstperson' | 'shiftlock' | 'free';
+export type CameraViewMode = CameraMode;
+export type GraphicsQuality = 'low' | 'medium' | 'high';
+export type AiPolicy =
+  | 'wind_diver'
+  | 'sword_duelist'
+  | 'pearl_flanker'
+  | 'bruiser_charger'
+  | 'ranged_kite';
 
 export type WeaponSlotId =
   | 'sword'
@@ -22,6 +32,8 @@ export type WeaponSlotId =
   | 'axe'
   | 'mace'
   | 'trident'
+  | 'bow'
+  | 'crossbow'
   | 'wind_charge'
   | 'cobweb'
   | 'tnt_charge'
@@ -33,40 +45,207 @@ export type WeaponSlotId =
   | 'water_bucket'
   | 'build_block';
 
-export interface LoadoutItemMeta {
+export interface LoadoutItemConfig {
   id: WeaponSlotId;
   name: string;
-  role: string;
+  shortName: string;
+  role?: string;
+  keyHint: string;
   cooldown: number;
+  useDelay?: number;
   maxCharges?: number;
   startCharges?: number;
-  useDelay?: number;
+  description: string;
+  accent: string;
+  damage?: number;
+  range?: number;
 }
-
-export type SixTuple<T> = [T, T, T, T, T, T];
-
-export type AiPolicy = 'wind_diver' | 'sword_duelist' | 'pearl_flanker' | 'bruiser_charger';
 
 export interface CharacterProfile {
   id: CharacterId;
   name: string;
-  role: string;
   titleKr: string;
+  role: string;
+  signatureLabel: string;
   summary: string;
-  maxHp: number;
-  speedMult: number;
-  swordMult: number;
-  maceMult: number;
-  windCdMult: number;
-  pearlCdMult: number;
+  archetype:
+    | 'mace_diver'
+    | 'brawler'
+    | 'spear_master'
+    | 'trickster'
+    | 'heavy_tank'
+    | 'assassin'
+    | 'pyromancer'
+    | 'acrobat'
+    | 'tactician'
+    | 'ranged_sniper'
+    | 'ranged_skirmisher';
   primaryColor: string;
   trimColor: string;
-  skinColor: string;
   visorColor: string;
+  skinColor: string;
   headgear: 'crown' | 'hood' | 'visor' | 'headband' | 'horns';
-  signatureLabel: string;
-  loadout: SixTuple<LoadoutItemMeta>;
+  maxHp: number;
+  speedMult: number;
+  damageMult: number;
+  loadout: [
+    LoadoutItemConfig,
+    LoadoutItemConfig,
+    LoadoutItemConfig,
+    LoadoutItemConfig,
+    LoadoutItemConfig,
+    LoadoutItemConfig
+  ];
 }
+
+export interface GameSettings {
+  cameraMode: CameraMode;
+  fov: number;
+  sensitivity: number;
+  invertY: boolean;
+  masterVolume: number;
+  muted: boolean;
+  graphicsQuality: GraphicsQuality;
+  particlesEnabled: boolean;
+  showFps: boolean;
+  mobileAutoSprint: boolean;
+}
+
+export interface RoomPeerInfo {
+  id: string;
+  name: string;
+  characterId: CharacterId;
+  team: PlayerTeam;
+  kills: number;
+  deaths: number;
+  hp: number;
+  maxHp: number;
+  isHost: boolean;
+  votedMap?: MapId;
+}
+
+export interface MultiplayerHudState {
+  status: 'idle' | 'connecting' | 'lobby' | 'playing';
+  roomKind: 'global' | 'link_duel' | 'private';
+  roomMode: RoomMode;
+  roomCode: string | null;
+  selfId: string | null;
+  isHost: boolean;
+  playerName: string;
+  includeBots: boolean;
+  linkQueueing: boolean;
+  selectedMap: MapId;
+  mapVotes: Record<MapId, number>;
+  targetKills: number;
+  mapStartedAt?: number;
+  peers: RoomPeerInfo[];
+  error: string | null;
+}
+
+export interface ChatEntry {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  team?: PlayerTeam;
+}
+
+export interface ScoreboardEntry {
+  id: string;
+  name: string;
+  characterId: CharacterId;
+  team: PlayerTeam;
+  kills: number;
+  deaths: number;
+  hp: number;
+  maxHp: number;
+  isLocal: boolean;
+  isBot: boolean;
+}
+
+export type ScreenState = 'title' | 'playing' | 'paused' | 'gameover';
+export type GameScreenState = ScreenState;
+
+export type SixTuple<T> = [T, T, T, T, T, T];
+
+export interface KillFeedEntry {
+  id: number;
+  text: string;
+  color: string;
+}
+
+export interface HudSnapshot {
+  screen: ScreenState;
+  mode: GameModeId;
+  characterId: CharacterId;
+  roomMode: RoomMode;
+  playerTeam: PlayerTeam;
+  currentMapId: MapId;
+  mapTimeRemaining: number;
+  hp: number;
+  maxHp: number;
+  absorption: number;
+  stamina: number;
+  activeSlot: number;
+  loadout: SixTuple<LoadoutItemConfig>;
+  slotCooldowns: SixTuple<number>;
+  slotMaxCooldowns: SixTuple<number>;
+  slotCharges: SixTuple<number>;
+  slotMaxCharges: SixTuple<number>;
+  elytraCooldown: number;
+  elytraMaxCooldown: number;
+  isGliding: boolean;
+  isBlocking: boolean;
+  isStealthed: boolean;
+  isInCobweb: boolean;
+  cobwebBreakProgress: number;
+  isBurning: boolean;
+  isInWater: boolean;
+  cameraMode: CameraMode;
+  shiftLock: boolean;
+  pointerLocked: boolean;
+  kills: number;
+  deaths: number;
+  targetKills: number;
+  wave: number;
+  aliveEnemies: number;
+  comboStreak: number;
+  maxSmashHeight: number;
+  damageDealt: number;
+  elapsedTime: number;
+  outcome: 'victory' | 'defeat' | null;
+  calloutText: string;
+  calloutAccent: string;
+  calloutTimer: number;
+  killFeed: KillFeedEntry[];
+  chatMessages: ChatEntry[];
+  scoreboard: ScoreboardEntry[];
+  hitmarkerTimer: number;
+  hitmarkerCrit: boolean;
+  lastHitText: string;
+  fallHeightReady: number;
+  muted: boolean;
+  fps: number;
+  settings: GameSettings;
+  multiplayer: MultiplayerHudState;
+}
+
+export type ArenaBlockKind =
+  | 'deepslate'
+  | 'obsidian'
+  | 'gold'
+  | 'amethyst'
+  | 'stone'
+  | 'turf'
+  | 'player_block'
+  | 'container_red'
+  | 'container_blue'
+  | 'container_amber'
+  | 'container_teal'
+  | 'asphalt'
+  | 'wood_crate'
+  | 'basalt'
+  | 'crimson_brick';
 
 export interface ArenaBlock {
   id: string;
@@ -76,9 +255,11 @@ export interface ArenaBlock {
   w: number;
   h: number;
   d: number;
-  kind: 'deepslate' | 'obsidian' | 'gold' | 'amethyst' | 'stone' | 'turf' | 'player_block';
+  kind: ArenaBlockKind;
+  isDynamic?: boolean;
   isLandmark?: boolean;
   ownerId?: string;
+  hp?: number;
 }
 
 export interface CobwebZone {
@@ -96,87 +277,6 @@ export interface HazardPoolZone {
   y: number;
   z: number;
   radius: number;
-}
-
-export interface ChatEntry {
-  id: string;
-  senderId: string;
-  senderName: string;
-  text: string;
-}
-
-export interface RoomPeerInfo {
-  id: string;
-  name: string;
-  characterId: CharacterId;
-  team?: 'red' | 'blue' | 'ffa';
-  kills: number;
-  deaths: number;
-  hp: number;
-  maxHp: number;
-  isHost: boolean;
-}
-
-export interface MultiplayerHudState {
-  status: 'idle' | 'connecting' | 'lobby' | 'playing';
-  roomKind: 'global' | 'link_duel' | 'private';
-  roomCode: string | null;
-  selfId: string | null;
-  isHost: boolean;
-  playerName: string;
-  includeBots: boolean;
-  linkQueueing: boolean;
-  peers: RoomPeerInfo[];
-  error: string | null;
-}
-
-export interface HudSnapshot {
-  screen: GameScreenState;
-  mode: GameModeId;
-  characterId: CharacterId;
-  hp: number;
-  maxHp: number;
-  absorption: number;
-  stamina: number;
-  activeSlot: number;
-  loadout: SixTuple<LoadoutItemMeta>;
-  slotCooldowns: SixTuple<number>;
-  slotMaxCooldowns: SixTuple<number>;
-  slotCharges: SixTuple<number>;
-  slotMaxCharges: SixTuple<number>;
-  elytraCooldown: number;
-  elytraMaxCooldown: number;
-  isGliding: boolean;
-  isBlocking: boolean;
-  isStealthed: boolean;
-  isInCobweb: boolean;
-  cobwebBreakProgress: number;
-  isBurning: boolean;
-  isInWater: boolean;
-  cameraMode: CameraViewMode;
-  shiftLock: boolean;
-  pointerLocked: boolean;
-  kills: number;
-  deaths: number;
-  targetKills: number;
-  wave: number;
-  aliveEnemies: number;
-  comboStreak: number;
-  maxSmashHeight: number;
-  damageDealt: number;
-  elapsedTime: number;
-  outcome: 'victory' | 'defeat' | null;
-  calloutText: string;
-  calloutAccent: string;
-  calloutTimer: number;
-  killFeed: Array<{ id: number; text: string; color: string }>;
-  chatMessages: ChatEntry[];
-  hitmarkerTimer: number;
-  hitmarkerCrit: boolean;
-  lastHitText: string;
-  fallHeightReady: number;
-  muted: boolean;
-  multiplayer: MultiplayerHudState;
 }
 
 export interface FighterStats {

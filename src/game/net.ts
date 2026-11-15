@@ -1,11 +1,17 @@
-import type { CharacterId, ChatEntry, MultiplayerHudState, RoomPeerInfo } from './types';
+import type { CharacterId, ChatEntry, MapId, MultiplayerHudState, RoomMode, RoomPeerInfo } from './types';
 
 export interface NetEventHandlers {
   onRoomChange: (
     state: MultiplayerHudState,
     placedBlocks?: Array<{ id: string; x: number; y: number; z: number; kind: string; ownerId: string }>
   ) => void;
-  onMatchStart: (roomKind: 'global' | 'link_duel' | 'private') => void;
+  onMatchStart: (
+    roomKind: 'global' | 'link_duel' | 'private',
+    selectedMap?: MapId,
+    mapStartedAt?: number,
+    targetKills?: number
+  ) => void;
+  onMapChanged?: (mapId: MapId, mapStartedAt: number) => void;
   onLinkMatchOver: (msg: { winnerId: string; winnerName: string; loserId: string; loserName: string }) => void;
   onChat: (msg: ChatEntry) => void;
   onPeerState: (msg: {
@@ -100,12 +106,21 @@ export class MultiplayerClient {
   private state: MultiplayerHudState = {
     status: 'idle',
     roomKind: 'global',
+    roomMode: 'ffa',
     roomCode: null,
     selfId: null,
     isHost: false,
     playerName: 'Player',
     includeBots: true,
     linkQueueing: false,
+    selectedMap: 'container_yard',
+    mapVotes: {
+      container_yard: 0,
+      emerald_citadel: 0,
+      sky_dock: 0,
+      nether_foundry: 0,
+    },
+    targetKills: 15,
     peers: [],
     error: null,
   };
@@ -261,8 +276,21 @@ export class MultiplayerClient {
         const rk = msg.roomKind === 'global' || msg.roomKind === 'link_duel' ? msg.roomKind : 'private';
         this.state.roomCode = String(msg.code || '');
         this.state.roomKind = rk;
+        this.state.roomMode = msg.roomMode === 'team' ? 'team' : 'ffa';
         this.state.isHost = String(msg.hostId || '') === this.state.selfId;
         this.state.includeBots = Boolean(msg.includeBots);
+        this.state.selectedMap = (typeof msg.selectedMap === 'string' ? msg.selectedMap : 'container_yard') as MapId;
+        if (msg.mapVotes && typeof msg.mapVotes === 'object') {
+          const mv = msg.mapVotes as Record<string, number>;
+          this.state.mapVotes = {
+            container_yard: Number(mv.container_yard || 0),
+            emerald_citadel: Number(mv.emerald_citadel || 0),
+            sky_dock: Number(mv.sky_dock || 0),
+            nether_foundry: Number(mv.nether_foundry || 0),
+          };
+        }
+        this.state.targetKills = typeof msg.targetKills === 'number' ? msg.targetKills : 15;
+        this.state.mapStartedAt = typeof msg.mapStartedAt === 'number' ? msg.mapStartedAt : undefined;
         this.state.status = msg.status === 'playing' ? 'playing' : 'lobby';
         this.state.linkQueueing = false;
         this.state.peers = peers;
@@ -279,8 +307,32 @@ export class MultiplayerClient {
         this.state.roomKind = rk;
         this.state.status = 'playing';
         this.state.linkQueueing = false;
+        if (typeof msg.selectedMap === 'string') {
+          this.state.selectedMap = msg.selectedMap as MapId;
+        }
+        if (typeof msg.mapStartedAt === 'number') {
+          this.state.mapStartedAt = msg.mapStartedAt;
+        }
+        if (typeof msg.targetKills === 'number') {
+          this.state.targetKills = msg.targetKills;
+        }
         this.handlers.onRoomChange(this.getState());
-        this.handlers.onMatchStart(rk);
+        this.handlers.onMatchStart(
+          rk,
+          msg.selectedMap as MapId | undefined,
+          typeof msg.mapStartedAt === 'number' ? msg.mapStartedAt : undefined,
+          typeof msg.targetKills === 'number' ? msg.targetKills : undefined
+        );
+        return;
+      }
+
+      if (type === 'map_changed') {
+        const mapId = (typeof msg.mapId === 'string' ? msg.mapId : 'container_yard') as MapId;
+        const mapStartedAt = typeof msg.mapStartedAt === 'number' ? msg.mapStartedAt : Date.now();
+        this.state.selectedMap = mapId;
+        this.state.mapStartedAt = mapStartedAt;
+        this.handlers.onRoomChange(this.getState());
+        this.handlers.onMapChanged?.(mapId, mapStartedAt);
         return;
       }
 
@@ -297,6 +349,7 @@ export class MultiplayerClient {
           senderId: String(msg.senderId || ''),
           senderName: String(msg.senderName || 'Player'),
           text: String(msg.text || ''),
+          team: msg.team === 'red' || msg.team === 'blue' ? msg.team : 'ffa',
         });
         return;
       }
@@ -446,7 +499,15 @@ export class MultiplayerClient {
     this.send({ type: 'join_room', code: code.trim().toUpperCase(), name: this.state.playerName, characterId, team });
   }
 
-  public updateLobby(updates: { name?: string; characterId?: CharacterId; includeBots?: boolean; team?: 'red' | 'blue' | 'ffa'; roomMode?: 'ffa' | 'team' }): void {
+  public updateLobby(updates: {
+    name?: string;
+    characterId?: CharacterId;
+    includeBots?: boolean;
+    team?: 'red' | 'blue' | 'ffa';
+    roomMode?: RoomMode;
+    targetKills?: number;
+    selectedMap?: MapId;
+  }): void {
     if (updates.name !== undefined) {
       this.state.playerName = updates.name.trim() || 'Player';
     }
@@ -455,6 +516,11 @@ export class MultiplayerClient {
       return;
     }
     this.send({ type: 'update_lobby', ...updates });
+  }
+
+  public voteMap(mapId: MapId): void {
+    if (!this.state.roomCode) return;
+    this.send({ type: 'vote_map', mapId });
   }
 
   public startMatch(): void {

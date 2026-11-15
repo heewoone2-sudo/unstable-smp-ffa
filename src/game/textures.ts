@@ -261,24 +261,167 @@ function createMicroBumpTexture(anisotropy: number): THREE.CanvasTexture {
   return finalizePbrTexture(canvas, anisotropy, false);
 }
 
+export function paintSkyDomeCanvas(
+  canvas: HTMLCanvasElement,
+  skyTop = '#3b82f6',
+  skyMid = '#7dd3fc',
+  skyHorizon = '#e0f2fe',
+  skyBottom = '#cbd5e1'
+): void {
+  const ctx = canvas.getContext('2d')!;
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0.0, skyTop);
+  grad.addColorStop(0.28, skyMid);
+  grad.addColorStop(0.5, skyHorizon);
+  grad.addColorStop(0.58, '#f8fafc');
+  grad.addColorStop(1.0, skyBottom);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
 export function createSkyDomeTexture(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 32;
   canvas.height = 512;
-  const ctx = canvas.getContext('2d')!;
-  const grad = ctx.createLinearGradient(0, 0, 0, 512);
-  grad.addColorStop(0.0, '#4f97e8');
-  grad.addColorStop(0.28, '#7abbf2');
-  grad.addColorStop(0.49, '#cce9fc');
-  grad.addColorStop(0.55, '#eef7ff');
-  grad.addColorStop(1.0, '#cfe3c8');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, 32, 512);
+  paintSkyDomeCanvas(canvas);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.magFilter = THREE.LinearFilter;
   tex.minFilter = THREE.LinearFilter;
   return tex;
+}
+
+/**
+ * Corrugated steel shipping container ribs + structural frame + subtle cargo stencil.
+ */
+function createCorrugatedContainerTexture(
+  baseHex: string,
+  ribLightHex: string,
+  ribDarkHex: string,
+  anisotropy: number,
+  seed: number
+): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const rand = createMulberry32(seed);
+
+  ctx.fillStyle = baseHex;
+  ctx.fillRect(0, 0, size, size);
+
+  // Vertical corrugated steel ribs
+  const ribs = 16;
+  const ribW = size / ribs;
+  for (let i = 0; i < ribs; i++) {
+    const x = i * ribW;
+    const g = ctx.createLinearGradient(x, 0, x + ribW, 0);
+    g.addColorStop(0, ribDarkHex);
+    g.addColorStop(0.32, ribLightHex);
+    g.addColorStop(0.6, baseHex);
+    g.addColorStop(1, ribDarkHex);
+    ctx.globalAlpha = 0.72;
+    ctx.fillStyle = g;
+    ctx.fillRect(x, 20, ribW, size - 40);
+  }
+  ctx.globalAlpha = 1;
+
+  // Heavy top/bottom/side frame rails & corner castings
+  ctx.strokeStyle = ribDarkHex;
+  ctx.lineWidth = 22;
+  ctx.strokeRect(11, 11, size - 22, size - 22);
+
+  ctx.strokeStyle = ribLightHex;
+  ctx.globalAlpha = 0.35;
+  ctx.lineWidth = 4;
+  ctx.strokeRect(24, 24, size - 48, size - 48);
+
+  // Subtle weathered industrial scuffs
+  for (let i = 0; i < 180; i++) {
+    ctx.fillStyle = rand() > 0.5 ? ribLightHex : ribDarkHex;
+    ctx.globalAlpha = 0.05 + rand() * 0.08;
+    ctx.fillRect(rand() * size, rand() * size, 4 + rand() * 18, 2 + rand() * 4);
+  }
+  ctx.globalAlpha = 1;
+
+  // Crisp industrial stencil block in upper-right corner
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.24)';
+  ctx.fillRect(size - 134, 48, 86, 22);
+  ctx.fillRect(size - 110, 78, 62, 10);
+
+  return finalizePbrTexture(canvas, anisotropy, true);
+}
+
+/**
+ * Concrete / asphalt dockyard surface with subtle aggregate and lane markings.
+ */
+function createAsphaltTexture(anisotropy: number, seed: number): THREE.CanvasTexture {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const rand = createMulberry32(seed);
+
+  ctx.fillStyle = '#64748b';
+  ctx.fillRect(0, 0, size, size);
+
+  for (let i = 0; i < 3200; i++) {
+    const shade = rand() > 0.5 ? '#94a3b8' : '#475569';
+    ctx.fillStyle = shade;
+    ctx.globalAlpha = 0.12 + rand() * 0.16;
+    ctx.fillRect(rand() * size, rand() * size, 2 + rand() * 3, 2 + rand() * 3);
+  }
+  ctx.globalAlpha = 0.38;
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, size - 4, size - 4);
+  ctx.globalAlpha = 1;
+
+  return finalizePbrTexture(canvas, anisotropy, true);
+}
+
+/**
+ * Braced wooden shipping crate texture.
+ */
+function createCrateTexture(anisotropy: number, seed: number): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const rand = createMulberry32(seed);
+
+  ctx.fillStyle = '#b9854c';
+  ctx.fillRect(0, 0, size, size);
+
+  for (let i = 0; i < 8; i++) {
+    const y = (i * size) / 8;
+    ctx.fillStyle = i % 2 === 0 ? '#c49056' : '#ad7a43';
+    ctx.fillRect(0, y, size, size / 8 - 2);
+    ctx.fillStyle = '#7c5328';
+    ctx.fillRect(0, y + size / 8 - 2, size, 2);
+  }
+
+  for (let i = 0; i < 160; i++) {
+    ctx.fillStyle = rand() > 0.5 ? '#d4a36a' : '#734b22';
+    ctx.globalAlpha = 0.14;
+    ctx.fillRect(rand() * size, rand() * size, 16 + rand() * 24, 2);
+  }
+  ctx.globalAlpha = 1;
+
+  // Outer timber frame & diagonal brace
+  ctx.strokeStyle = '#734b22';
+  ctx.lineWidth = 20;
+  ctx.strokeRect(10, 10, size - 20, size - 20);
+  ctx.beginPath();
+  ctx.moveTo(18, 18);
+  ctx.lineTo(size - 18, size - 18);
+  ctx.lineWidth = 14;
+  ctx.stroke();
+
+  return finalizePbrTexture(canvas, anisotropy, true);
 }
 
 export function createLavaSurfaceTexture(anisotropy: number): THREE.CanvasTexture {
@@ -335,10 +478,20 @@ export interface ArenaMaterialSet {
   stone: THREE.MeshStandardMaterial;
   turf: THREE.MeshStandardMaterial;
   player_block: THREE.MeshStandardMaterial;
+  container_red: THREE.MeshStandardMaterial;
+  container_blue: THREE.MeshStandardMaterial;
+  container_amber: THREE.MeshStandardMaterial;
+  container_teal: THREE.MeshStandardMaterial;
+  asphalt: THREE.MeshStandardMaterial;
+  wood_crate: THREE.MeshStandardMaterial;
+  basalt: THREE.MeshStandardMaterial;
+  crimson_brick: THREE.MeshStandardMaterial;
   cliff: THREE.MeshStandardMaterial;
   shadowDisc: THREE.MeshBasicMaterial;
   skyDomeTex: THREE.CanvasTexture;
   lavaTex: THREE.CanvasTexture;
+  grassGroundTex: THREE.CanvasTexture;
+  asphaltGroundTex: THREE.CanvasTexture;
   textures: THREE.Texture[];
 }
 
@@ -346,8 +499,11 @@ export function createArenaMaterials(renderer: THREE.WebGLRenderer): ArenaMateri
   const anisotropy = renderer.capabilities.getMaxAnisotropy();
 
   const bumpMap = createMicroBumpTexture(anisotropy);
-  const groundTex = createOrganicGrassTexture('#4e993b', '#76c957', '#357128', anisotropy, 101);
-  groundTex.repeat.set(34, 34);
+  const grassGroundTex = createOrganicGrassTexture('#4e993b', '#76c957', '#357128', anisotropy, 101);
+  grassGroundTex.repeat.set(34, 34);
+
+  const asphaltGroundTex = createAsphaltTexture(anisotropy, 909);
+  asphaltGroundTex.repeat.set(36, 36);
 
   const turfTex = createOrganicGrassTexture('#56a844', '#7ed361', '#3b7c2d', anisotropy, 707);
   turfTex.repeat.set(2, 2);
@@ -359,17 +515,26 @@ export function createArenaMaterials(renderer: THREE.WebGLRenderer): ArenaMateri
   const stoneTex = createCarvedStoneTexture('#858e9e', '#a4aec0', '#5b6373', anisotropy, 606, 4);
   const playerBlockTex = createWoodPlankTexture(anisotropy, 808);
 
+  const containerRedTex = createCorrugatedContainerTexture('#dc2626', '#f87171', '#991b1b', anisotropy, 1101);
+  const containerBlueTex = createCorrugatedContainerTexture('#2563eb', '#60a5fa', '#1e40af', anisotropy, 1102);
+  const containerAmberTex = createCorrugatedContainerTexture('#d97706', '#fbbf24', '#92400e', anisotropy, 1103);
+  const containerTealTex = createCorrugatedContainerTexture('#0d9488', '#2dd4bf', '#115e59', anisotropy, 1104);
+  const asphaltTex = createAsphaltTexture(anisotropy, 1105);
+  const woodCrateTex = createCrateTexture(anisotropy, 1106);
+  const basaltTex = createCarvedStoneTexture('#38343d', '#57534e', '#1c1917', anisotropy, 1107, 4);
+  const crimsonBrickTex = createCarvedStoneTexture('#7f1d1d', '#b91c1c', '#450a0a', anisotropy, 1108, 4);
+
   const shadowTex = createShadowDiscTexture();
   const skyDomeTex = createSkyDomeTexture();
   const lavaTex = createLavaSurfaceTexture(anisotropy);
 
   const ground = new THREE.MeshStandardMaterial({
     color: 0xffffff,
-    map: groundTex,
+    map: asphaltGroundTex,
     bumpMap,
-    bumpScale: 0.04,
-    roughness: 0.9,
-    metalness: 0.02,
+    bumpScale: 0.035,
+    roughness: 0.88,
+    metalness: 0.06,
   });
 
   const deepslate = new THREE.MeshStandardMaterial({
@@ -435,6 +600,71 @@ export function createArenaMaterials(renderer: THREE.WebGLRenderer): ArenaMateri
     metalness: 0.04,
   });
 
+  const container_red = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: containerRedTex,
+    bumpMap,
+    bumpScale: 0.05,
+    roughness: 0.45,
+    metalness: 0.55,
+  });
+  const container_blue = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: containerBlueTex,
+    bumpMap,
+    bumpScale: 0.05,
+    roughness: 0.45,
+    metalness: 0.55,
+  });
+  const container_amber = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: containerAmberTex,
+    bumpMap,
+    bumpScale: 0.05,
+    roughness: 0.46,
+    metalness: 0.52,
+  });
+  const container_teal = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: containerTealTex,
+    bumpMap,
+    bumpScale: 0.05,
+    roughness: 0.45,
+    metalness: 0.55,
+  });
+  const asphalt = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: asphaltTex,
+    bumpMap,
+    bumpScale: 0.04,
+    roughness: 0.85,
+    metalness: 0.08,
+  });
+  const wood_crate = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: woodCrateTex,
+    bumpMap,
+    bumpScale: 0.045,
+    roughness: 0.74,
+    metalness: 0.04,
+  });
+  const basalt = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: basaltTex,
+    bumpMap,
+    bumpScale: 0.06,
+    roughness: 0.76,
+    metalness: 0.14,
+  });
+  const crimson_brick = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: crimsonBrickTex,
+    bumpMap,
+    bumpScale: 0.055,
+    roughness: 0.62,
+    metalness: 0.18,
+  });
+
   const cliff = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     roughness: 0.9,
@@ -457,13 +687,24 @@ export function createArenaMaterials(renderer: THREE.WebGLRenderer): ArenaMateri
     stone,
     turf,
     player_block,
+    container_red,
+    container_blue,
+    container_amber,
+    container_teal,
+    asphalt,
+    wood_crate,
+    basalt,
+    crimson_brick,
     cliff,
     shadowDisc,
     skyDomeTex,
     lavaTex,
+    grassGroundTex,
+    asphaltGroundTex,
     textures: [
       bumpMap,
-      groundTex,
+      grassGroundTex,
+      asphaltGroundTex,
       deepslateTex,
       obsidianTex,
       goldTex,
@@ -471,6 +712,14 @@ export function createArenaMaterials(renderer: THREE.WebGLRenderer): ArenaMateri
       stoneTex,
       turfTex,
       playerBlockTex,
+      containerRedTex,
+      containerBlueTex,
+      containerAmberTex,
+      containerTealTex,
+      asphaltTex,
+      woodCrateTex,
+      basaltTex,
+      crimsonBrickTex,
       shadowTex,
       skyDomeTex,
       lavaTex,

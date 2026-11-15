@@ -22,18 +22,26 @@ type CharacterId =
   | 'clownpierce'
   | 'princezam'
   | 'jumperwho'
-  | 'minutetech';
+  | 'minutetech'
+  | 'kestrel'
+  | 'vexor';
+
+type MapId = 'container_yard' | 'emerald_citadel' | 'sky_dock' | 'nether_foundry';
+const MAP_ORDER: MapId[] = ['container_yard', 'emerald_citadel', 'sky_dock', 'nether_foundry'];
+const MAP_ROTATION_MS = 180_000;
 
 const CHARACTER_HP: Record<CharacterId, number> = {
-  wemmbu: 110,
-  flamefrags: 115,
-  parrotx2: 105,
-  spokeishere: 100,
-  manepear: 135,
-  clownpierce: 112,
-  princezam: 118,
-  jumperwho: 102,
-  minutetech: 115,
+  wemmbu: 112,
+  flamefrags: 122,
+  parrotx2: 112,
+  spokeishere: 112,
+  manepear: 140,
+  clownpierce: 110,
+  princezam: 116,
+  jumperwho: 108,
+  minutetech: 116,
+  kestrel: 112,
+  vexor: 115,
 };
 
 interface PlacedBlockRecord {
@@ -57,6 +65,7 @@ interface RoomPeer {
   maxHp: number;
   absorption: number;
   alive: boolean;
+  votedMap?: MapId;
   respawnTimer: NodeJS.Timeout | null;
 }
 
@@ -68,6 +77,9 @@ interface RoomState {
   status: 'lobby' | 'playing';
   includeBots: boolean;
   targetKills: number;
+  selectedMap: MapId;
+  mapVotes: Map<string, MapId>;
+  mapStartedAt: number;
   peers: Map<string, RoomPeer>;
   placedBlocks: PlacedBlockRecord[];
   seenEvents: Set<string>;
@@ -111,6 +123,37 @@ function broadcastRoom(room: RoomState, payload: Record<string, unknown>, exclud
   }
 }
 
+function computeVoteCounts(room: RoomState): Record<MapId, number> {
+  const counts: Record<MapId, number> = {
+    container_yard: 0,
+    emerald_citadel: 0,
+    sky_dock: 0,
+    nether_foundry: 0,
+  };
+  for (const [peerId, m] of room.mapVotes.entries()) {
+    if (room.peers.has(peerId) && m in counts) {
+      counts[m] += 1;
+    }
+  }
+  return counts;
+}
+
+function resolveWinningMap(room: RoomState): MapId {
+  const counts = computeVoteCounts(room);
+  let total = 0;
+  for (const m of MAP_ORDER) total += counts[m];
+  if (total === 0) return room.selectedMap;
+  let winner = room.selectedMap;
+  let best = counts[room.selectedMap] ?? -1;
+  for (const m of MAP_ORDER) {
+    if (counts[m] > best) {
+      best = counts[m];
+      winner = m;
+    }
+  }
+  return winner;
+}
+
 function serializeRoom(room: RoomState) {
   return {
     type: 'room_state',
@@ -120,6 +163,10 @@ function serializeRoom(room: RoomState) {
     hostId: room.hostId,
     status: room.status,
     includeBots: room.includeBots,
+    selectedMap: room.selectedMap,
+    mapVotes: computeVoteCounts(room),
+    targetKills: room.targetKills,
+    mapStartedAt: room.mapStartedAt,
     placedBlocks: room.placedBlocks,
     peers: Array.from(room.peers.values()).map((p) => ({
       id: p.id,
@@ -131,6 +178,7 @@ function serializeRoom(room: RoomState) {
       hp: p.hp,
       maxHp: p.maxHp,
       isHost: p.id === room.hostId,
+      votedMap: room.mapVotes.get(p.id),
     })),
   };
 }
@@ -149,6 +197,7 @@ function removePeerFromRoom(peerId: string, roomCode: string | null): void {
     clearTimeout(peer.respawnTimer);
   }
   room.peers.delete(peerId);
+  room.mapVotes.delete(peerId);
   if (room.peers.size === 0) {
     rooms.delete(roomCode);
     return;
@@ -171,6 +220,9 @@ function ensureGlobalRoom(hostId: string): RoomState {
     status: 'playing',
     includeBots: true,
     targetKills: 999,
+    selectedMap: 'container_yard',
+    mapVotes: new Map(),
+    mapStartedAt: Date.now(),
     peers: new Map(),
     placedBlocks: [],
     seenEvents: new Set(),
@@ -207,8 +259,28 @@ async function startServer() {
     }
   }, 20000);
 
+  const mapRotationInterval = setInterval(() => {
+    const now = Date.now();
+    for (const room of rooms.values()) {
+      if (room.status !== 'playing' || room.peers.size === 0) continue;
+      if (now - room.mapStartedAt >= MAP_ROTATION_MS) {
+        const idx = MAP_ORDER.indexOf(room.selectedMap);
+        room.selectedMap = MAP_ORDER[(idx + 1) % MAP_ORDER.length];
+        room.mapStartedAt = now;
+        room.placedBlocks = [];
+        broadcastRoom(room, {
+          type: 'map_changed',
+          mapId: room.selectedMap,
+          mapStartedAt: room.mapStartedAt,
+        });
+        broadcastRoom(room, serializeRoom(room));
+      }
+    }
+  }, 2000);
+
   wss.on('close', () => {
     clearInterval(heartbeatInterval);
+    clearInterval(mapRotationInterval);
   });
 
   let nextClientId = 1;
@@ -260,7 +332,14 @@ async function startServer() {
         });
         currentRoomCode = 'GLOBAL';
         broadcastRoom(room, serializeRoom(room));
-        sendJson(ws, { type: 'match_started', code: 'GLOBAL', roomKind: 'global' });
+        sendJson(ws, {
+          type: 'match_started',
+          code: 'GLOBAL',
+          roomKind: 'global',
+          selectedMap: room.selectedMap,
+          mapStartedAt: room.mapStartedAt,
+          targetKills: room.targetKills,
+        });
         return;
       }
 
@@ -279,6 +358,9 @@ async function startServer() {
           status: 'lobby',
           includeBots: false,
           targetKills: 3,
+          selectedMap: 'container_yard',
+          mapVotes: new Map(),
+          mapStartedAt: Date.now(),
           peers: new Map(),
           placedBlocks: [],
           seenEvents: new Set(),
@@ -335,8 +417,16 @@ async function startServer() {
         });
         currentRoomCode = requested;
         room.status = 'playing';
+        room.mapStartedAt = Date.now();
         broadcastRoom(room, serializeRoom(room));
-        broadcastRoom(room, { type: 'match_started', code: room.code, roomKind: 'link_duel' });
+        broadcastRoom(room, {
+          type: 'match_started',
+          code: room.code,
+          roomKind: 'link_duel',
+          selectedMap: room.selectedMap,
+          mapStartedAt: room.mapStartedAt,
+          targetKills: room.targetKills,
+        });
         return;
       }
 
@@ -356,6 +446,9 @@ async function startServer() {
             status: 'playing',
             includeBots: false,
             targetKills: 3,
+            selectedMap: 'container_yard',
+            mapVotes: new Map(),
+            mapStartedAt: Date.now(),
             peers: new Map(),
             placedBlocks: [],
             seenEvents: new Set(),
@@ -393,7 +486,14 @@ async function startServer() {
           rooms.set(code, room);
           currentRoomCode = code;
           broadcastRoom(room, serializeRoom(room));
-          broadcastRoom(room, { type: 'match_started', code, roomKind: 'link_duel' });
+          broadcastRoom(room, {
+            type: 'match_started',
+            code,
+            roomKind: 'link_duel',
+            selectedMap: room.selectedMap,
+            mapStartedAt: room.mapStartedAt,
+            targetKills: room.targetKills,
+          });
         } else {
           linkQueue.push({ clientId, ws, name, characterId: charId });
           sendJson(ws, { type: 'link_queued' });
@@ -424,6 +524,9 @@ async function startServer() {
           status: 'lobby',
           includeBots: Boolean(msg.includeBots),
           targetKills: 15,
+          selectedMap: 'container_yard',
+          mapVotes: new Map(),
+          mapStartedAt: Date.now(),
           peers: new Map(),
           placedBlocks: [],
           seenEvents: new Set(),
@@ -483,7 +586,14 @@ async function startServer() {
         currentRoomCode = requested;
         broadcastRoom(room, serializeRoom(room));
         if (room.status === 'playing') {
-          sendJson(ws, { type: 'match_started', code: room.code, roomKind: room.kind });
+          sendJson(ws, {
+            type: 'match_started',
+            code: room.code,
+            roomKind: room.kind,
+            selectedMap: room.selectedMap,
+            mapStartedAt: room.mapStartedAt,
+            targetKills: room.targetKills,
+          });
         }
         return;
       }
@@ -527,7 +637,31 @@ async function startServer() {
         }
         if ((msg.roomMode === 'ffa' || msg.roomMode === 'team') && room.hostId === clientId) {
           room.roomMode = msg.roomMode;
+          if (room.roomMode === 'team') {
+            let idx = 0;
+            for (const p of room.peers.values()) {
+              if (p.team === 'ffa') {
+                p.team = idx % 2 === 0 ? 'red' : 'blue';
+              }
+              idx++;
+            }
+          }
         }
+        if (typeof msg.targetKills === 'number' && room.hostId === clientId) {
+          room.targetKills = Math.max(5, Math.min(50, Math.round(msg.targetKills)));
+        }
+        if (typeof msg.selectedMap === 'string' && MAP_ORDER.includes(msg.selectedMap as MapId) && room.hostId === clientId) {
+          room.selectedMap = msg.selectedMap as MapId;
+        }
+        broadcastRoom(room, serializeRoom(room));
+        return;
+      }
+
+      if (type === 'vote_map') {
+        const voted = String(msg.mapId || '') as MapId;
+        if (!MAP_ORDER.includes(voted)) return;
+        room.mapVotes.set(clientId, voted);
+        self.votedMap = voted;
         broadcastRoom(room, serializeRoom(room));
         return;
       }
@@ -537,6 +671,8 @@ async function startServer() {
         room.status = 'playing';
         room.placedBlocks = [];
         room.seenEvents.clear();
+        room.selectedMap = resolveWinningMap(room);
+        room.mapStartedAt = Date.now();
         for (const p of room.peers.values()) {
           if (p.respawnTimer) {
             clearTimeout(p.respawnTimer);
@@ -550,7 +686,14 @@ async function startServer() {
           p.alive = true;
         }
         broadcastRoom(room, serializeRoom(room));
-        broadcastRoom(room, { type: 'match_started', code: room.code, roomKind: room.kind });
+        broadcastRoom(room, {
+          type: 'match_started',
+          code: room.code,
+          roomKind: room.kind,
+          selectedMap: room.selectedMap,
+          mapStartedAt: room.mapStartedAt,
+          targetKills: room.targetKills,
+        });
         return;
       }
 
@@ -586,6 +729,7 @@ async function startServer() {
           id: `chat-${clientId}-${Date.now().toString(36)}`,
           senderId: clientId,
           senderName: self.name,
+          team: self.team,
           text,
         };
         broadcastRoom(room, {
@@ -618,6 +762,9 @@ async function startServer() {
         const targetId = String(msg.targetId || '');
         const target = room.peers.get(targetId);
         if (!target || !target.alive) return;
+        if (room.roomMode === 'team' && self.team !== 'ffa' && target.team !== 'ffa' && self.team === target.team) {
+          return;
+        }
         const rawDmg = Math.max(1, Math.min(75, Math.round(Number(msg.damage || 10))));
         const isCrit = Boolean(msg.isCrit);
         const isSmash = Boolean(msg.isSmash);

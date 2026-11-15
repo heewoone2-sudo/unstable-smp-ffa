@@ -8,6 +8,7 @@ interface StatusModalProps {
   onRestart: () => void;
   onTitle: () => void;
   onLeaveRoom: () => void;
+  onOpenSettings: () => void;
 }
 
 export function StatusModal({
@@ -17,6 +18,7 @@ export function StatusModal({
   onRestart,
   onTitle,
   onLeaveRoom,
+  onOpenSettings,
 }: StatusModalProps) {
   const isPause = hud.screen === 'paused';
   const isVictory = hud.outcome === 'victory';
@@ -48,7 +50,7 @@ export function StatusModal({
       : '상대의 공격에 쓰러졌습니다.';
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-950/50 backdrop-blur-xs p-4">
+    <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-950/60 p-4">
       <div
         role="dialog"
         aria-modal="true"
@@ -124,6 +126,16 @@ export function StatusModal({
               className="px-4 py-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-medium text-sm cursor-pointer"
             >
               재시작
+            </button>
+          )}
+
+          {isPause && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="px-4 py-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-medium text-sm cursor-pointer"
+            >
+              환경설정
             </button>
           )}
 

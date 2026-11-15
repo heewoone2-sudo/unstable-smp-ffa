@@ -15,6 +15,15 @@ import {
   tickCooldowns,
   tickSlotRecharge,
 } from './combatMath';
+import {
+  MAP_ORDER,
+  MAP_ROTATION_SECONDS,
+  canDamageTarget,
+  getArenaBlocksForMap,
+  getMapForElapsedTime,
+  getNextMapId,
+  tallyMapVotes,
+} from './maps';
 
 test('computeSwordDamage grants 1.5x critical hit when falling airborne', () => {
   const groundHit = computeSwordDamage(14, 1.0, 0, true);
@@ -45,6 +54,7 @@ test('GAME_MODES removes simulator and includes online_world and link_duel', () 
   assert.equal(ids.includes('simulator' as never), false);
   assert.equal(ids.includes('online_world'), true);
   assert.equal(ids.includes('link_duel'), true);
+  assert.equal(ids.includes('multiplayer'), true);
 });
 
 test('computeMaceDamage scales strongly with fall height and triggers smash >= 2.0m', () => {
@@ -73,13 +83,19 @@ test('isInsideHazardPool distinguishes lava and water pools', () => {
   assert.equal(isInsideHazardPool(-4.2, 0.1, 2.2, pools, 'water'), true);
 });
 
-test('all 9 playable characters have distinct 6-item loadout signatures', () => {
-  assert.equal(CHARACTER_LIST.length, 9);
+test('all 11 playable characters including ranged marksmen have distinct 6-item loadout signatures', () => {
+  assert.equal(CHARACTER_LIST.length, 11);
   const signatures = new Set(CHARACTER_LIST.map((c) => c.loadout.map((i) => i.id).join(',')));
   assert.equal(signatures.size, CHARACTER_LIST.length);
   for (const c of CHARACTER_LIST) {
     assert.equal(c.loadout.length, 6);
+    assert.ok(c.maxHp >= 108, `${c.id} should keep healthy post-buff HP`);
   }
+  const kestrel = CHARACTER_LIST.find((c) => c.id === 'kestrel');
+  const vexor = CHARACTER_LIST.find((c) => c.id === 'vexor');
+  assert.ok(kestrel && kestrel.loadout[0].id === 'bow');
+  assert.ok(vexor && vexor.loadout[0].id === 'crossbow');
+  assert.equal(ITEM_CATALOG.crossbow.maxCharges, 3);
 });
 
 test('stackable cobweb charges consume down and recharge 1 at a time on cooldown', () => {
@@ -143,9 +159,36 @@ test('expanded 216m open world has outer biome landmarks and open origin spawn',
   assert.ok(Math.hypot(pushed.x - -18, pushed.z - -16) >= 1.6);
 });
 
+test('all 4 arena maps including Container Yard provide clear origin spawn and 3-minute rotation', () => {
+  assert.equal(MAP_ROTATION_SECONDS, 180);
+  assert.equal(MAP_ORDER[0], 'container_yard');
+  for (const mapId of MAP_ORDER) {
+    const blocks = getArenaBlocksForMap(mapId);
+    assert.ok(blocks.length >= 12, `${mapId} should have rich arena geometry`);
+    assert.equal(getSupportHeightAt(0, 0, 0.5, 0.55, blocks), 0, `${mapId} origin must stay open for safe spawn`);
+  }
+  const cyBlocks = getArenaBlocksForMap('container_yard');
+  assert.ok(cyBlocks.some((b) => b.kind.startsWith('container_')));
+
+  assert.equal(getMapForElapsedTime(0, 'container_yard'), 'container_yard');
+  assert.equal(getMapForElapsedTime(180, 'container_yard'), 'emerald_citadel');
+  assert.equal(getMapForElapsedTime(360, 'container_yard'), 'sky_dock');
+  assert.equal(getNextMapId('nether_foundry'), 'container_yard');
+});
+
+test('tallyMapVotes picks majority map and canDamageTarget blocks friendly fire in team mode', () => {
+  const tally = tallyMapVotes(['sky_dock', 'sky_dock', 'container_yard'], 'container_yard');
+  assert.equal(tally.winner, 'sky_dock');
+  assert.equal(tally.counts.sky_dock, 2);
+  assert.equal(tally.counts.container_yard, 1);
+
+  assert.equal(canDamageTarget('team', 'red', 'red'), false);
+  assert.equal(canDamageTarget('team', 'red', 'blue'), true);
+  assert.equal(canDamageTarget('ffa', 'red', 'red'), true);
+});
+
 test('tickCooldowns decrements cleanly down to zero', () => {
   const cds = [1.5, 0.2, 0];
   tickCooldowns(cds, 0.5);
   assert.deepEqual(cds, [1.0, 0, 0]);
 });
-

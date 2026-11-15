@@ -247,6 +247,53 @@ function buildWeaponMeshes(): Record<WeaponSlotId, THREE.Group> {
   trident.rotation.x = Math.PI * 0.44;
   trident.position.set(0, -0.56, 0.18);
 
+  // 6b. Precision Longbow
+  const bow = new THREE.Group();
+  const bowArc = new THREE.Mesh(
+    new THREE.TorusGeometry(0.46, 0.028, 10, 22, Math.PI * 1.08),
+    makeClearcoatMat(0x0284c7, 0.22, 0.72, 0x38bdf8, 0.25, 0.85)
+  );
+  bowArc.rotation.z = -Math.PI * 0.54;
+  bowArc.position.set(0, 0.15, 0.14);
+  const bowGrip = new THREE.Mesh(new RoundedBoxGeometry(0.06, 0.2, 0.08, 3, 0.02), woodMat);
+  bowGrip.position.set(0, 0.15, 0.08);
+  const bowString = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.008, 0.008, 0.88, 6),
+    makeMat(0xe0f2fe, 0.2, 0.1, 0x7dd3fc, 0.5)
+  );
+  bowString.position.set(0, 0.15, -0.02);
+  const nockedArrow = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.012, 0.012, 0.62, 8),
+    makeClearcoatMat(0xfef08a, 0.15, 0.5, 0x38bdf8, 0.45, 0.9)
+  );
+  nockedArrow.rotation.x = Math.PI / 2;
+  nockedArrow.position.set(0, 0.15, 0.18);
+  bow.add(bowArc, bowGrip, bowString, nockedArrow);
+  bow.position.set(0, -0.45, 0.18);
+
+  // 6c. Tactical Rapid Crossbow
+  const crossbow = new THREE.Group();
+  const cbStock = new THREE.Mesh(
+    new RoundedBoxGeometry(0.11, 0.14, 0.68, 3, 0.025),
+    makeMat(0x312e81, 0.4, 0.45)
+  );
+  cbStock.position.set(0, 0.08, 0.18);
+  const cbProd = new THREE.Mesh(
+    new THREE.TorusGeometry(0.28, 0.025, 8, 18, Math.PI * 0.88),
+    makeClearcoatMat(0x22d3ee, 0.18, 0.78, 0x06b6d4, 0.35, 0.9)
+  );
+  cbProd.rotation.x = Math.PI / 2;
+  cbProd.rotation.z = -Math.PI * 0.44;
+  cbProd.position.set(0, 0.1, 0.42);
+  const cbBolt = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.014, 0.014, 0.44, 8),
+    makeClearcoatMat(0xa5f3fc, 0.15, 0.5, 0x22d3ee, 0.65, 0.9)
+  );
+  cbBolt.rotation.x = Math.PI / 2;
+  cbBolt.position.set(0, 0.17, 0.34);
+  crossbow.add(cbStock, cbProd, cbBolt);
+  crossbow.position.set(0, -0.5, 0.16);
+
   // 7. Wind Charge
   const wind_charge = new THREE.Group();
   const windCore = new THREE.Mesh(
@@ -393,6 +440,8 @@ function buildWeaponMeshes(): Record<WeaponSlotId, THREE.Group> {
     axe,
     mace,
     trident,
+    bow,
+    crossbow,
     wind_charge,
     cobweb,
     tnt_charge,
@@ -481,6 +530,8 @@ export function createFighterModel(
     princezam: '#064e3b',
     jumperwho: '#3b0764',
     minutetech: '#172554',
+    kestrel: '#0c4a6e',
+    vexor: '#312e81',
   };
   const hairMat = registerMat(makeMat(hairColors[profile.id] ?? '#1f2937', 0.82, 0.05));
   const hairTop = new THREE.Mesh(new RoundedBoxGeometry(0.5, 0.15, 0.5, 4, 0.055), hairMat);
@@ -917,5 +968,27 @@ export function createTntBlockMesh(): THREE.Group {
   );
   fuseCap.position.y = 0.47;
   g.add(red, band, fuseCap);
+  return g;
+}
+
+export function createArrowProjectileMesh(accentHex = 0x38bdf8): THREE.Group {
+  const g = new THREE.Group();
+  const shaft = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.022, 0.022, 0.72, 8),
+    makeMat(0xf8fafc, 0.35, 0.35, accentHex, 0.55)
+  );
+  shaft.rotation.x = Math.PI / 2;
+  const tip = new THREE.Mesh(
+    new THREE.ConeGeometry(0.055, 0.18, 8),
+    makeClearcoatMat(accentHex, 0.15, 0.7, accentHex, 0.85, 1.0)
+  );
+  tip.rotation.x = Math.PI / 2;
+  tip.position.z = 0.42;
+  const fletching = new THREE.Mesh(
+    new THREE.BoxGeometry(0.11, 0.02, 0.16),
+    makeMat(accentHex, 0.3, 0.2, accentHex, 0.6)
+  );
+  fletching.position.z = -0.3;
+  g.add(shaft, tip, fletching);
   return g;
 }

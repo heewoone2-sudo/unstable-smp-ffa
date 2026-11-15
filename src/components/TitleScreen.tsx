@@ -1,15 +1,38 @@
-import { useEffect, useState } from 'react';
-import { Copy, Check, LogOut, Trophy, UserCheck, LogIn, Globe, Server } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Copy,
+  Check,
+  LogOut,
+  Trophy,
+  UserCheck,
+  LogIn,
+  Globe,
+  Server,
+  Settings,
+  Send,
+  Crown,
+  MapPin,
+} from 'lucide-react';
 import type { PlayerAccountProfile } from '../firebase';
 import { CHARACTER_LIST, GAME_MODES } from '../game/characters';
+import { MAP_DEFINITIONS, MAP_ORDER } from '../game/maps';
 import { getCustomServerUrl, saveCustomServerUrl } from '../game/net';
-import type { CharacterId, GameModeId, MultiplayerHudState } from '../game/types';
+import type {
+  CharacterId,
+  ChatEntry,
+  GameModeId,
+  GameSettings,
+  MapId,
+  MultiplayerHudState,
+} from '../game/types';
 import { WeaponIcon } from './WeaponIcons';
 
 interface TitleScreenProps {
   selectedCharacter: CharacterId;
   selectedMode: GameModeId;
   multiplayer: MultiplayerHudState;
+  settings: GameSettings;
+  chatMessages: ChatEntry[];
   account: PlayerAccountProfile | null;
   initialRoomCode: string;
   initialLinkCode: string;
@@ -18,13 +41,23 @@ interface TitleScreenProps {
   onStart: () => void;
   onSetPlayerName: (name: string) => void;
   onOpenAuth: (tab: 'auth' | 'leaderboard') => void;
+  onOpenSettings: () => void;
   onCreateLinkDuel: (name: string) => void;
   onJoinLinkDuel: (code: string, name: string) => void;
   onQueueLinkDuel: (name: string) => void;
   onCancelLinkQueue: () => void;
   onCreateRoom: (name: string, includeBots: boolean, roomMode: 'ffa' | 'team', team: 'red' | 'blue' | 'ffa') => void;
   onJoinRoom: (code: string, name: string, team: 'red' | 'blue' | 'ffa') => void;
-  onUpdateLobby: (updates: { name?: string; includeBots?: boolean; team?: 'red' | 'blue' | 'ffa'; roomMode?: 'ffa' | 'team' }) => void;
+  onUpdateLobby: (updates: {
+    name?: string;
+    includeBots?: boolean;
+    team?: 'red' | 'blue' | 'ffa';
+    roomMode?: 'ffa' | 'team';
+    targetKills?: number;
+    selectedMap?: MapId;
+  }) => void;
+  onVoteMap: (mapId: MapId) => void;
+  onSendChat: (text: string) => void;
   onStartMultiplayer: () => void;
   onLeaveRoom: () => void;
   onResetNetwork?: () => void;
@@ -34,6 +67,8 @@ export function TitleScreen({
   selectedCharacter,
   selectedMode,
   multiplayer,
+  settings,
+  chatMessages,
   account,
   initialRoomCode,
   initialLinkCode,
@@ -42,6 +77,7 @@ export function TitleScreen({
   onStart,
   onSetPlayerName,
   onOpenAuth,
+  onOpenSettings,
   onCreateLinkDuel,
   onJoinLinkDuel,
   onQueueLinkDuel,
@@ -49,6 +85,8 @@ export function TitleScreen({
   onCreateRoom,
   onJoinRoom,
   onUpdateLobby,
+  onVoteMap,
+  onSendChat,
   onStartMultiplayer,
   onLeaveRoom,
   onResetNetwork,
@@ -63,8 +101,10 @@ export function TitleScreen({
   const [serverReachable, setServerReachable] = useState<boolean | null>(null);
   const [showServerConfig, setShowServerConfig] = useState(false);
   const [customServerUrl, setCustomServerUrl] = useState(() => getCustomServerUrl());
-  const [roomMode, setRoomMode] = useState<'ffa' | 'team'>('ffa');
+  const [roomMode, setRoomMode] = useState<'ffa' | 'team'>('team');
   const [myTeam, setMyTeam] = useState<'red' | 'blue' | 'ffa'>('red');
+  const [lobbyChatText, setLobbyChatText] = useState('');
+  const lobbyChatEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (account?.nickname) {
@@ -132,23 +172,59 @@ export function TitleScreen({
     setShowServerConfig(false);
   };
 
+  useEffect(() => {
+    if (lobbyChatEndRef.current) {
+      lobbyChatEndRef.current.scrollTop = lobbyChatEndRef.current.scrollHeight;
+    }
+  }, [chatMessages.length]);
+
+  const handleLobbyChatSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleaned = lobbyChatText.trim();
+    if (!cleaned) return;
+    onSendChat(cleaned);
+    setLobbyChatText('');
+  };
+
   const resolvedName = nickname.trim() || account?.nickname || 'Player';
+  const currentLobbyMode = multiplayer.roomMode ?? roomMode;
+  const selfPeer = multiplayer.peers.find((p) => p.id === multiplayer.selfId);
+  const activeMyTeam = selfPeer?.team ?? myTeam;
+  const redPeers = multiplayer.peers.filter((p) => p.team === 'red');
+  const bluePeers = multiplayer.peers.filter((p) => p.team === 'blue');
 
   return (
     <div className="fixed inset-0 z-20 flex justify-center bg-white p-4 sm:p-8 overflow-y-auto">
-      <div className="w-full max-w-3xl my-auto bg-white border border-slate-200 rounded-xl shadow-xs p-5 sm:p-7 space-y-5 text-slate-900">
+      <div className="w-full max-w-4xl my-auto bg-white border border-slate-200 rounded-xl shadow-xs p-5 sm:p-7 space-y-5 text-slate-900">
         {/* Top Bar */}
         <header className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-200">
           <div>
-            <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-950 leading-none">
-              UNSTABLE SMP FFA
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-slate-950 leading-none">
+                SKYBOX CLASH
+              </h1>
+              <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[10px] font-bold tracking-wide text-slate-700">
+                UNSTABLE SMP
+              </span>
+            </div>
             <p className="text-xs text-slate-500 mt-1.5">
-              초원 216m 오픈월드 · 0초 쿨타임 검 · 1v1 링크전 &amp; 실시간 PvP
+              컨테이너 야드 &amp; 4종 맵 3분 로테이션 · 0초 쿨타임 검 · 근접/원거리 11인 PvP
             </p>
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="open-settings-btn"
+              aria-label="환경설정"
+              title={`환경설정 (${settings.cameraMode === 'firstperson' ? '1인칭' : settings.cameraMode === 'shiftlock' ? '시프트락' : '자유시점'})`}
+              onClick={onOpenSettings}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 cursor-pointer whitespace-nowrap"
+            >
+              <Settings className="w-3.5 h-3.5 text-slate-600" />
+              환경설정
+            </button>
+
             <button
               type="button"
               data-testid="open-leaderboard-btn"
@@ -270,7 +346,7 @@ export function TitleScreen({
             <span className="text-slate-500 truncate">{activeChar.signatureLabel}</span>
           </div>
 
-          <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-1.5">
             {CHARACTER_LIST.map((c) => {
               const active = c.id === selectedCharacter;
               return (
@@ -357,7 +433,7 @@ export function TitleScreen({
                   <Globe className="w-4 h-4 text-amber-400" />
                   {multiplayer.status === 'connecting' ? '접속 중...' : '글로벌 오픈월드 입장'}
                 </button>
-                <span className="text-xs text-slate-500">초원 216m 월드 · 실시간 난입 PvP</span>
+                <span className="text-xs text-slate-500">3분마다 4종 아레나 자동 순환 · 실시간 난입 PvP</span>
               </div>
               {serverReachable === false && !multiplayer.error && (
                 <p className="text-xs text-amber-700">
@@ -642,10 +718,14 @@ export function TitleScreen({
                 )}
               </div>
             ) : (
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-slate-500">방 코드</span>
+              /* Valorant-Style Custom Room Lobby */
+              <div className="space-y-4" data-testid="custom-lobby-panel">
+                {/* Lobby Header & Match Rules */}
+                <div className="flex flex-wrap items-center justify-between gap-2.5 p-3 rounded-xl border border-slate-200 bg-slate-50 text-xs">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <span className="px-2 py-0.5 rounded bg-slate-900 text-white font-bold tracking-wider text-[10px]">
+                      CUSTOM ROOM
+                    </span>
                     <span
                       data-testid="room-code-badge"
                       className="font-mono-num text-base font-bold text-slate-950 tracking-widest"
@@ -656,29 +736,75 @@ export function TitleScreen({
                       type="button"
                       data-testid="copy-invite-btn"
                       onClick={() => handleCopyInvite('private')}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 cursor-pointer"
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 cursor-pointer"
                     >
                       {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                      {copied ? '복사 완료' : '초대 링크 복사'}
+                      {copied ? '복사 완료' : '초대 링크'}
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-3">
-                    {multiplayer.isHost && (
-                      <label className="flex items-center gap-1.5 text-slate-600 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={multiplayer.includeBots}
-                          onChange={(e) => onUpdateLobby({ includeBots: e.target.checked })}
-                          className="accent-slate-900"
-                        />
-                        AI 봇 포함
-                      </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {multiplayer.isHost ? (
+                      <>
+                        <div className="inline-flex rounded-lg bg-white border border-slate-200 p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => onUpdateLobby({ roomMode: 'team' })}
+                            className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer ${
+                              currentLobbyMode === 'team' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            팀전
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onUpdateLobby({ roomMode: 'ffa' })}
+                            className={`px-2.5 py-1 rounded-md font-semibold cursor-pointer ${
+                              currentLobbyMode === 'ffa' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            개인전
+                          </button>
+                        </div>
+
+                        <div className="inline-flex items-center gap-1 rounded-lg bg-white border border-slate-200 px-2 py-0.5">
+                          <span className="text-slate-500 text-[11px]">목표</span>
+                          {[10, 15, 25, 30].map((tk) => (
+                            <button
+                              key={tk}
+                              type="button"
+                              onClick={() => onUpdateLobby({ targetKills: tk })}
+                              className={`px-1.5 py-0.5 rounded font-mono-num font-bold cursor-pointer ${
+                                (multiplayer.targetKills ?? 15) === tk
+                                  ? 'bg-slate-900 text-white'
+                                  : 'text-slate-600 hover:bg-slate-100'
+                              }`}
+                            >
+                              {tk}
+                            </button>
+                          ))}
+                        </div>
+
+                        <label className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-700 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={multiplayer.includeBots}
+                            onChange={(e) => onUpdateLobby({ includeBots: e.target.checked })}
+                            className="accent-slate-900"
+                          />
+                          AI 봇
+                        </label>
+                      </>
+                    ) : (
+                      <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-600 font-medium">
+                        {currentLobbyMode === 'team' ? '팀전' : '개인전'} · 목표 {multiplayer.targetKills ?? 15}킬
+                      </span>
                     )}
+
                     <button
                       type="button"
                       onClick={onLeaveRoom}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-red-50 text-slate-600 hover:text-red-700 cursor-pointer"
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-300 bg-white hover:bg-red-50 text-slate-600 hover:text-red-700 cursor-pointer"
                     >
                       <LogOut className="w-3.5 h-3.5" />
                       나가기
@@ -686,69 +812,315 @@ export function TitleScreen({
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-3 py-1">
-                  <span className="text-xs font-semibold text-slate-700">팀 변경:</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMyTeam('red');
-                      onUpdateLobby({ team: 'red' });
-                    }}
-                    className={`px-3 py-1 rounded-lg text-xs font-semibold border cursor-pointer ${
-                      myTeam === 'red' ? 'bg-red-600 border-red-600 text-white' : 'bg-white text-red-700 border-slate-300'
-                    }`}
-                  >
-                    🔴 레드팀
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMyTeam('blue');
-                      onUpdateLobby({ team: 'blue' });
-                    }}
-                    className={`px-3 py-1 rounded-lg text-xs font-semibold border cursor-pointer ${
-                      myTeam === 'blue' ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white text-blue-700 border-slate-300'
-                    }`}
-                  >
-                    🔵 블루팀
-                  </button>
-                </div>
+                {/* Valorant-style Team Roster + Lobby Chat Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+                  {/* Roster Columns */}
+                  <div className="lg:col-span-8 space-y-2.5">
+                    {currentLobbyMode === 'team' ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        {/* RED TEAM */}
+                        <div className="rounded-xl border border-red-200 bg-white overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-2 bg-red-600 text-white text-xs">
+                            <span className="font-display font-bold tracking-wide">
+                              RED TEAM ({redPeers.length})
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMyTeam('red');
+                                onUpdateLobby({ team: 'red' });
+                              }}
+                              disabled={activeMyTeam === 'red'}
+                              className="px-2 py-0.5 rounded bg-white/15 hover:bg-white/25 disabled:opacity-60 text-[11px] font-semibold cursor-pointer"
+                            >
+                              {activeMyTeam === 'red' ? '소속됨' : '레드팀 합류'}
+                            </button>
+                          </div>
+                          <div className="p-2 space-y-1.5 min-h-[124px]">
+                            {redPeers.length === 0 ? (
+                              <div className="text-[11px] text-slate-400 py-6 text-center">
+                                {multiplayer.includeBots ? 'AI 봇 자동 충원 대기' : '플레이어 대기 중'}
+                              </div>
+                            ) : (
+                              redPeers.map((peer) => {
+                                const charProf = CHARACTER_LIST.find((c) => c.id === peer.characterId);
+                                const isSelf = peer.id === multiplayer.selfId;
+                                return (
+                                  <div
+                                    key={peer.id}
+                                    className={`flex items-center justify-between px-2.5 py-2 rounded-lg border text-xs ${
+                                      isSelf
+                                        ? 'border-red-300 bg-red-50/70'
+                                        : 'border-slate-200 bg-slate-50/70'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span
+                                        className="w-2.5 h-2.5 rounded-xs shrink-0 border border-black/15"
+                                        style={{ backgroundColor: charProf?.trimColor ?? '#dc2626' }}
+                                      />
+                                      <span className="font-semibold text-slate-900 truncate">
+                                        {peer.name}
+                                      </span>
+                                      {peer.isHost && (
+                                        <Crown className="w-3.5 h-3.5 text-amber-500 shrink-0" aria-label="방장" />
+                                      )}
+                                      {isSelf && (
+                                        <span className="text-[10px] font-bold text-red-700">(나)</span>
+                                      )}
+                                    </div>
+                                    <span className="text-[11px] text-slate-500 whitespace-nowrap ml-2">
+                                      {charProf?.name ?? peer.characterId}
+                                    </span>
+                                  </div>
+                                );
+                              })
+                            )}
+                            {multiplayer.includeBots && redPeers.length < 3 && (
+                              <div className="text-[11px] text-slate-400 px-2 pt-1">
+                                + 빈 슬롯 AI 봇 참전
+                              </div>
+                            )}
+                          </div>
+                        </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                  {multiplayer.peers.map((peer) => {
-                    const charName = CHARACTER_LIST.find((c) => c.id === peer.characterId)?.name ?? peer.characterId;
-                    const teamBadge =
-                      peer.team === 'red' ? '🔴 [레드팀]' : peer.team === 'blue' ? '🔵 [블루팀]' : '⚔️ [FFA]';
-                    return (
-                      <div
-                        key={peer.id}
-                        className="flex items-center justify-between p-2 rounded-lg border border-slate-200 bg-slate-50"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold">{teamBadge}</span>
-                          <span className="font-medium text-slate-900">
-                            {peer.name} {peer.isHost && '(방장)'}
+                        {/* BLUE TEAM */}
+                        <div className="rounded-xl border border-blue-200 bg-white overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-2 bg-blue-600 text-white text-xs">
+                            <span className="font-display font-bold tracking-wide">
+                              BLUE TEAM ({bluePeers.length})
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMyTeam('blue');
+                                onUpdateLobby({ team: 'blue' });
+                              }}
+                              disabled={activeMyTeam === 'blue'}
+                              className="px-2 py-0.5 rounded bg-white/15 hover:bg-white/25 disabled:opacity-60 text-[11px] font-semibold cursor-pointer"
+                            >
+                              {activeMyTeam === 'blue' ? '소속됨' : '블루팀 합류'}
+                            </button>
+                          </div>
+                          <div className="p-2 space-y-1.5 min-h-[124px]">
+                            {bluePeers.length === 0 ? (
+                              <div className="text-[11px] text-slate-400 py-6 text-center">
+                                {multiplayer.includeBots ? 'AI 봇 자동 충원 대기' : '플레이어 대기 중'}
+                              </div>
+                            ) : (
+                              bluePeers.map((peer) => {
+                                const charProf = CHARACTER_LIST.find((c) => c.id === peer.characterId);
+                                const isSelf = peer.id === multiplayer.selfId;
+                                return (
+                                  <div
+                                    key={peer.id}
+                                    className={`flex items-center justify-between px-2.5 py-2 rounded-lg border text-xs ${
+                                      isSelf
+                                        ? 'border-blue-300 bg-blue-50/70'
+                                        : 'border-slate-200 bg-slate-50/70'
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span
+                                        className="w-2.5 h-2.5 rounded-xs shrink-0 border border-black/15"
+                                        style={{ backgroundColor: charProf?.trimColor ?? '#2563eb' }}
+                                      />
+                                      <span className="font-semibold text-slate-900 truncate">
+                                        {peer.name}
+                                      </span>
+                                      {peer.isHost && (
+                                        <Crown className="w-3.5 h-3.5 text-amber-500 shrink-0" aria-label="방장" />
+                                      )}
+                                      {isSelf && (
+                                        <span className="text-[10px] font-bold text-blue-700">(나)</span>
+                                      )}
+                                    </div>
+                                    <span className="text-[11px] text-slate-500 whitespace-nowrap ml-2">
+                                      {charProf?.name ?? peer.characterId}
+                                    </span>
+                                  </div>
+                                );
+                              })
+                            )}
+                            {multiplayer.includeBots && bluePeers.length < 3 && (
+                              <div className="text-[11px] text-slate-400 px-2 pt-1">
+                                + 빈 슬롯 AI 봇 참전
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-slate-900 text-white text-xs">
+                          <span className="font-display font-bold tracking-wide">
+                            FREE FOR ALL ROSTER ({multiplayer.peers.length})
+                          </span>
+                          <span className="text-[11px] text-slate-300">
+                            {multiplayer.includeBots ? 'AI 봇 자동 충원 ON' : '유저 전용'}
                           </span>
                         </div>
-                        <span className="text-slate-500">{charName}</span>
+                        <div className="p-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {multiplayer.peers.map((peer) => {
+                            const charProf = CHARACTER_LIST.find((c) => c.id === peer.characterId);
+                            const isSelf = peer.id === multiplayer.selfId;
+                            return (
+                              <div
+                                key={peer.id}
+                                className={`flex items-center justify-between px-2.5 py-2 rounded-lg border text-xs ${
+                                  isSelf ? 'border-slate-900 bg-slate-100' : 'border-slate-200 bg-slate-50'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span
+                                    className="w-2.5 h-2.5 rounded-xs shrink-0 border border-black/15"
+                                    style={{ backgroundColor: charProf?.trimColor ?? '#0f172a' }}
+                                  />
+                                  <span className="font-semibold text-slate-900 truncate">{peer.name}</span>
+                                  {peer.isHost && <Crown className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
+                                </div>
+                                <span className="text-[11px] text-slate-500">{charProf?.name ?? peer.characterId}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
-                    );
-                  })}
+                    )}
+
+                    {/* Pre-Match 4-Map Voting Strip */}
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                          <MapPin className="w-3.5 h-3.5 text-blue-600" />
+                          사설 맵 투표 (시작 전 다수결 결정)
+                        </span>
+                        <span className="text-[11px] text-slate-500">전투 중 3분마다 자동 로테이션</span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {MAP_ORDER.map((mapId) => {
+                          const def = MAP_DEFINITIONS[mapId];
+                          const votes = multiplayer.mapVotes?.[mapId] ?? 0;
+                          const isSelected = multiplayer.selectedMap === mapId;
+                          const myVote = selfPeer?.votedMap === mapId;
+                          return (
+                            <button
+                              key={mapId}
+                              type="button"
+                              data-testid={`vote-map-${mapId}`}
+                              onClick={() => onVoteMap(mapId)}
+                              className={`p-2 rounded-lg border text-left transition-colors cursor-pointer ${
+                                isSelected
+                                  ? 'bg-slate-900 border-slate-900 text-white'
+                                  : myVote
+                                    ? 'bg-blue-50 border-blue-400 text-slate-900'
+                                    : 'bg-white border-slate-200 text-slate-800 hover:border-slate-400'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <span
+                                  className="text-[10px] font-bold px-1.5 py-0.5 rounded"
+                                  style={{
+                                    backgroundColor: isSelected ? 'rgba(255,255,255,0.16)' : `${def.accentHex}18`,
+                                    color: isSelected ? '#ffffff' : def.accentHex,
+                                  }}
+                                >
+                                  {def.badge}
+                                </span>
+                                <span
+                                  className={`font-mono-num text-[11px] font-bold ${
+                                    isSelected ? 'text-amber-300' : 'text-slate-600'
+                                  }`}
+                                >
+                                  {votes}표
+                                </span>
+                              </div>
+                              <div className="font-display text-xs font-bold mt-1.5 truncate">{def.name}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Embedded Lobby Chat */}
+                  <div className="lg:col-span-4 rounded-xl border border-slate-200 bg-white flex flex-col overflow-hidden">
+                    <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-700">
+                      사설 로비 채팅
+                    </div>
+                    <div
+                      ref={lobbyChatEndRef}
+                      className="flex-1 min-h-[150px] max-h-52 overflow-y-auto px-3 py-2 space-y-1.5 text-xs"
+                    >
+                      {chatMessages.length === 0 ? (
+                        <div className="text-[11px] text-slate-400 py-4 text-center">
+                          팀원에게 인사를 남겨보세요
+                        </div>
+                      ) : (
+                        chatMessages.slice(-24).map((m) => (
+                          <div key={m.id} className="leading-snug break-words">
+                            <span
+                              className={`font-semibold ${
+                                m.team === 'red'
+                                  ? 'text-red-600'
+                                  : m.team === 'blue'
+                                    ? 'text-blue-600'
+                                    : 'text-slate-950'
+                              }`}
+                            >
+                              {m.senderName}:{' '}
+                            </span>
+                            <span className="text-slate-700">{m.text}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <form
+                      onSubmit={handleLobbyChatSubmit}
+                      className="flex items-center border-t border-slate-200 bg-slate-50"
+                    >
+                      <input
+                        type="text"
+                        data-testid="lobby-chat-input"
+                        maxLength={160}
+                        value={lobbyChatText}
+                        onChange={(e) => setLobbyChatText(e.target.value)}
+                        placeholder="로비 채팅 입력..."
+                        aria-label="사설 로비 채팅 입력"
+                        className="flex-1 min-w-0 px-3 py-2 bg-transparent text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none"
+                      />
+                      <button
+                        type="submit"
+                        aria-label="로비 채팅 전송"
+                        className="px-3 py-2 text-slate-600 hover:text-slate-950 cursor-pointer"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                      </button>
+                    </form>
+                  </div>
                 </div>
 
-                <div>
+                {/* Bottom Start / Waiting Bar */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                  <div className="text-xs text-slate-500">
+                    선택된 맵:{' '}
+                    <strong className="text-slate-900">
+                      {MAP_DEFINITIONS[multiplayer.selectedMap ?? 'container_yard'].name}
+                    </strong>
+                    <span aria-hidden="true"> · </span>
+                    목표 {multiplayer.targetKills ?? 15}킬
+                  </div>
                   {multiplayer.isHost ? (
                     <button
                       type="button"
                       data-start="true"
                       onClick={onStartMultiplayer}
-                      className="px-6 py-2.5 rounded-lg bg-slate-950 hover:bg-slate-800 text-white font-display text-sm font-bold cursor-pointer whitespace-nowrap"
+                      className="px-7 py-2.5 rounded-lg bg-slate-950 hover:bg-slate-800 text-white font-display text-sm font-bold cursor-pointer whitespace-nowrap"
                     >
-                      전투 시작 ({multiplayer.peers.length}명)
+                      매치 시작 ({multiplayer.peers.length}명)
                     </button>
                   ) : (
-                    <div className="text-xs text-slate-500">
-                      방장이 시작할 때까지 대기 중입니다.
+                    <div className="text-xs font-medium text-slate-600">
+                      방장이 매치를 시작할 때까지 대기 중입니다.
                     </div>
                   )}
                 </div>
@@ -758,7 +1130,7 @@ export function TitleScreen({
         </section>
 
         <footer className="pt-3 border-t border-slate-100 text-[11px] text-slate-500 leading-relaxed">
-          WASD 이동 · Shift 달리기 · Space 점프 · 좌클릭(또는 J) 공격 및 3초 꾹 눌러 거미줄 제거 · 우클릭(또는 C) 방패 · F 겉날개(활공 시 HP 회복, 우클릭 시 폭죽 가속) · 1~6 / 휠 슬롯 변경 · Enter 채팅 · V / R-Shift 시점 전환
+          WASD 이동 · Shift 달리기 · Space 점프 · 좌클릭(또는 J) 공격 및 3초 꾹 눌러 거미줄 제거 · 우클릭(또는 C) 방패 · F 겉날개(활공 시 HP 회복, 우클릭 폭죽) · 1~6 / 휠 슬롯 · Tab 스코어보드 · Enter 채팅 · V 시점 전환
         </footer>
       </div>
     </div>

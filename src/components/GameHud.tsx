@@ -10,8 +10,14 @@ import {
   MessageSquare,
   Send,
   Gamepad2,
+  Settings,
+  Zap,
+  Feather,
+  ListOrdered,
+  MapPin,
 } from 'lucide-react';
 import { CHARACTERS } from '../game/characters';
+import { MAP_DEFINITIONS } from '../game/maps';
 import type { HudSnapshot } from '../game/types';
 import { WeaponIcon } from './WeaponIcons';
 
@@ -20,9 +26,12 @@ interface GameHudProps {
   onSelectSlot: (idx: number) => void;
   onCycleCameraMode: () => void;
   onToggleMute: () => void;
+  onOpenSettings: () => void;
   onPause: () => void;
   onRestart: () => void;
   onSendChat?: (text: string) => void;
+  onToggleMobileSprint?: () => void;
+  onMobileElytra?: () => void;
   onMobileAttack?: () => void;
   onMobileAttackHold?: (pressed: boolean) => void;
   onMobileJump?: (pressed: boolean) => void;
@@ -36,9 +45,12 @@ export function GameHud({
   onSelectSlot,
   onCycleCameraMode,
   onToggleMute,
+  onOpenSettings,
   onPause,
   onRestart,
   onSendChat,
+  onToggleMobileSprint,
+  onMobileElytra,
   onMobileAttack,
   onMobileAttackHold,
   onMobileJump,
@@ -47,6 +59,9 @@ export function GameHud({
   onMobileLook,
 }: GameHudProps) {
   const prof = CHARACTERS[hud.characterId];
+  const mapDef = MAP_DEFINITIONS[hud.currentMapId] ?? MAP_DEFINITIONS.container_yard;
+  const mapRem = Math.max(0, Math.floor(hud.mapTimeRemaining));
+  const mapClock = `${String(Math.floor(mapRem / 60)).padStart(2, '0')}:${String(mapRem % 60).padStart(2, '0')}`;
   const hpPct = Math.max(0, Math.min(100, (hud.hp / hud.maxHp) * 100));
   const absPct = Math.max(0, Math.min(100, (hud.absorption / 30) * 100));
   const activeWeapon = hud.loadout[hud.activeSlot] ?? hud.loadout[0];
@@ -56,6 +71,9 @@ export function GameHud({
     if (typeof window === 'undefined') return false;
     return window.matchMedia?.('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
   });
+  const [mobileSprintOn, setMobileSprintOn] = useState(false);
+  const [scoreboardHeld, setScoreboardHeld] = useState(false);
+  const [scoreboardToggled, setScoreboardToggled] = useState(false);
   const [chatText, setChatText] = useState('');
   const [chatOpenMobile, setChatOpenMobile] = useState(false);
   const chatInputRef = useRef<HTMLInputElement | null>(null);
@@ -72,8 +90,13 @@ export function GameHud({
   }, [hud.chatMessages.length]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.code === 'Enter') {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Tab') {
+        if (document.activeElement !== chatInputRef.current) {
+          e.preventDefault();
+          setScoreboardHeld(true);
+        }
+      } else if (e.code === 'Enter') {
         const active = document.activeElement;
         if (active !== chatInputRef.current) {
           e.preventDefault();
@@ -85,9 +108,25 @@ export function GameHud({
         chatInputRef.current?.blur();
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Tab') {
+        setScoreboardHeld(false);
+      }
+    };
+    const onBlur = () => setScoreboardHeld(false);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
   }, []);
+
+  const showScoreboard = scoreboardHeld || scoreboardToggled;
+  const redBoard = hud.scoreboard.filter((s) => s.team === 'red');
+  const blueBoard = hud.scoreboard.filter((s) => s.team === 'blue');
 
   const handleChatSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -163,8 +202,33 @@ export function GameHud({
         />
       )}
 
-      {/* Top-Left: Clean Light Vitality Strip */}
-      <div className="fixed top-3 left-3 sm:top-4 sm:left-4 w-68 sm:w-76 bg-white/92 backdrop-blur-xs border border-slate-200 rounded-xl px-3.5 py-2.5 shadow-sm text-slate-900">
+      {/* Top-Left: Clean Light Vitality & Map Strip */}
+      <div className="fixed top-3 left-3 sm:top-4 sm:left-4 w-64 sm:w-76 bg-white/95 border border-slate-200 rounded-xl px-3.5 py-2.5 shadow-sm text-slate-900">
+        <div className="flex items-center justify-between gap-2 pb-1.5 mb-1.5 border-b border-slate-100 text-[11px]">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <MapPin className="w-3 h-3 text-blue-600 shrink-0" />
+            <span className="font-display font-bold text-slate-900 truncate" data-testid="hud-map-name">
+              {mapDef.name}
+            </span>
+            {hud.roomMode === 'team' && (hud.playerTeam === 'red' || hud.playerTeam === 'blue') && (
+              <span
+                className={`px-1.5 py-0.5 rounded text-[10px] font-bold text-white shrink-0 ${
+                  hud.playerTeam === 'red' ? 'bg-red-600' : 'bg-blue-600'
+                }`}
+              >
+                {hud.playerTeam === 'red' ? '레드팀' : '블루팀'}
+              </span>
+            )}
+          </div>
+          <span
+            data-testid="hud-map-timer"
+            title="다음 맵 전환까지 남은 시간"
+            className="font-mono-num font-bold text-slate-600 shrink-0"
+          >
+            {mapClock}
+          </span>
+        </div>
+
         <div className="flex items-baseline justify-between mb-1.5">
           <div className="flex items-center gap-2">
             <span
@@ -230,12 +294,21 @@ export function GameHud({
       </div>
 
       {/* Top-Right: Counters + Compact Utility Buttons */}
-      <div className="fixed top-3 right-3 sm:top-4 sm:right-4 flex items-start gap-2">
-        <div className="bg-white/92 backdrop-blur-xs border border-slate-200 rounded-xl px-3.5 py-2 flex items-center gap-4 shadow-sm text-slate-900">
+      <div className="fixed top-3 right-3 sm:top-4 sm:right-4 flex flex-col sm:flex-row items-end sm:items-start gap-2">
+        <div className="bg-white/95 border border-slate-200 rounded-xl px-3 py-2 flex items-center gap-3 sm:gap-4 shadow-sm text-slate-900">
+          {hud.settings.showFps && (
+            <div>
+              <div className="text-[10px] font-medium text-slate-500">FPS</div>
+              <div className="font-display font-mono-num text-base sm:text-lg font-bold text-slate-900 leading-tight">
+                {hud.fps}
+              </div>
+            </div>
+          )}
+
           {hud.mode === 'online_world' && (
             <div>
               <div className="text-[10px] font-medium text-slate-500">접속</div>
-              <div className="font-display font-mono-num text-lg font-bold text-emerald-700 leading-tight">
+              <div className="font-display font-mono-num text-base sm:text-lg font-bold text-emerald-700 leading-tight">
                 {Math.max(1, hud.multiplayer.peers.length)}명
               </div>
             </div>
@@ -244,7 +317,7 @@ export function GameHud({
           {(hud.mode === 'multiplayer' || hud.mode === 'link_duel') && hud.multiplayer.roomCode && (
             <div>
               <div className="text-[10px] font-medium text-slate-500">코드</div>
-              <div className="font-display font-mono-num text-lg font-bold text-slate-900 leading-tight">
+              <div className="font-display font-mono-num text-base sm:text-lg font-bold text-slate-900 leading-tight">
                 {hud.multiplayer.roomCode}
               </div>
             </div>
@@ -252,7 +325,7 @@ export function GameHud({
 
           <div>
             <div className="text-[10px] font-medium text-slate-500">처치</div>
-            <div className="font-display font-mono-num text-lg font-bold text-slate-950 leading-tight">
+            <div className="font-display font-mono-num text-base sm:text-lg font-bold text-slate-950 leading-tight">
               {hud.kills}
               {hud.mode !== 'online_world' && (
                 <span className="text-xs text-slate-400">/{hud.targetKills}</span>
@@ -262,7 +335,7 @@ export function GameHud({
 
           <div>
             <div className="text-[10px] font-medium text-slate-500">시간</div>
-            <div className="font-display font-mono-num text-lg font-bold text-slate-700 leading-tight">
+            <div className="font-display font-mono-num text-base sm:text-lg font-bold text-slate-700 leading-tight">
               {hud.elapsedTime}s
             </div>
           </div>
@@ -272,16 +345,50 @@ export function GameHud({
           <button
             type="button"
             tabIndex={-1}
+            data-testid="scoreboard-toggle-btn"
+            aria-label="스코어보드 [Tab]"
+            title="스코어보드 보기 (Tab)"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              setScoreboardToggled((v) => !v);
+            }}
+            className={`w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl border shadow-sm cursor-pointer transition-colors ${
+              showScoreboard
+                ? 'bg-slate-950 border-slate-950 text-white'
+                : 'bg-white/95 border-slate-200 text-slate-700 hover:text-slate-950'
+            }`}
+          >
+            <ListOrdered className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            tabIndex={-1}
+            data-testid="hud-settings-btn"
+            aria-label="환경설정"
+            title="환경설정"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onOpenSettings();
+            }}
+            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl bg-white/95 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
+            tabIndex={-1}
             aria-label="모바일 터치패드 전환"
             title="터치 조이스틱 켜기/끄기"
             onClick={(e) => {
               e.currentTarget.blur();
               setShowTouchControls((v) => !v);
             }}
-            className={`w-10 h-10 flex items-center justify-center rounded-xl border shadow-sm cursor-pointer transition-colors ${
+            className={`w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl border shadow-sm cursor-pointer transition-colors ${
               showTouchControls
                 ? 'bg-slate-950 border-slate-950 text-white'
-                : 'bg-white/92 border-slate-200 text-slate-700 hover:text-slate-950'
+                : 'bg-white/95 border-slate-200 text-slate-700 hover:text-slate-950'
             }`}
           >
             <Gamepad2 className="w-4 h-4" />
@@ -296,7 +403,7 @@ export function GameHud({
               e.currentTarget.blur();
               onToggleMute();
             }}
-            className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/92 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
+            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl bg-white/95 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
           >
             {hud.muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </button>
@@ -313,7 +420,7 @@ export function GameHud({
                   e.currentTarget.blur();
                   onRestart();
                 }}
-                className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/92 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
+                className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl bg-white/95 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
               >
                 <RotateCcw className="w-4 h-4" />
               </button>
@@ -328,7 +435,7 @@ export function GameHud({
               e.currentTarget.blur();
               onPause();
             }}
-            className="w-10 h-10 flex items-center justify-center rounded-xl bg-white/92 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
+            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl bg-white/95 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
           >
             <Pause className="w-4 h-4" />
           </button>
@@ -420,24 +527,152 @@ export function GameHud({
         )}
       </div>
 
+      {/* Live Tab Scoreboard Overlay */}
+      {showScoreboard && (
+        <div
+          data-testid="scoreboard-overlay"
+          className="fixed inset-0 z-30 flex items-center justify-center bg-slate-950/45 p-4 pointer-events-auto"
+        >
+          <div className="w-full max-w-2xl bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden text-slate-900">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
+              <div className="flex items-center gap-2">
+                <span className="font-display text-sm font-bold text-slate-950">
+                  실시간 스코어보드
+                </span>
+                <span className="text-xs text-slate-500">
+                  {mapDef.name} · 다음 맵 {mapClock}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setScoreboardToggled(false);
+                  setScoreboardHeld(false);
+                }}
+                className="text-xs font-semibold text-slate-500 hover:text-slate-950 cursor-pointer"
+              >
+                닫기 [Tab]
+              </button>
+            </div>
+
+            {hud.roomMode === 'team' ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-slate-200">
+                {[
+                  { title: 'RED TEAM', rows: redBoard, barColor: 'bg-red-600' },
+                  { title: 'BLUE TEAM', rows: blueBoard, barColor: 'bg-blue-600' },
+                ].map((col) => (
+                  <div key={col.title}>
+                    <div className={`px-3.5 py-2 ${col.barColor} text-white font-display text-xs font-bold flex justify-between`}>
+                      <span>{col.title}</span>
+                      <span className="font-mono-num">
+                        {col.rows.reduce((acc, r) => acc + r.kills, 0)} K
+                      </span>
+                    </div>
+                    <div className="divide-y divide-slate-100">
+                      {col.rows.length === 0 ? (
+                        <div className="px-3.5 py-5 text-xs text-slate-400 text-center">참가자 없음</div>
+                      ) : (
+                        col.rows.map((entry) => {
+                          const cProf = CHARACTERS[entry.characterId];
+                          const eHpPct = Math.max(0, Math.min(100, (entry.hp / Math.max(1, entry.maxHp)) * 100));
+                          return (
+                            <div
+                              key={entry.id}
+                              className={`flex items-center justify-between px-3.5 py-2 text-xs ${
+                                entry.isLocal ? 'bg-amber-50/70' : ''
+                              }`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span
+                                  className="w-2 h-2 rounded-xs shrink-0"
+                                  style={{ backgroundColor: cProf?.trimColor ?? '#64748b' }}
+                                />
+                                <span className="font-semibold text-slate-900 truncate">
+                                  {entry.name}
+                                  {entry.isLocal ? ' (나)' : ''}
+                                </span>
+                                {entry.isBot && (
+                                  <span className="px-1 py-0.5 rounded bg-slate-200 text-slate-600 text-[9px] font-bold">
+                                    BOT
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-3 shrink-0">
+                                <div className="w-12 h-1.5 bg-slate-200 rounded-xs overflow-hidden">
+                                  <div className="h-full bg-emerald-500" style={{ width: `${eHpPct}%` }} />
+                                </div>
+                                <span className="font-mono-num font-bold text-slate-900 w-10 text-right">
+                                  {entry.kills}/{entry.deaths}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
+                <div className="grid grid-cols-12 px-4 py-2 text-[11px] font-semibold text-slate-500 bg-slate-50/60">
+                  <span className="col-span-5">플레이어</span>
+                  <span className="col-span-3">캐릭터</span>
+                  <span className="col-span-2">체력</span>
+                  <span className="col-span-2 text-right">K / D</span>
+                </div>
+                {hud.scoreboard.map((entry) => {
+                  const cProf = CHARACTERS[entry.characterId];
+                  return (
+                    <div
+                      key={entry.id}
+                      className={`grid grid-cols-12 items-center px-4 py-2 text-xs ${
+                        entry.isLocal ? 'bg-amber-50/70 font-semibold' : ''
+                      }`}
+                    >
+                      <div className="col-span-5 flex items-center gap-1.5 min-w-0">
+                        <span className="truncate text-slate-900">
+                          {entry.name}
+                          {entry.isLocal ? ' (나)' : ''}
+                        </span>
+                        {entry.isBot && (
+                          <span className="px-1 py-0.5 rounded bg-slate-200 text-slate-600 text-[9px] font-bold shrink-0">
+                            BOT
+                          </span>
+                        )}
+                      </div>
+                      <span className="col-span-3 text-slate-600 truncate">{cProf?.name ?? entry.characterId}</span>
+                      <span className="col-span-2 font-mono-num text-slate-700">{Math.max(0, entry.hp)}</span>
+                      <span className="col-span-2 font-mono-num font-bold text-slate-900 text-right">
+                        {entry.kills}/{entry.deaths}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Real-time Chat Panel (Bottom-Left on desktop, collapsible top-left on mobile) */}
       <div
         data-testid="hud-chat-panel"
         className={`fixed pointer-events-auto z-20 ${
-          showTouchControls ? 'top-32 left-3 w-64' : 'bottom-4 left-4 w-76'
+          showTouchControls ? 'top-36 left-3 w-60' : 'bottom-4 left-4 w-76'
         }`}
       >
         {showTouchControls && !chatOpenMobile ? (
           <button
             type="button"
             onClick={() => setChatOpenMobile(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/92 border border-slate-200 text-xs font-semibold text-slate-800 shadow-sm cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/95 border border-slate-200 text-xs font-semibold text-slate-800 shadow-sm cursor-pointer"
           >
             <MessageSquare className="w-3.5 h-3.5" />
             채팅 ({hud.chatMessages.length})
           </button>
         ) : (
-          <div className="bg-white/90 backdrop-blur-xs border border-slate-200 rounded-xl shadow-sm overflow-hidden text-slate-900">
+          <div className="bg-white/95 border border-slate-200 rounded-xl shadow-sm overflow-hidden text-slate-900">
             <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200/80 text-[11px] font-semibold text-slate-600">
               <span className="flex items-center gap-1.5">
                 <MessageSquare className="w-3 h-3" />
@@ -507,109 +742,140 @@ export function GameHud({
             }}
           />
 
-          <div className="fixed inset-x-0 bottom-20 pointer-events-none flex justify-between items-end px-5 z-20">
-            {/* Virtual Joystick */}
-            <div
-              className="pointer-events-auto relative w-28 h-28 rounded-full bg-white/40 border-2 border-slate-900/20 flex items-center justify-center backdrop-blur-xs touch-none"
-              onTouchStart={(e) => {
-                const touch = e.targetTouches[0];
-                const rect = e.currentTarget.getBoundingClientRect();
-                const cx = rect.left + rect.width / 2;
-                const cy = rect.top + rect.height / 2;
-                setJoystickCenter({ x: cx, y: cy });
-                const dx = touch.clientX - cx;
-                const dy = touch.clientY - cy;
-                const dist = Math.hypot(dx, dy);
-                const maxR = 40;
-                const nx = dist > maxR ? (dx / dist) * maxR : dx;
-                const ny = dist > maxR ? (dy / dist) * maxR : dy;
-                setJoystickOffset({ x: nx, y: ny });
-                onMobileMove?.(-ny / maxR, nx / maxR);
-              }}
-              onTouchMove={(e) => {
-                if (!joystickCenter) return;
-                const touch = e.targetTouches[0];
-                const dx = touch.clientX - joystickCenter.x;
-                const dy = touch.clientY - joystickCenter.y;
-                const dist = Math.hypot(dx, dy);
-                const maxR = 40;
-                const nx = dist > maxR ? (dx / dist) * maxR : dx;
-                const ny = dist > maxR ? (dy / dist) * maxR : dy;
-                setJoystickOffset({ x: nx, y: ny });
-                onMobileMove?.(-ny / maxR, nx / maxR);
-              }}
-              onTouchEnd={() => {
-                setJoystickCenter(null);
-                setJoystickOffset({ x: 0, y: 0 });
-                onMobileMove?.(0, 0);
-              }}
-            >
+          <div className="fixed inset-x-0 bottom-24 pointer-events-none flex justify-between items-end px-4 z-20">
+            {/* Virtual Joystick + Sprint Toggle */}
+            <div className="flex flex-col items-start gap-2">
+              <button
+                type="button"
+                data-testid="mobile-sprint-btn"
+                onClick={() => {
+                  setMobileSprintOn((v) => !v);
+                  onToggleMobileSprint?.();
+                }}
+                className={`pointer-events-auto flex items-center gap-1 px-3 py-1.5 rounded-lg border text-[11px] font-bold shadow-sm cursor-pointer ${
+                  mobileSprintOn || hud.settings.mobileAutoSprint
+                    ? 'bg-sky-600 border-sky-700 text-white'
+                    : 'bg-white/95 border-slate-300 text-slate-800'
+                }`}
+              >
+                <Zap className="w-3.5 h-3.5" />
+                질주 {mobileSprintOn ? 'ON' : hud.settings.mobileAutoSprint ? '자동' : 'OFF'}
+              </button>
+
               <div
-                className="w-12 h-12 rounded-full bg-slate-950/85 border border-white/60 shadow-md"
-                style={{ transform: `translate(${joystickOffset.x}px, ${joystickOffset.y}px)` }}
-              />
+                className="pointer-events-auto relative w-28 h-28 rounded-full bg-white/70 border-2 border-slate-900/25 flex items-center justify-center touch-none"
+                onTouchStart={(e) => {
+                  const touch = e.targetTouches[0];
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const cx = rect.left + rect.width / 2;
+                  const cy = rect.top + rect.height / 2;
+                  setJoystickCenter({ x: cx, y: cy });
+                  const dx = touch.clientX - cx;
+                  const dy = touch.clientY - cy;
+                  const dist = Math.hypot(dx, dy);
+                  const maxR = 40;
+                  const nx = dist > maxR ? (dx / dist) * maxR : dx;
+                  const ny = dist > maxR ? (dy / dist) * maxR : dy;
+                  setJoystickOffset({ x: nx, y: ny });
+                  onMobileMove?.(-ny / maxR, nx / maxR);
+                }}
+                onTouchMove={(e) => {
+                  if (!joystickCenter) return;
+                  const touch = e.targetTouches[0];
+                  const dx = touch.clientX - joystickCenter.x;
+                  const dy = touch.clientY - joystickCenter.y;
+                  const dist = Math.hypot(dx, dy);
+                  const maxR = 40;
+                  const nx = dist > maxR ? (dx / dist) * maxR : dx;
+                  const ny = dist > maxR ? (dy / dist) * maxR : dy;
+                  setJoystickOffset({ x: nx, y: ny });
+                  onMobileMove?.(-ny / maxR, nx / maxR);
+                }}
+                onTouchEnd={() => {
+                  setJoystickCenter(null);
+                  setJoystickOffset({ x: 0, y: 0 });
+                  onMobileMove?.(0, 0);
+                }}
+              >
+                <div
+                  className="w-12 h-12 rounded-full bg-slate-950/90 border border-white/60 shadow-md"
+                  style={{ transform: `translate(${joystickOffset.x}px, ${joystickOffset.y}px)` }}
+                />
+              </div>
             </div>
 
-            {/* Action Buttons */}
-            <div className="pointer-events-auto flex items-end gap-2.5 touch-none">
+            {/* Action Buttons (Elytra, Block, Jump, Attack) */}
+            <div className="pointer-events-auto flex flex-col items-end gap-2 touch-none">
               <button
                 type="button"
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  onMobileBlock?.(true);
-                }}
-                onTouchEnd={() => onMobileBlock?.(false)}
-                onMouseDown={() => onMobileBlock?.(true)}
-                onMouseUp={() => onMobileBlock?.(false)}
-                className="w-14 h-14 rounded-full bg-white/90 border border-slate-300 flex flex-col items-center justify-center text-slate-900 font-semibold text-[11px] shadow-md cursor-pointer active:scale-95"
+                data-testid="mobile-elytra-btn"
+                onClick={() => onMobileElytra?.()}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/95 border border-slate-300 text-slate-900 font-bold text-[11px] shadow-sm cursor-pointer active:scale-95"
               >
-                <Shield className="w-5 h-5" />
-                방어
+                <Feather className="w-3.5 h-3.5 text-sky-600" />
+                겉날개 {hud.elytraCooldown > 0.05 ? `${hud.elytraCooldown.toFixed(1)}s` : 'READY'}
               </button>
 
-              <button
-                type="button"
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  onMobileJump?.(true);
-                }}
-                onTouchEnd={() => onMobileJump?.(false)}
-                onMouseDown={() => onMobileJump?.(true)}
-                onMouseUp={() => onMobileJump?.(false)}
-                className="w-14 h-14 rounded-full bg-white/90 border border-slate-300 flex flex-col items-center justify-center text-slate-900 font-semibold text-[11px] shadow-md cursor-pointer active:scale-95"
-              >
-                <ArrowUp className="w-5 h-5" />
-                점프
-              </button>
+              <div className="flex items-end gap-2">
+                <button
+                  type="button"
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    onMobileBlock?.(true);
+                  }}
+                  onTouchEnd={() => onMobileBlock?.(false)}
+                  onMouseDown={() => onMobileBlock?.(true)}
+                  onMouseUp={() => onMobileBlock?.(false)}
+                  className="w-13 h-13 rounded-full bg-white/95 border border-slate-300 flex flex-col items-center justify-center text-slate-900 font-semibold text-[11px] shadow-md cursor-pointer active:scale-95"
+                >
+                  <Shield className="w-4 h-4" />
+                  방어
+                </button>
 
-              <button
-                type="button"
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  if (onMobileAttackHold) onMobileAttackHold(true);
-                  else onMobileAttack?.();
-                }}
-                onTouchEnd={() => onMobileAttackHold?.(false)}
-                onTouchCancel={() => onMobileAttackHold?.(false)}
-                onMouseDown={() => {
-                  if (onMobileAttackHold) onMobileAttackHold(true);
-                  else onMobileAttack?.();
-                }}
-                onMouseUp={() => onMobileAttackHold?.(false)}
-                onMouseLeave={() => onMobileAttackHold?.(false)}
-                className="w-18 h-18 rounded-full bg-slate-950 border border-white/40 flex flex-col items-center justify-center text-white font-display text-xs font-bold shadow-lg cursor-pointer active:scale-95"
-              >
-                <Swords className="w-6 h-6 mb-0.5 text-amber-400" />
-                공격
-              </button>
+                <button
+                  type="button"
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    onMobileJump?.(true);
+                  }}
+                  onTouchEnd={() => onMobileJump?.(false)}
+                  onMouseDown={() => onMobileJump?.(true)}
+                  onMouseUp={() => onMobileJump?.(false)}
+                  className="w-13 h-13 rounded-full bg-white/95 border border-slate-300 flex flex-col items-center justify-center text-slate-900 font-semibold text-[11px] shadow-md cursor-pointer active:scale-95"
+                >
+                  <ArrowUp className="w-4 h-4" />
+                  점프
+                </button>
+
+                <button
+                  type="button"
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    if (onMobileAttackHold) onMobileAttackHold(true);
+                    else onMobileAttack?.();
+                  }}
+                  onTouchEnd={() => onMobileAttackHold?.(false)}
+                  onTouchCancel={() => onMobileAttackHold?.(false)}
+                  onMouseDown={() => {
+                    if (onMobileAttackHold) onMobileAttackHold(true);
+                    else onMobileAttack?.();
+                  }}
+                  onMouseUp={() => onMobileAttackHold?.(false)}
+                  onMouseLeave={() => onMobileAttackHold?.(false)}
+                  className="w-16 h-16 rounded-full bg-slate-950 border border-white/40 flex flex-col items-center justify-center text-white font-display text-xs font-bold shadow-lg cursor-pointer active:scale-95"
+                >
+                  <Swords className="w-5 h-5 mb-0.5 text-amber-400" />
+                  공격
+                </button>
+              </div>
             </div>
           </div>
         </>
       )}
 
       {/* Bottom-Center: Clean 6-Slot Hotbar */}
-      <div className="fixed bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 z-20">
-        <div className="text-xs font-medium text-slate-900 bg-white/92 border border-slate-200 rounded-md px-2.5 py-0.5 shadow-xs whitespace-nowrap">
+      <div className="fixed bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 z-20 max-w-[calc(100vw-16px)]">
+        <div className="text-xs font-medium text-slate-900 bg-white/95 border border-slate-200 rounded-md px-2.5 py-0.5 shadow-xs whitespace-nowrap">
           {activeWeapon.name}
           {(hud.slotMaxCharges[hud.activeSlot] ?? 1) > 1 && (
             <span className="text-amber-700 font-mono-num ml-1.5 font-semibold">
@@ -620,7 +886,7 @@ export function GameHud({
           <span className="text-slate-600">{activeWeapon.role}</span>
         </div>
 
-        <div className="flex items-center gap-1.5 bg-white/94 backdrop-blur-xs border border-slate-200 rounded-xl p-1.5 pointer-events-auto shadow-sm">
+        <div className="flex items-center gap-1 sm:gap-1.5 bg-white/95 border border-slate-200 rounded-xl p-1.5 pointer-events-auto shadow-sm overflow-x-auto max-w-full">
           {hud.loadout.map((slot, idx) => {
             const active = hud.activeSlot === idx;
             const cd = hud.slotCooldowns[idx] ?? 0;

@@ -1,29 +1,53 @@
 export class GameAudio {
   private ctx: AudioContext | null = null;
+  private masterGain: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
   private softClipCurve: Float32Array<ArrayBuffer> | null = null;
   private muted = false;
+  private masterVolume = 0.85;
 
   public setMuted(m: boolean): void {
     this.muted = m;
+    if (this.masterGain && this.ctx) {
+      this.masterGain.gain.setValueAtTime(m ? 0 : this.masterVolume, this.ctx.currentTime);
+    }
   }
 
   public isMuted(): boolean {
     return this.muted;
   }
 
+  public setMasterVolume(vol01: number): void {
+    this.masterVolume = Math.max(0, Math.min(1, vol01));
+    if (this.masterGain && this.ctx) {
+      this.masterGain.gain.setValueAtTime(this.muted ? 0 : this.masterVolume, this.ctx.currentTime);
+    }
+  }
+
+  public getMasterVolume(): number {
+    return this.masterVolume;
+  }
+
   private ensureContext(): AudioContext | null {
-    if (this.muted) return null;
+    if (this.muted || this.masterVolume <= 0.001) return null;
     if (!this.ctx && typeof window !== 'undefined') {
       const AudioCtx =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (AudioCtx) {
         this.ctx = new AudioCtx();
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.value = this.muted ? 0 : this.masterVolume;
+        this.masterGain.connect(this.ctx.destination);
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
+    }
+    if (this.ctx && !this.masterGain) {
+      this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.value = this.muted ? 0 : this.masterVolume;
+      this.masterGain.connect(this.ctx.destination);
     }
     if (this.ctx && !this.noiseBuffer) {
       const sampleRate = this.ctx.sampleRate;
@@ -87,7 +111,7 @@ export class GameAudio {
       g.gain.setValueAtTime(gainAmt, startTime);
       g.gain.exponentialRampToValueAtTime(0.001, startTime + dur);
 
-      src.connect(filter).connect(shaper).connect(g).connect(ctx.destination);
+      src.connect(filter).connect(shaper).connect(g).connect(this.masterGain ?? ctx.destination);
       src.start(startTime);
       src.stop(startTime + dur + 0.015);
     }
@@ -105,7 +129,7 @@ export class GameAudio {
     og.gain.setValueAtTime(gainAmt * 0.95, startTime);
     og.gain.exponentialRampToValueAtTime(0.001, startTime + dur * 1.25);
 
-    osc.connect(bodyLp).connect(shaper).connect(og).connect(ctx.destination);
+    osc.connect(bodyLp).connect(shaper).connect(og).connect(this.masterGain ?? ctx.destination);
     osc.start(startTime);
     osc.stop(startTime + dur * 1.3);
   }
@@ -125,10 +149,27 @@ export class GameAudio {
       const gain = ctx.createGain();
       gain.gain.setValueAtTime(0.16, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.095);
-      src.connect(filter).connect(gain).connect(ctx.destination);
+      src.connect(filter).connect(gain).connect(this.masterGain ?? ctx.destination);
       src.start(now);
       src.stop(now + 0.1);
     }
+  }
+
+  public playBowShoot(isCrossbow = false): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = isCrossbow ? 'triangle' : 'sine';
+    osc.frequency.setValueAtTime(isCrossbow ? this.jitter(360) : this.jitter(290), now);
+    osc.frequency.exponentialRampToValueAtTime(isCrossbow ? 115 : 85, now + 0.09);
+    gain.gain.setValueAtTime(0.24, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.095);
+    osc.connect(gain).connect(this.masterGain ?? ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.1);
+    this.triggerDullThud(ctx, now, isCrossbow ? 820 : 640, 155, 58, 0.22, 0.06);
   }
 
   /**
@@ -305,7 +346,7 @@ export class GameAudio {
       g.gain.linearRampToValueAtTime(0.28, now + 0.03);
       g.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
 
-      src.connect(bp).connect(g).connect(ctx.destination);
+      src.connect(bp).connect(g).connect(this.masterGain ?? ctx.destination);
       src.start(now);
       src.stop(now + 0.34);
     }
@@ -371,7 +412,7 @@ export class GameAudio {
       snapGain.gain.setValueAtTime(isPlayer ? 0.55 : 0.68, now);
       snapGain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
 
-      snapSrc.connect(bp).connect(shaper).connect(snapGain).connect(ctx.destination);
+      snapSrc.connect(bp).connect(shaper).connect(snapGain).connect(this.masterGain ?? ctx.destination);
       snapSrc.start(now);
       snapSrc.stop(now + 0.07);
     }
@@ -383,7 +424,7 @@ export class GameAudio {
     clickOsc.frequency.exponentialRampToValueAtTime(95, now + 0.032);
     clickGain.gain.setValueAtTime(0.42, now);
     clickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.036);
-    clickOsc.connect(shaper).connect(clickGain).connect(ctx.destination);
+    clickOsc.connect(shaper).connect(clickGain).connect(this.masterGain ?? ctx.destination);
     clickOsc.start(now);
     clickOsc.stop(now + 0.042);
 
@@ -417,7 +458,7 @@ export class GameAudio {
         tailGain.gain.setValueAtTime(0.42, now + 0.06);
         tailGain.gain.exponentialRampToValueAtTime(0.001, now + 0.17);
 
-        tailSrc.connect(tailBp).connect(shaper).connect(tailGain).connect(ctx.destination);
+        tailSrc.connect(tailBp).connect(shaper).connect(tailGain).connect(this.masterGain ?? ctx.destination);
         tailSrc.start(now + 0.06);
         tailSrc.stop(now + 0.18);
       }

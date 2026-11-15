@@ -81,6 +81,27 @@ export function WeaponIcon({ id, className = 'w-6 h-6' }: { id: WeaponSlotId; cl
       </svg>
     );
   }
+  if (id === 'bow') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+        <path d="M6 19C13 18 18 13 19 6" stroke="#38bdf8" strokeWidth="2.4" strokeLinecap="round" />
+        <path d="M6 19L19 6" stroke="#bae6fd" strokeWidth="1.2" />
+        <path d="M4 14L19 5" stroke="#fef08a" strokeWidth="2" strokeLinecap="round" />
+        <path d="M15.5 4.5L19.5 4.8L18.2 8.5" stroke="#38bdf8" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (id === 'crossbow') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+        <path d="M4.5 11.5C8 6.5 16 6.5 19.5 11.5" stroke="#22d3ee" strokeWidth="2.4" strokeLinecap="round" />
+        <path d="M4.5 11.5H19.5" stroke="#a5f3fc" strokeWidth="1.2" />
+        <path d="M12 3V20" stroke="#8b5cf6" strokeWidth="2.4" strokeLinecap="round" />
+        <path d="M9.5 6L12 3L14.5 6" stroke="#e0f2fe" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M9 18.5H15" stroke="#475569" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    );
+  }
   if (id === 'wind_charge') {
     return (
       <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
