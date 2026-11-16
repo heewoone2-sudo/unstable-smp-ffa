@@ -36,7 +36,9 @@ service cloud.firestore {
         'clownpierce',
         'princezam',
         'jumperwho',
-        'minutetech'
+        'minutetech',
+        'kestrel',
+        'vexor'
       ];
     }
 
@@ -75,6 +77,52 @@ service cloud.firestore {
         && data.losses is int && data.losses >= 0 && data.losses <= 100000
         && data.kills is int && data.kills >= 0 && data.kills <= 1000000
         && data.deaths is int && data.deaths >= 0 && data.deaths <= 1000000
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFriendRequest(data, requestId) {
+      return data.keys().hasAll(['id', 'fromUid', 'toUid', 'fromNickname', 'toNickname', 'fromCharacter', 'toCharacter', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'fromUid', 'toUid', 'fromNickname', 'toNickname', 'fromCharacter', 'toCharacter', 'status', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.id == requestId
+        && isValidId(data.fromUid)
+        && isValidId(data.toUid)
+        && data.fromUid != data.toUid
+        && data.fromNickname is string
+        && data.fromNickname.size() >= 2
+        && data.fromNickname.size() <= 16
+        && data.toNickname is string
+        && data.toNickname.size() >= 2
+        && data.toNickname.size() <= 16
+        && isValidCharacter(data.fromCharacter)
+        && isValidCharacter(data.toCharacter)
+        && data.status in ['pending', 'accepted', 'declined']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidRoomInvite(data, inviteId) {
+      return data.keys().hasAll(['id', 'fromUid', 'toUid', 'fromNickname', 'toNickname', 'roomCode', 'roomKind', 'roomMode', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'fromUid', 'toUid', 'fromNickname', 'toNickname', 'roomCode', 'roomKind', 'roomMode', 'status', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.id == inviteId
+        && isValidId(data.fromUid)
+        && isValidId(data.toUid)
+        && data.fromUid != data.toUid
+        && data.fromNickname is string
+        && data.fromNickname.size() >= 2
+        && data.fromNickname.size() <= 16
+        && data.toNickname is string
+        && data.toNickname.size() >= 2
+        && data.toNickname.size() <= 16
+        && data.roomCode is string
+        && data.roomCode.size() >= 4
+        && data.roomCode.size() <= 8
+        && data.roomCode.matches('^[A-Z0-9]+$')
+        && data.roomKind in ['private', 'link_duel']
+        && data.roomMode in ['ffa', 'team']
+        && data.status in ['pending', 'accepted', 'declined']
+        && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
 
@@ -120,6 +168,83 @@ service cloud.firestore {
           'updatedAt'
         ]);
       allow delete: if false;
+    }
+
+    match /friendRequests/{requestId} {
+      allow get: if isValidId(requestId)
+        && isSignedIn()
+        && resource != null
+        && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+      allow list: if isSignedIn()
+        && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)
+        && request.query.limit <= 50;
+      allow create: if isValidId(requestId)
+        && isSignedIn()
+        && isValidFriendRequest(incoming(), requestId)
+        && incoming().fromUid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/leaderboard/$(incoming().toUid));
+      allow update: if isValidId(requestId)
+        && isSignedIn()
+        && isValidFriendRequest(incoming(), requestId)
+        && existing().status == 'pending'
+        && incoming().id == existing().id
+        && incoming().fromUid == existing().fromUid
+        && incoming().toUid == existing().toUid
+        && incoming().fromNickname == existing().fromNickname
+        && incoming().toNickname == existing().toNickname
+        && incoming().fromCharacter == existing().fromCharacter
+        && incoming().toCharacter == existing().toCharacter
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && request.auth.uid == existing().toUid
+        && incoming().status in ['accepted', 'declined']
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+      allow delete: if isValidId(requestId)
+        && isSignedIn()
+        && resource != null
+        && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+    }
+
+    match /roomInvites/{inviteId} {
+      allow get: if isValidId(inviteId)
+        && isSignedIn()
+        && resource != null
+        && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
+      allow list: if isSignedIn()
+        && (resource.data.fromUid == request.auth.uid || resource.data.toUid == request.auth.uid)
+        && request.query.limit <= 50;
+      allow create: if isValidId(inviteId)
+        && isSignedIn()
+        && isValidRoomInvite(incoming(), inviteId)
+        && incoming().fromUid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/leaderboard/$(incoming().toUid));
+      allow update: if isValidId(inviteId)
+        && isSignedIn()
+        && isValidRoomInvite(incoming(), inviteId)
+        && existing().status == 'pending'
+        && incoming().id == existing().id
+        && incoming().fromUid == existing().fromUid
+        && incoming().toUid == existing().toUid
+        && incoming().fromNickname == existing().fromNickname
+        && incoming().toNickname == existing().toNickname
+        && incoming().roomCode == existing().roomCode
+        && incoming().roomKind == existing().roomKind
+        && incoming().roomMode == existing().roomMode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && request.auth.uid == existing().toUid
+        && incoming().status in ['accepted', 'declined']
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+      allow delete: if isValidId(inviteId)
+        && isSignedIn()
+        && resource != null
+        && (existing().fromUid == request.auth.uid || existing().toUid == request.auth.uid);
     }
   }
 }

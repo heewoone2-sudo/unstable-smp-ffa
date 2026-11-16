@@ -12,18 +12,21 @@ import {
 } from 'firebase/auth';
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocFromServer,
   getDocs,
   getFirestore,
   limit,
+  onSnapshot,
   orderBy,
   query,
   serverTimestamp,
   setDoc,
   updateDoc,
   where,
+  type Timestamp,
 } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 import type { CharacterId } from './game/types';
@@ -58,6 +61,35 @@ export interface LeaderboardEntry {
   losses: number;
   kills: number;
   deaths: number;
+}
+
+export type FriendRequestStatus = 'pending' | 'accepted' | 'declined';
+
+export interface FriendRequestRecord {
+  id: string;
+  fromUid: string;
+  toUid: string;
+  fromNickname: string;
+  toNickname: string;
+  fromCharacter: CharacterId;
+  toCharacter: CharacterId;
+  status: FriendRequestStatus;
+  createdAtMs: number;
+  updatedAtMs: number;
+}
+
+export interface RoomInviteRecord {
+  id: string;
+  fromUid: string;
+  toUid: string;
+  fromNickname: string;
+  toNickname: string;
+  roomCode: string;
+  roomKind: 'private' | 'link_duel';
+  roomMode: 'ffa' | 'team';
+  status: FriendRequestStatus;
+  createdAtMs: number;
+  updatedAtMs: number;
 }
 
 enum OperationType {
@@ -374,3 +406,298 @@ export async function fetchTopLeaderboard(maxRows = 12): Promise<LeaderboardEntr
 export async function signOutAccount(): Promise<void> {
   await signOut(auth);
 }
+
+const VALID_CHAR_SET = new Set<CharacterId>([
+  'wemmbu',
+  'flamefrags',
+  'parrotx2',
+  'spokeishere',
+  'manepear',
+  'clownpierce',
+  'princezam',
+  'jumperwho',
+  'minutetech',
+  'kestrel',
+  'vexor',
+]);
+
+function coerceCharacterId(raw: unknown): CharacterId {
+  const c = String(raw || 'wemmbu') as CharacterId;
+  return VALID_CHAR_SET.has(c) ? c : 'wemmbu';
+}
+
+function toMillis(ts: unknown): number {
+  if (ts && typeof ts === 'object' && 'toMillis' in ts && typeof (ts as Timestamp).toMillis === 'function') {
+    return (ts as Timestamp).toMillis();
+  }
+  return 0;
+}
+
+export function buildFriendDocId(uidA: string, uidB: string): string {
+  const cleanA = uidA.trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+  const cleanB = uidB.trim().replace(/[^a-zA-Z0-9_\-]/g, '');
+  return [cleanA, cleanB].sort().join('__').slice(0, 128);
+}
+
+export async function searchPlayerByNickname(
+  keyword: string,
+  excludeUid?: string
+): Promise<LeaderboardEntry[]> {
+  const rows = await fetchTopLeaderboard(50);
+  const needle = keyword.trim().toLowerCase();
+  return rows.filter((entry) => {
+    if (excludeUid && entry.uid === excludeUid) return false;
+    if (!needle) return true;
+    return entry.nickname.toLowerCase().includes(needle);
+  });
+}
+
+export async function sendFriendRequest(
+  from: PlayerAccountProfile,
+  target: LeaderboardEntry,
+  replaceExistingDeclined = false
+): Promise<FriendRequestRecord> {
+  const docId = buildFriendDocId(from.uid, target.uid);
+  const path = `friendRequests/${docId}`;
+  if (!docId || from.uid === target.uid) {
+    throw new Error('유효한 대상 플레이어가 아닙니다.');
+  }
+
+  if (replaceExistingDeclined) {
+    try {
+      await deleteDoc(doc(db, 'friendRequests', docId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, path);
+    }
+  }
+
+  const fromNickname = sanitizeNickname(from.nickname, 'Player');
+  const toNickname = sanitizeNickname(target.nickname, 'Fighter');
+  const fromCharacter = coerceCharacterId(from.favoriteCharacter);
+  const toCharacter = coerceCharacterId(target.favoriteCharacter);
+
+  try {
+    await setDoc(doc(db, 'friendRequests', docId), {
+      id: docId,
+      fromUid: from.uid,
+      toUid: target.uid,
+      fromNickname,
+      toNickname,
+      fromCharacter,
+      toCharacter,
+      status: 'pending',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+
+  const now = Date.now();
+  return {
+    id: docId,
+    fromUid: from.uid,
+    toUid: target.uid,
+    fromNickname,
+    toNickname,
+    fromCharacter,
+    toCharacter,
+    status: 'pending',
+    createdAtMs: now,
+    updatedAtMs: now,
+  };
+}
+
+export async function respondFriendRequest(
+  requestId: string,
+  status: 'accepted' | 'declined'
+): Promise<void> {
+  const path = `friendRequests/${requestId}`;
+  try {
+    await updateDoc(doc(db, 'friendRequests', requestId), {
+      status,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+export async function removeFriendRequest(requestId: string): Promise<void> {
+  const path = `friendRequests/${requestId}`;
+  try {
+    await deleteDoc(doc(db, 'friendRequests', requestId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
+export async function sendRoomInvite(params: {
+  from: PlayerAccountProfile;
+  toUid: string;
+  toNickname: string;
+  roomCode: string;
+  roomKind: 'private' | 'link_duel';
+  roomMode: 'ffa' | 'team';
+}): Promise<void> {
+  const cleanRoomCode = params.roomCode
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, 8);
+  if (cleanRoomCode.length < 4 || params.from.uid === params.toUid) {
+    throw new Error('유효한 방 코드 또는 대상이 아닙니다.');
+  }
+  const suffix = Date.now().toString(36).replace(/[^a-zA-Z0-9]/g, '');
+  const inviteId = `${params.from.uid.slice(0, 32)}_${params.toUid.slice(0, 32)}_${cleanRoomCode}_${suffix}`.slice(0, 128);
+  const path = `roomInvites/${inviteId}`;
+
+  try {
+    await setDoc(doc(db, 'roomInvites', inviteId), {
+      id: inviteId,
+      fromUid: params.from.uid,
+      toUid: params.toUid,
+      fromNickname: sanitizeNickname(params.from.nickname, 'Player'),
+      toNickname: sanitizeNickname(params.toNickname, 'Fighter'),
+      roomCode: cleanRoomCode,
+      roomKind: params.roomKind,
+      roomMode: params.roomMode,
+      status: 'pending',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function updateRoomInviteStatus(
+  inviteId: string,
+  status: 'accepted' | 'declined'
+): Promise<void> {
+  const path = `roomInvites/${inviteId}`;
+  try {
+    await updateDoc(doc(db, 'roomInvites', inviteId), {
+      status,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+  }
+}
+
+function mapFriendRequestDoc(id: string, data: Record<string, unknown>): FriendRequestRecord {
+  const statusRaw = String(data.status || 'pending');
+  const status: FriendRequestStatus =
+    statusRaw === 'accepted' || statusRaw === 'declined' ? statusRaw : 'pending';
+  return {
+    id: String(data.id || id),
+    fromUid: String(data.fromUid || ''),
+    toUid: String(data.toUid || ''),
+    fromNickname: String(data.fromNickname || 'Player'),
+    toNickname: String(data.toNickname || 'Fighter'),
+    fromCharacter: coerceCharacterId(data.fromCharacter),
+    toCharacter: coerceCharacterId(data.toCharacter),
+    status,
+    createdAtMs: toMillis(data.createdAt),
+    updatedAtMs: toMillis(data.updatedAt),
+  };
+}
+
+function mapRoomInviteDoc(id: string, data: Record<string, unknown>): RoomInviteRecord {
+  const statusRaw = String(data.status || 'pending');
+  const status: FriendRequestStatus =
+    statusRaw === 'accepted' || statusRaw === 'declined' ? statusRaw : 'pending';
+  return {
+    id: String(data.id || id),
+    fromUid: String(data.fromUid || ''),
+    toUid: String(data.toUid || ''),
+    fromNickname: String(data.fromNickname || 'Player'),
+    toNickname: String(data.toNickname || 'Fighter'),
+    roomCode: String(data.roomCode || ''),
+    roomKind: data.roomKind === 'link_duel' ? 'link_duel' : 'private',
+    roomMode: data.roomMode === 'team' ? 'team' : 'ffa',
+    status,
+    createdAtMs: toMillis(data.createdAt),
+    updatedAtMs: toMillis(data.updatedAt),
+  };
+}
+
+export function subscribeFriendData(
+  uid: string,
+  onChange: (data: { friendRequests: FriendRequestRecord[]; roomInvites: RoomInviteRecord[] }) => void
+): () => void {
+  const sentRequests = new Map<string, FriendRequestRecord>();
+  const recvRequests = new Map<string, FriendRequestRecord>();
+  const sentInvites = new Map<string, RoomInviteRecord>();
+  const recvInvites = new Map<string, RoomInviteRecord>();
+
+  const emit = () => {
+    const reqMap = new Map<string, FriendRequestRecord>();
+    for (const [k, v] of sentRequests) reqMap.set(k, v);
+    for (const [k, v] of recvRequests) reqMap.set(k, v);
+    const invMap = new Map<string, RoomInviteRecord>();
+    for (const [k, v] of sentInvites) invMap.set(k, v);
+    for (const [k, v] of recvInvites) invMap.set(k, v);
+
+    const friendRequests = Array.from(reqMap.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+    const roomInvites = Array.from(invMap.values()).sort((a, b) => b.updatedAtMs - a.updatedAtMs);
+    onChange({ friendRequests, roomInvites });
+  };
+
+  const unsub1 = onSnapshot(
+    query(collection(db, 'friendRequests'), where('fromUid', '==', uid), limit(50)),
+    (snap) => {
+      sentRequests.clear();
+      snap.docs.forEach((d) => sentRequests.set(d.id, mapFriendRequestDoc(d.id, d.data())));
+      emit();
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'friendRequests');
+    }
+  );
+
+  const unsub2 = onSnapshot(
+    query(collection(db, 'friendRequests'), where('toUid', '==', uid), limit(50)),
+    (snap) => {
+      recvRequests.clear();
+      snap.docs.forEach((d) => recvRequests.set(d.id, mapFriendRequestDoc(d.id, d.data())));
+      emit();
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'friendRequests');
+    }
+  );
+
+  const unsub3 = onSnapshot(
+    query(collection(db, 'roomInvites'), where('fromUid', '==', uid), limit(50)),
+    (snap) => {
+      sentInvites.clear();
+      snap.docs.forEach((d) => sentInvites.set(d.id, mapRoomInviteDoc(d.id, d.data())));
+      emit();
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'roomInvites');
+    }
+  );
+
+  const unsub4 = onSnapshot(
+    query(collection(db, 'roomInvites'), where('toUid', '==', uid), limit(50)),
+    (snap) => {
+      recvInvites.clear();
+      snap.docs.forEach((d) => recvInvites.set(d.id, mapRoomInviteDoc(d.id, d.data())));
+      emit();
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'roomInvites');
+    }
+  );
+
+  return () => {
+    unsub1();
+    unsub2();
+    unsub3();
+    unsub4();
+  };
+}
+

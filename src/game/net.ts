@@ -1,4 +1,15 @@
-import type { CharacterId, ChatEntry, MapId, MultiplayerHudState, RoomMode, RoomPeerInfo } from './types';
+import type {
+  BotDifficulty,
+  CharacterId,
+  ChatEntry,
+  CustomBotSlot,
+  CustomPartyMode,
+  MapId,
+  MultiplayerHudState,
+  RoomMode,
+  RoomPeerInfo,
+} from './types';
+import { createEmptyMapVotes } from './maps';
 
 export interface NetEventHandlers {
   onRoomChange: (
@@ -9,7 +20,9 @@ export interface NetEventHandlers {
     roomKind: 'global' | 'link_duel' | 'private',
     selectedMap?: MapId,
     mapStartedAt?: number,
-    targetKills?: number
+    targetKills?: number,
+    partyMode?: CustomPartyMode,
+    botDifficulty?: BotDifficulty
   ) => void;
   onMapChanged?: (mapId: MapId, mapStartedAt: number) => void;
   onLinkMatchOver: (msg: { winnerId: string; winnerName: string; loserId: string; loserName: string }) => void;
@@ -49,8 +62,11 @@ export interface NetEventHandlers {
   onCombatKo: (msg: {
     killerId: string;
     killerName: string;
+    killerTeam?: 'red' | 'blue' | 'ffa';
     victimId: string;
     victimName: string;
+    victimTeam?: 'red' | 'blue' | 'ffa';
+    weaponId?: string;
     killerKills: number;
   }) => void;
   onPeerRespawn: (msg: { id: string; hp: number; maxHp: number }) => void;
@@ -112,14 +128,12 @@ export class MultiplayerClient {
     isHost: false,
     playerName: 'Player',
     includeBots: true,
+    customBots: [],
+    botDifficulty: 'medium',
+    partyMode: 'classic',
     linkQueueing: false,
     selectedMap: 'container_yard',
-    mapVotes: {
-      container_yard: 0,
-      emerald_citadel: 0,
-      sky_dock: 0,
-      nether_foundry: 0,
-    },
+    mapVotes: createEmptyMapVotes(),
     targetKills: 15,
     peers: [],
     error: null,
@@ -137,7 +151,11 @@ export class MultiplayerClient {
   }
 
   public getState(): MultiplayerHudState {
-    return { ...this.state, peers: [...this.state.peers] };
+    return {
+      ...this.state,
+      peers: [...this.state.peers],
+      customBots: this.state.customBots ? [...this.state.customBots] : [],
+    };
   }
 
   public resetConnection(): void {
@@ -279,16 +297,22 @@ export class MultiplayerClient {
         this.state.roomMode = msg.roomMode === 'team' ? 'team' : 'ffa';
         this.state.isHost = String(msg.hostId || '') === this.state.selfId;
         this.state.includeBots = Boolean(msg.includeBots);
+        if (msg.botDifficulty === 'easy' || msg.botDifficulty === 'medium' || msg.botDifficulty === 'hard') {
+          this.state.botDifficulty = msg.botDifficulty;
+        }
+        if (typeof msg.partyMode === 'string') {
+          this.state.partyMode = msg.partyMode as any;
+        }
         this.state.selectedMap = (typeof msg.selectedMap === 'string' ? msg.selectedMap : 'container_yard') as MapId;
         if (msg.mapVotes && typeof msg.mapVotes === 'object') {
           const mv = msg.mapVotes as Record<string, number>;
-          this.state.mapVotes = {
-            container_yard: Number(mv.container_yard || 0),
-            emerald_citadel: Number(mv.emerald_citadel || 0),
-            sky_dock: Number(mv.sky_dock || 0),
-            nether_foundry: Number(mv.nether_foundry || 0),
-          };
+          const nextVotes = createEmptyMapVotes();
+          for (const key of Object.keys(nextVotes) as MapId[]) {
+            nextVotes[key] = Number(mv[key] || 0);
+          }
+          this.state.mapVotes = nextVotes;
         }
+        this.state.customBots = Array.isArray(msg.customBots) ? (msg.customBots as CustomBotSlot[]) : [];
         this.state.targetKills = typeof msg.targetKills === 'number' ? msg.targetKills : 15;
         this.state.mapStartedAt = typeof msg.mapStartedAt === 'number' ? msg.mapStartedAt : undefined;
         this.state.status = msg.status === 'playing' ? 'playing' : 'lobby';
@@ -316,12 +340,23 @@ export class MultiplayerClient {
         if (typeof msg.targetKills === 'number') {
           this.state.targetKills = msg.targetKills;
         }
+        if (typeof msg.partyMode === 'string') {
+          this.state.partyMode = msg.partyMode as CustomPartyMode;
+        }
+        if (msg.botDifficulty === 'easy' || msg.botDifficulty === 'medium' || msg.botDifficulty === 'hard') {
+          this.state.botDifficulty = msg.botDifficulty;
+        }
+        if (Array.isArray(msg.customBots)) {
+          this.state.customBots = msg.customBots as CustomBotSlot[];
+        }
         this.handlers.onRoomChange(this.getState());
         this.handlers.onMatchStart(
           rk,
           msg.selectedMap as MapId | undefined,
           typeof msg.mapStartedAt === 'number' ? msg.mapStartedAt : undefined,
-          typeof msg.targetKills === 'number' ? msg.targetKills : undefined
+          typeof msg.targetKills === 'number' ? msg.targetKills : undefined,
+          this.state.partyMode,
+          this.state.botDifficulty
         );
         return;
       }
@@ -487,10 +522,32 @@ export class MultiplayerClient {
     this.handlers.onRoomChange(this.getState());
   }
 
-  public createRoom(name: string, characterId: CharacterId, includeBots: boolean, roomMode: 'ffa' | 'team', team: 'red' | 'blue' | 'ffa'): void {
+  public createRoom(
+    name: string,
+    characterId: CharacterId,
+    includeBots: boolean,
+    roomMode: 'ffa' | 'team',
+    team: 'red' | 'blue' | 'ffa',
+    botDifficulty?: BotDifficulty,
+    partyMode?: CustomPartyMode,
+    customBots?: CustomBotSlot[]
+  ): void {
     this.state.playerName = name.trim() || 'Player';
+    if (botDifficulty) this.state.botDifficulty = botDifficulty;
+    if (partyMode) this.state.partyMode = partyMode;
+    if (customBots) this.state.customBots = customBots;
     this.retryCount = 0;
-    this.send({ type: 'create_room', name: this.state.playerName, characterId, includeBots, roomMode, team });
+    this.send({
+      type: 'create_room',
+      name: this.state.playerName,
+      characterId,
+      includeBots,
+      roomMode,
+      team,
+      botDifficulty,
+      partyMode,
+      customBots,
+    });
   }
 
   public joinRoom(code: string, name: string, characterId: CharacterId, team: 'red' | 'blue' | 'ffa'): void {
@@ -507,9 +564,21 @@ export class MultiplayerClient {
     roomMode?: RoomMode;
     targetKills?: number;
     selectedMap?: MapId;
+    botDifficulty?: BotDifficulty;
+    partyMode?: CustomPartyMode;
+    customBots?: CustomBotSlot[];
   }): void {
     if (updates.name !== undefined) {
       this.state.playerName = updates.name.trim() || 'Player';
+    }
+    if (updates.botDifficulty !== undefined) {
+      this.state.botDifficulty = updates.botDifficulty;
+    }
+    if (updates.partyMode !== undefined) {
+      this.state.partyMode = updates.partyMode;
+    }
+    if (updates.customBots !== undefined) {
+      this.state.customBots = updates.customBots;
     }
     if (!this.state.roomCode) {
       this.handlers.onRoomChange(this.getState());
@@ -526,6 +595,15 @@ export class MultiplayerClient {
   public startMatch(): void {
     if (!this.state.roomCode) return;
     this.send({ type: 'start_match' });
+  }
+
+  public exitMatch(): void {
+    if (!this.state.roomCode) return;
+    this.state.status = 'lobby';
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'exit_match' }));
+    }
+    this.handlers.onRoomChange(this.getState());
   }
 
   public leaveRoom(): void {

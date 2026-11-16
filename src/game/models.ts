@@ -19,9 +19,12 @@ export interface FighterRig {
   hitFlashMaterials: THREE.MeshStandardMaterial[];
   baseEmissives: THREE.Color[];
   telegraphRing: THREE.Mesh;
+  outlineMeshes: THREE.Mesh[];
+  outlineMat: THREE.MeshBasicMaterial;
   setActiveWeapon: (slot: WeaponSlotId) => void;
   setHitFlash: (active: boolean, telegraphColor?: number) => void;
   setOpacity: (opacity: number) => void;
+  setTeamOutline: (colorHex: number | null) => void;
 }
 
 function makeMat(
@@ -621,6 +624,32 @@ export function createFighterModel(
 
   bodyGroup.add(leftArmPivot, rightArmPivot);
 
+  // Enemy Silhouette Outline Shells (BackSide extrusion on main body parts)
+  const outlineMat = new THREE.MeshBasicMaterial({
+    color: 0xef4444,
+    side: THREE.BackSide,
+    transparent: true,
+    opacity: 0.96,
+    depthWrite: false,
+  });
+  const outlineMeshes: THREE.Mesh[] = [];
+  const attachOutline = (mesh: THREE.Mesh, scale = 1.095) => {
+    const om = new THREE.Mesh(mesh.geometry, outlineMat);
+    om.position.copy(mesh.position);
+    om.rotation.copy(mesh.rotation);
+    om.scale.setScalar(scale);
+    om.visible = false;
+    mesh.parent?.add(om);
+    outlineMeshes.push(om);
+  };
+  attachOutline(torso, 1.095);
+  attachOutline(chestPlate, 1.09);
+  attachOutline(headMesh, 1.1);
+  attachOutline(leftArm, 1.11);
+  attachOutline(rightArm, 1.11);
+  attachOutline(leftLeg, 1.095);
+  attachOutline(rightLeg, 1.095);
+
   // Aerodynamic Swept Elytra Glider Wings
   const wingsGroup = new THREE.Group();
   wingsGroup.position.set(0, 1.34, -0.18);
@@ -682,6 +711,8 @@ export function createFighterModel(
     hitFlashMaterials,
     baseEmissives,
     telegraphRing,
+    outlineMeshes,
+    outlineMat,
     setActiveWeapon: (slot: WeaponSlotId) => {
       (Object.keys(weaponModels) as WeaponSlotId[]).forEach((k) => {
         weaponModels[k].visible = k === slot;
@@ -703,6 +734,15 @@ export function createFighterModel(
       for (const m of hitFlashMaterials) {
         m.transparent = opacity < 1;
         m.opacity = opacity;
+      }
+      outlineMat.opacity = opacity * 0.94;
+    },
+    setTeamOutline: (colorHex: number | null) => {
+      if (colorHex === null) {
+        for (const om of outlineMeshes) om.visible = false;
+      } else {
+        outlineMat.color.setHex(colorHex);
+        for (const om of outlineMeshes) om.visible = true;
       }
     },
   };
@@ -785,30 +825,61 @@ export interface EnemyOverheadBar {
   updateHp: (ratio: number) => void;
 }
 
-export function createEnemyOverheadBar(name: string, trimColor: string): EnemyOverheadBar {
+export function createEnemyOverheadBar(
+  name: string,
+  trimColor: string,
+  relationBadge?: { label: string; bgColor: string }
+): EnemyOverheadBar {
   const group = new THREE.Group();
   group.position.set(0, 2.42, 0);
 
   const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 64;
+  canvas.width = 340;
+  canvas.height = 72;
   const ctx = canvas.getContext('2d')!;
-  ctx.clearRect(0, 0, 256, 64);
+  ctx.clearRect(0, 0, 340, 72);
   ctx.font = 'bold 28px "Chakra Petch", sans-serif';
-  ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.lineWidth = 6;
-  ctx.strokeStyle = 'rgba(10, 12, 20, 0.92)';
-  ctx.strokeText(name, 128, 34);
-  ctx.fillStyle = '#f8fafc';
-  ctx.fillText(name, 128, 34);
+
+  if (relationBadge) {
+    const tag = `[${relationBadge.label}]`;
+    const tagW = ctx.measureText(tag).width + 18;
+    const nameW = ctx.measureText(name).width;
+    const totalW = tagW + 10 + nameW;
+    const startX = Math.max(8, (340 - totalW) / 2);
+
+    ctx.fillStyle = relationBadge.bgColor;
+    ctx.beginPath();
+    ctx.roundRect(startX, 14, tagW, 40, 8);
+    ctx.fill();
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 22px "Chakra Petch", sans-serif';
+    ctx.fillText(tag, startX + tagW / 2, 35);
+
+    ctx.font = 'bold 28px "Chakra Petch", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(10, 12, 20, 0.92)';
+    ctx.strokeText(name, startX + tagW + 10, 36);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillText(name, startX + tagW + 10, 36);
+  } else {
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = 'rgba(10, 12, 20, 0.92)';
+    ctx.strokeText(name, 170, 36);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillText(name, 170, 36);
+  }
 
   const labelTex = new THREE.CanvasTexture(canvas);
   labelTex.colorSpace = THREE.SRGBColorSpace;
   const labelMat = new THREE.SpriteMaterial({ map: labelTex, transparent: true, depthTest: false });
   const labelSprite = new THREE.Sprite(labelMat);
-  labelSprite.position.set(0, 0.26, 0);
-  labelSprite.scale.set(1.9, 0.48, 1);
+  labelSprite.position.set(0, 0.28, 0);
+  labelSprite.scale.set(2.35, 0.5, 1);
   group.add(labelSprite);
 
   const bgMesh = new THREE.Mesh(
@@ -992,3 +1063,371 @@ export function createArrowProjectileMesh(accentHex = 0x38bdf8): THREE.Group {
   g.add(shaft, tip, fletching);
   return g;
 }
+
+/**
+ * Colossal Non-Humanoid Boss Monster Rig (Obsidian Molten Behemoth)
+ * Sculpted armored carapace, glowing magma chest core, dorsal spikes, fanged horned skull, crusher claws.
+ */
+export function createBossMonsterModel(
+  shadowMaterial: THREE.MeshBasicMaterial,
+  enableShadows: boolean
+): FighterRig {
+  const root = new THREE.Group();
+  const bodyGroup = new THREE.Group();
+  root.add(bodyGroup);
+
+  const hitFlashMaterials: THREE.MeshStandardMaterial[] = [];
+  const baseEmissives: THREE.Color[] = [];
+  const registerMat = <T extends THREE.MeshStandardMaterial>(mat: T): T => {
+    hitFlashMaterials.push(mat);
+    baseEmissives.push(mat.emissive.clone());
+    return mat;
+  };
+
+  const hideMat = registerMat(makeMat('#1f1a29', 0.62, 0.28));
+  const carapaceMat = registerMat(makeClearcoatMat('#2e1065', 0.28, 0.58, 0x4c1d95, 0.25, 0.75));
+  const magmaMat = registerMat(makeMat('#f97316', 0.22, 0.15, 0xea580c, 1.05));
+  const hornMat = registerMat(makeClearcoatMat('#e2e8f0', 0.25, 0.2, 0x000000, 0, 0.6));
+  const eyeMat = registerMat(makeMat('#ff2442', 0.1, 0.1, 0xff1e38, 1.45));
+
+  // Massive Pillar Monster Legs with Claws
+  const leftLegPivot = new THREE.Group();
+  leftLegPivot.position.set(-0.46, 1.08, 0);
+  const leftThigh = new THREE.Mesh(new RoundedBoxGeometry(0.46, 0.62, 0.48, 3, 0.08), hideMat);
+  leftThigh.position.y = -0.24;
+  const leftShin = new THREE.Mesh(new RoundedBoxGeometry(0.4, 0.62, 0.44, 3, 0.06), carapaceMat);
+  leftShin.position.y = -0.76;
+  const leftFoot = new THREE.Mesh(new RoundedBoxGeometry(0.48, 0.22, 0.64, 3, 0.05), carapaceMat);
+  leftFoot.position.set(0, -1.0, 0.08);
+  leftLegPivot.add(leftThigh, leftShin, leftFoot);
+  for (let c = -1; c <= 1; c++) {
+    const claw = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.26, 8), hornMat);
+    claw.rotation.x = Math.PI * 0.48;
+    claw.position.set(c * 0.13, -1.0, 0.44);
+    leftLegPivot.add(claw);
+  }
+
+  const rightLegPivot = new THREE.Group();
+  rightLegPivot.position.set(0.46, 1.08, 0);
+  const rightThigh = new THREE.Mesh(new RoundedBoxGeometry(0.46, 0.62, 0.48, 3, 0.08), hideMat);
+  rightThigh.position.y = -0.24;
+  const rightShin = new THREE.Mesh(new RoundedBoxGeometry(0.4, 0.62, 0.44, 3, 0.06), carapaceMat);
+  rightShin.position.y = -0.76;
+  const rightFoot = new THREE.Mesh(new RoundedBoxGeometry(0.48, 0.22, 0.64, 3, 0.05), carapaceMat);
+  rightFoot.position.set(0, -1.0, 0.08);
+  rightLegPivot.add(rightThigh, rightShin, rightFoot);
+  for (let c = -1; c <= 1; c++) {
+    const claw = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.26, 8), hornMat);
+    claw.rotation.x = Math.PI * 0.48;
+    claw.position.set(c * 0.13, -1.0, 0.44);
+    rightLegPivot.add(claw);
+  }
+
+  bodyGroup.add(leftLegPivot, rightLegPivot);
+
+  // Broad Hunched Beast Abdomen + Molten Core + Armored Dorsal Shell
+  const waist = new THREE.Mesh(new RoundedBoxGeometry(0.92, 0.56, 0.72, 4, 0.1), hideMat);
+  waist.position.set(0, 1.32, 0);
+  const chestMass = new THREE.Mesh(new RoundedBoxGeometry(1.42, 1.1, 0.96, 4, 0.14), carapaceMat);
+  chestMass.position.set(0, 2.02, 0.06);
+  chestMass.rotation.x = 0.12;
+  const chestCore = new THREE.Mesh(new THREE.OctahedronGeometry(0.32, 1), magmaMat);
+  chestCore.position.set(0, 2.04, 0.48);
+  const ribL = new THREE.Mesh(new RoundedBoxGeometry(0.32, 0.64, 0.16, 3, 0.04), magmaMat);
+  ribL.position.set(-0.38, 2.0, 0.48);
+  ribL.rotation.z = 0.24;
+  const ribR = new THREE.Mesh(new RoundedBoxGeometry(0.32, 0.64, 0.16, 3, 0.04), magmaMat);
+  ribR.position.set(0.38, 2.0, 0.48);
+  ribR.rotation.z = -0.24;
+  bodyGroup.add(waist, chestMass, chestCore, ribL, ribR);
+
+  // Jagged Dorsal Spine Spikes down the monster's hunched back + tail
+  for (let i = 0; i < 4; i++) {
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.14 - i * 0.015, 0.52 - i * 0.05, 8), magmaMat);
+    spike.position.set(0, 2.55 - i * 0.34, -0.34 - i * 0.12);
+    spike.rotation.x = -0.68 - i * 0.12;
+    bodyGroup.add(spike);
+  }
+  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.24, 1.1, 10), carapaceMat);
+  tail.position.set(0, 1.06, -0.68);
+  tail.rotation.x = -Math.PI * 0.62;
+  bodyGroup.add(tail);
+
+  // Bestial Fanged Skull & Twin Ram Horns (forward-jutting monster silhouette)
+  const headGroup = new THREE.Group();
+  headGroup.position.set(0, 2.56, 0.34);
+
+  const cranium = new THREE.Mesh(new RoundedBoxGeometry(0.76, 0.64, 0.78, 4, 0.12), carapaceMat);
+  cranium.position.set(0, 0.26, 0.04);
+  const snout = new THREE.Mesh(new RoundedBoxGeometry(0.56, 0.34, 0.44, 3, 0.07), hideMat);
+  snout.position.set(0, 0.1, 0.36);
+  const jaw = new THREE.Mesh(new RoundedBoxGeometry(0.52, 0.18, 0.42, 3, 0.05), carapaceMat);
+  jaw.position.set(0, -0.1, 0.32);
+  jaw.rotation.x = 0.18;
+
+  // Fangs
+  const fangL = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.2, 8), hornMat);
+  fangL.position.set(-0.18, 0.02, 0.52);
+  const fangR = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.2, 8), hornMat);
+  fangR.position.set(0.18, 0.02, 0.52);
+
+  // Glowing Crimson Monster Eyes
+  const eyeL = new THREE.Mesh(new RoundedBoxGeometry(0.16, 0.08, 0.08, 2, 0.02), eyeMat);
+  eyeL.position.set(-0.19, 0.31, 0.43);
+  eyeL.rotation.z = -0.18;
+  const eyeR = new THREE.Mesh(new RoundedBoxGeometry(0.16, 0.08, 0.08, 2, 0.02), eyeMat);
+  eyeR.position.set(0.19, 0.31, 0.43);
+  eyeR.rotation.z = 0.18;
+
+  // Massive Twin Horns
+  const hornL1 = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.64, 10), hornMat);
+  hornL1.position.set(-0.42, 0.58, -0.02);
+  hornL1.rotation.set(0.28, 0, 0.52);
+  const hornR1 = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.64, 10), hornMat);
+  hornR1.position.set(0.42, 0.58, -0.02);
+  hornR1.rotation.set(0.28, 0, -0.52);
+
+  headGroup.add(cranium, snout, jaw, fangL, fangR, eyeL, eyeR, hornL1, hornR1);
+  bodyGroup.add(headGroup);
+
+  // Heavy Crusher Arms + Shoulder Pauldrons + Monster Claws
+  const buildClawArm = (side: -1 | 1) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * 0.94, 2.34, 0.06);
+
+    const pauldron = new THREE.Mesh(new RoundedBoxGeometry(0.58, 0.48, 0.58, 4, 0.1), carapaceMat);
+    pauldron.position.y = -0.04;
+    const pauldronSpike = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.4, 8), hornMat);
+    pauldronSpike.position.set(side * 0.18, 0.34, 0);
+    pauldronSpike.rotation.z = -side * 0.42;
+
+    const upperArm = new THREE.Mesh(new RoundedBoxGeometry(0.38, 0.72, 0.38, 3, 0.06), hideMat);
+    upperArm.position.y = -0.44;
+    const gauntlet = new THREE.Mesh(new RoundedBoxGeometry(0.48, 0.66, 0.5, 4, 0.08), carapaceMat);
+    gauntlet.position.set(0, -0.96, 0.08);
+    pivot.add(pauldron, pauldronSpike, upperArm, gauntlet);
+
+    for (let c = -1; c <= 1; c++) {
+      const talon = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.36, 8), magmaMat);
+      talon.position.set(c * 0.13, -1.38, 0.14);
+      talon.rotation.x = Math.PI;
+      pivot.add(talon);
+    }
+    return { pivot, pauldron, upperArm, gauntlet };
+  };
+
+  const leftBuilt = buildClawArm(-1);
+  const rightBuilt = buildClawArm(1);
+  const leftArmPivot = leftBuilt.pivot;
+  const rightArmPivot = rightBuilt.pivot;
+
+  // Dummy shieldMesh & weaponModels so FighterRig contract remains seamless
+  const shieldMesh = new THREE.Group();
+  shieldMesh.visible = false;
+  leftArmPivot.add(shieldMesh);
+
+  const weaponModels = buildWeaponMeshes();
+  (Object.keys(weaponModels) as WeaponSlotId[]).forEach((slot) => {
+    const wm = weaponModels[slot];
+    wm.visible = false;
+    wm.position.set(0, -1.16, 0.28);
+    wm.scale.setScalar(1.35);
+    rightArmPivot.add(wm);
+  });
+
+  bodyGroup.add(leftArmPivot, rightArmPivot);
+
+  // Enemy Red Silhouette Outline Shells across monster body parts
+  const outlineMat = new THREE.MeshBasicMaterial({
+    color: 0xef4444,
+    side: THREE.BackSide,
+    transparent: true,
+    opacity: 0.96,
+    depthWrite: false,
+  });
+  const outlineMeshes: THREE.Mesh[] = [];
+  const attachOutline = (mesh: THREE.Mesh, scale = 1.075) => {
+    const om = new THREE.Mesh(mesh.geometry, outlineMat);
+    om.position.copy(mesh.position);
+    om.rotation.copy(mesh.rotation);
+    om.scale.setScalar(scale);
+    om.visible = false;
+    mesh.parent?.add(om);
+    outlineMeshes.push(om);
+  };
+  attachOutline(chestMass, 1.06);
+  attachOutline(waist, 1.07);
+  attachOutline(cranium, 1.08);
+  attachOutline(leftBuilt.pauldron, 1.08);
+  attachOutline(leftBuilt.gauntlet, 1.08);
+  attachOutline(rightBuilt.pauldron, 1.08);
+  attachOutline(rightBuilt.gauntlet, 1.08);
+  attachOutline(leftThigh, 1.08);
+  attachOutline(rightThigh, 1.08);
+
+  // Fiery Wing Membranes
+  const wingsGroup = new THREE.Group();
+  wingsGroup.position.set(0, 2.38, -0.44);
+  const wingMat = makeClearcoatMat('#4c1d95', 0.25, 0.5, 0xef4444, 0.35, 0.85);
+  const wingGeo = makeAerodynamicWingGeometry();
+  const leftWing = new THREE.Mesh(wingGeo, wingMat);
+  leftWing.scale.setScalar(1.85);
+  leftWing.position.set(-0.22, 0, 0);
+  leftWing.rotation.z = 0.25;
+  const rightWing = new THREE.Mesh(wingGeo, wingMat);
+  rightWing.scale.set(-1.85, 1.85, 1.85);
+  rightWing.position.set(0.22, 0, 0);
+  rightWing.rotation.z = -0.25;
+  wingsGroup.add(leftWing, rightWing);
+  bodyGroup.add(wingsGroup);
+
+  const shadowDisc = new THREE.Mesh(new THREE.CircleGeometry(1.35, 28), shadowMaterial);
+  shadowDisc.rotation.x = -Math.PI / 2;
+  shadowDisc.position.y = 0.02;
+  root.add(shadowDisc);
+
+  const telegraphRing = new THREE.Mesh(
+    new THREE.RingGeometry(1.25, 1.85, 36),
+    new THREE.MeshBasicMaterial({
+      color: 0xef4444,
+      transparent: true,
+      opacity: 0.88,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  telegraphRing.rotation.x = -Math.PI / 2;
+  telegraphRing.position.y = 0.06;
+  telegraphRing.visible = false;
+  root.add(telegraphRing);
+
+  if (enableShadows) {
+    bodyGroup.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) {
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+      }
+    });
+  }
+
+  return {
+    root,
+    bodyGroup,
+    headGroup,
+    leftArmPivot,
+    rightArmPivot,
+    leftLegPivot,
+    rightLegPivot,
+    wingsGroup,
+    leftWing,
+    rightWing,
+    shieldMesh,
+    weaponModels,
+    shadowDisc,
+    hitFlashMaterials,
+    baseEmissives,
+    telegraphRing,
+    outlineMeshes,
+    outlineMat,
+    setActiveWeapon: (slot: WeaponSlotId) => {
+      (Object.keys(weaponModels) as WeaponSlotId[]).forEach((k) => {
+        weaponModels[k].visible = k === slot;
+      });
+    },
+    setHitFlash: (active: boolean, telegraphColor?: number) => {
+      for (let i = 0; i < hitFlashMaterials.length; i++) {
+        const m = hitFlashMaterials[i];
+        if (active) {
+          m.emissive.setHex(telegraphColor ?? 0xffffff);
+          m.emissiveIntensity = telegraphColor ? 0.95 : 1.35;
+        } else {
+          m.emissive.copy(baseEmissives[i]);
+          m.emissiveIntensity = baseEmissives[i].getHex() === 0 ? 0 : 0.35;
+        }
+      }
+    },
+    setOpacity: (opacity: number) => {
+      for (const m of hitFlashMaterials) {
+        m.transparent = opacity < 1;
+        m.opacity = opacity;
+      }
+      outlineMat.opacity = opacity * 0.96;
+    },
+    setTeamOutline: (colorHex: number | null) => {
+      if (colorHex === null) {
+        for (const om of outlineMeshes) om.visible = false;
+      } else {
+        outlineMat.color.setHex(colorHex);
+        for (const om of outlineMeshes) om.visible = true;
+      }
+    },
+  };
+}
+
+/**
+ * Championship Golden Trophy Mesh for FFA / Team Victory Ceremony.
+ */
+export function createTrophyMesh(): THREE.Group {
+  const g = new THREE.Group();
+  const goldMat = makeClearcoatMat('#facc15', 0.14, 0.92, 0xd97706, 0.35, 1.0);
+  const obsidianMat = makeMat('#0f172a', 0.38, 0.5);
+
+  const base = new THREE.Mesh(new RoundedBoxGeometry(0.46, 0.18, 0.46, 3, 0.04), obsidianMat);
+  base.position.y = 0.09;
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 0.1, 16), goldMat);
+  collar.position.y = 0.22;
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.09, 0.26, 16), goldMat);
+  stem.position.y = 0.38;
+
+  const cupPts = [
+    new THREE.Vector2(0, 0.46),
+    new THREE.Vector2(0.12, 0.48),
+    new THREE.Vector2(0.24, 0.68),
+    new THREE.Vector2(0.28, 0.92),
+    new THREE.Vector2(0.22, 0.92),
+    new THREE.Vector2(0.18, 0.68),
+    new THREE.Vector2(0, 0.56),
+  ];
+  const cup = new THREE.Mesh(new THREE.LatheGeometry(cupPts, 20), goldMat);
+
+  const handleL = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.028, 8, 16, Math.PI * 1.15), goldMat);
+  handleL.position.set(-0.24, 0.76, 0);
+  handleL.rotation.z = Math.PI * 0.42;
+  const handleR = new THREE.Mesh(new THREE.TorusGeometry(0.14, 0.028, 8, 16, Math.PI * 1.15), goldMat);
+  handleR.position.set(0.24, 0.76, 0);
+  handleR.rotation.z = -Math.PI * 0.42;
+  handleR.rotation.y = Math.PI;
+
+  const crownStar = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.1, 0),
+    makeClearcoatMat('#fef08a', 0.1, 0.4, 0xfacc15, 0.95, 1.0)
+  );
+  crownStar.position.y = 1.06;
+
+  g.add(base, collar, stem, cup, handleL, handleR, crownStar);
+  return g;
+}
+
+/**
+ * Golden Champion Crown placed atop the #1 FFA victor's head during ceremony.
+ */
+export function createCrownMesh(): THREE.Group {
+  const g = new THREE.Group();
+  const goldMat = makeClearcoatMat('#facc15', 0.14, 0.9, 0xd97706, 0.35, 1.0);
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.25, 0.12, 18), goldMat);
+  g.add(band);
+  for (let i = 0; i < 6; i++) {
+    const ang = (i / 6) * Math.PI * 2;
+    const spike = new THREE.Mesh(new THREE.ConeGeometry(0.055, 0.18, 6), goldMat);
+    spike.position.set(Math.cos(ang) * 0.22, 0.14, Math.sin(ang) * 0.22);
+    g.add(spike);
+  }
+  const ruby = new THREE.Mesh(
+    new THREE.SphereGeometry(0.06, 12, 10),
+    makeMat('#ef4444', 0.1, 0.2, 0xf43f5e, 0.9)
+  );
+  ruby.position.set(0, 0.06, 0.26);
+  g.add(ruby);
+  return g;
+}
+

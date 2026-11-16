@@ -1,24 +1,36 @@
 import { useEffect, useState } from 'react';
-import { X, Trophy, LogIn, UserPlus, LogOut, Shield } from 'lucide-react';
+import { X, Trophy, LogIn, UserPlus, LogOut, Shield, Users, Search, Send, Check, Trash2 } from 'lucide-react';
 import {
   auth,
   fetchTopLeaderboard,
+  removeFriendRequest,
+  respondFriendRequest,
+  searchPlayerByNickname,
+  sendFriendRequest,
+  sendRoomInvite,
   signInWithEmailAccount,
   signInWithGoogle,
   signOutAccount,
   signUpWithEmailAccount,
+  subscribeFriendData,
   updateAccountNickname,
+  updateRoomInviteStatus,
+  type FriendRequestRecord,
   type LeaderboardEntry,
   type PlayerAccountProfile,
+  type RoomInviteRecord,
 } from '../firebase';
 import { CHARACTER_LIST } from '../game/characters';
-import type { CharacterId } from '../game/types';
+import type { CharacterId, MultiplayerHudState } from '../game/types';
 
 interface AuthModalProps {
   open: boolean;
-  initialTab?: 'auth' | 'leaderboard';
+  initialTab?: 'auth' | 'leaderboard' | 'friends';
   account: PlayerAccountProfile | null;
   selectedCharacter: CharacterId;
+  multiplayer?: MultiplayerHudState;
+  onJoinRoomFromInvite?: (roomCode: string, roomMode: 'ffa' | 'team') => void;
+  onJoinLinkFromInvite?: (roomCode: string) => void;
   onClose: () => void;
   onAccountUpdated: (profile: PlayerAccountProfile | null) => void;
 }
@@ -57,10 +69,13 @@ export function AuthModal({
   initialTab = 'auth',
   account,
   selectedCharacter,
+  multiplayer,
+  onJoinRoomFromInvite,
+  onJoinLinkFromInvite,
   onClose,
   onAccountUpdated,
 }: AuthModalProps) {
-  const [section, setSection] = useState<'auth' | 'leaderboard'>(initialTab);
+  const [section, setSection] = useState<'auth' | 'leaderboard' | 'friends'>(initialTab);
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -71,6 +86,12 @@ export function AuthModal({
   const [notice, setNotice] = useState<string | null>(null);
   const [board, setBoard] = useState<LeaderboardEntry[]>([]);
   const [boardLoading, setBoardLoading] = useState(false);
+
+  const [friendKeyword, setFriendKeyword] = useState('');
+  const [searchResults, setSearchResults] = useState<LeaderboardEntry[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [friendRequests, setFriendRequests] = useState<FriendRequestRecord[]>([]);
+  const [roomInvites, setRoomInvites] = useState<RoomInviteRecord[]>([]);
 
   useEffect(() => {
     if (!open) return;
@@ -100,6 +121,38 @@ export function AuthModal({
       active = false;
     };
   }, [open, section]);
+
+  useEffect(() => {
+    if (!open || !account?.uid) {
+      setFriendRequests([]);
+      setRoomInvites([]);
+      return;
+    }
+    const unsub = subscribeFriendData(account.uid, (data) => {
+      setFriendRequests(data.friendRequests);
+      setRoomInvites(data.roomInvites);
+    });
+    return () => unsub();
+  }, [open, account?.uid]);
+
+  useEffect(() => {
+    if (!open || section !== 'friends' || !account?.uid) return;
+    let active = true;
+    setSearching(true);
+    searchPlayerByNickname('', account.uid)
+      .then((rows) => {
+        if (active) setSearchResults(rows);
+      })
+      .catch((err) => {
+        if (active) setError(mapAuthError(err));
+      })
+      .finally(() => {
+        if (active) setSearching(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [open, section, account?.uid]);
 
   if (!open) return null;
 
@@ -174,48 +227,200 @@ export function AuthModal({
     }
   };
 
+  const handleSearchFriends = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!account) return;
+    setSearching(true);
+    setError(null);
+    try {
+      const rows = await searchPlayerByNickname(friendKeyword, account.uid);
+      setSearchResults(rows);
+    } catch (err) {
+      setError(mapAuthError(err));
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const handleSendFriendRequest = async (target: LeaderboardEntry) => {
+    if (!account) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const existingDeclined = friendRequests.some(
+      (r) =>
+        r.status === 'declined' &&
+        ((r.fromUid === account.uid && r.toUid === target.uid) ||
+          (r.toUid === account.uid && r.fromUid === target.uid))
+    );
+    try {
+      await sendFriendRequest(account, target, existingDeclined);
+      setNotice(`${target.nickname}님에게 친구 요청을 보냈습니다.`);
+    } catch (err) {
+      setError(mapAuthError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRespondFriend = async (req: FriendRequestRecord, status: 'accepted' | 'declined') => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await respondFriendRequest(req.id, status);
+      setNotice(
+        status === 'accepted'
+          ? `${req.fromNickname}님과 친구가 되었습니다.`
+          : `${req.fromNickname}님의 요청을 거절했습니다.`
+      );
+    } catch (err) {
+      setError(mapAuthError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRemoveFriend = async (req: FriendRequestRecord, label: string) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await removeFriendRequest(req.id);
+      setNotice(`${label} 완료되었습니다.`);
+    } catch (err) {
+      setError(mapAuthError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleInviteToRoom = async (friendUid: string, friendNick: string) => {
+    if (!account || !multiplayer?.roomCode) return;
+    if (multiplayer.roomKind !== 'private' && multiplayer.roomKind !== 'link_duel') return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await sendRoomInvite({
+        from: account,
+        toUid: friendUid,
+        toNickname: friendNick,
+        roomCode: multiplayer.roomCode,
+        roomKind: multiplayer.roomKind,
+        roomMode: multiplayer.roomMode ?? 'ffa',
+      });
+      setNotice(`${friendNick}님에게 방(${multiplayer.roomCode}) 초대를 보냈습니다.`);
+    } catch (err) {
+      setError(mapAuthError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleAcceptInvite = async (inv: RoomInviteRecord) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await updateRoomInviteStatus(inv.id, 'accepted');
+      if (inv.roomKind === 'link_duel') {
+        onJoinLinkFromInvite?.(inv.roomCode);
+      } else {
+        onJoinRoomFromInvite?.(inv.roomCode, inv.roomMode);
+      }
+    } catch (err) {
+      setError(mapAuthError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeclineInvite = async (inv: RoomInviteRecord) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await updateRoomInviteStatus(inv.id, 'declined');
+    } catch (err) {
+      setError(mapAuthError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const incomingPendingRequests = friendRequests.filter(
+    (r) => account && r.toUid === account.uid && r.status === 'pending'
+  );
+  const outgoingPendingRequests = friendRequests.filter(
+    (r) => account && r.fromUid === account.uid && r.status === 'pending'
+  );
+  const acceptedFriends = friendRequests.filter((r) => r.status === 'accepted');
+  const incomingPendingInvites = roomInvites.filter(
+    (inv) => account && inv.toUid === account.uid && inv.status === 'pending'
+  );
+  const canInviteFriends =
+    Boolean(multiplayer?.roomCode) &&
+    (multiplayer?.roomKind === 'private' || multiplayer?.roomKind === 'link_duel');
+
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/50 backdrop-blur-xs p-4"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/55 p-4"
       role="dialog"
       aria-modal="true"
-      aria-label="계정 및 랭킹"
+      aria-label="계정, 친구 및 랭킹"
     >
       <div className="w-full max-w-lg bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xl text-slate-900">
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-200 bg-slate-50">
-          <div className="flex items-center gap-1 p-1 bg-slate-200/70 rounded-lg">
+        <div className="flex items-center justify-between px-4 sm:px-5 py-3.5 border-b border-slate-200 bg-slate-50 gap-2">
+          <div className="flex items-center gap-1 p-1 bg-slate-200/70 rounded-lg overflow-x-auto">
             <button
               type="button"
               data-testid="tab-auth"
               onClick={() => setSection('auth')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-colors ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${
                 section === 'auth'
                   ? 'bg-white text-slate-950 shadow-xs'
                   : 'text-slate-600 hover:text-slate-950'
               }`}
             >
               <Shield className="w-3.5 h-3.5" />
-              {account ? '내 계정' : '로그인 / 회원가입'}
+              {account ? '내 계정' : '로그인'}
+            </button>
+            <button
+              type="button"
+              data-testid="tab-friends"
+              onClick={() => setSection('friends')}
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${
+                section === 'friends'
+                  ? 'bg-white text-slate-950 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-950'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              친구
+              {(incomingPendingRequests.length + incomingPendingInvites.length > 0) && (
+                <span className="px-1.5 py-0.2 rounded-full bg-red-600 text-white font-mono-num text-[10px]">
+                  {incomingPendingRequests.length + incomingPendingInvites.length}
+                </span>
+              )}
             </button>
             <button
               type="button"
               data-testid="tab-leaderboard"
               onClick={() => setSection('leaderboard')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-colors ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ${
                 section === 'leaderboard'
                   ? 'bg-white text-slate-950 shadow-xs'
                   : 'text-slate-600 hover:text-slate-950'
               }`}
             >
               <Trophy className="w-3.5 h-3.5" />
-              랭크 리더보드
+              랭킹
             </button>
           </div>
           <button
             type="button"
             aria-label="닫기"
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-md text-slate-500 hover:text-slate-950 hover:bg-slate-200/60 cursor-pointer"
+            className="w-8 h-8 flex items-center justify-center rounded-md text-slate-500 hover:text-slate-950 hover:bg-slate-200/60 cursor-pointer shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
@@ -380,6 +585,257 @@ export function AuthModal({
                     {busy ? '처리 중...' : authMode === 'login' ? '로그인' : '회원가입 완료'}
                   </button>
                 </form>
+              </div>
+            )
+          ) : section === 'friends' ? (
+            !account ? (
+              <div className="py-8 text-center space-y-3">
+                <p className="text-xs text-slate-600">
+                  친구 추가 및 사설방 초대 기능은 로그인 후 이용하실 수 있습니다.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setSection('auth')}
+                  className="px-4 py-2 rounded-lg bg-slate-950 hover:bg-slate-800 text-white text-xs font-semibold cursor-pointer"
+                >
+                  로그인 / 회원가입으로 이동
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Incoming Room Invites */}
+                {incomingPendingInvites.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-bold text-slate-800">
+                      받은 방 초대 ({incomingPendingInvites.length})
+                    </div>
+                    <div className="space-y-1.5">
+                      {incomingPendingInvites.map((inv) => (
+                        <div
+                          key={inv.id}
+                          className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-amber-300 bg-amber-50 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <span className="font-bold text-slate-900">{inv.fromNickname}</span>
+                            <span className="text-slate-600">
+                              님이 {inv.roomKind === 'link_duel' ? '1v1 링크전' : inv.roomMode === 'team' ? '사설 팀전' : '사설 개인전'}({inv.roomCode})에 초대함
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => handleAcceptInvite(inv)}
+                              className="px-2.5 py-1 rounded-md bg-slate-950 text-white font-semibold cursor-pointer"
+                            >
+                              참가
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => handleDeclineInvite(inv)}
+                              className="px-2 py-1 rounded-md border border-slate-300 bg-white text-slate-600 cursor-pointer"
+                            >
+                              거절
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Incoming Friend Requests */}
+                {incomingPendingRequests.length > 0 && (
+                  <div className="space-y-2">
+                    <div className="text-xs font-bold text-slate-800">
+                      받은 친구 요청 ({incomingPendingRequests.length})
+                    </div>
+                    <div className="divide-y divide-slate-200 border border-slate-200 rounded-lg overflow-hidden">
+                      {incomingPendingRequests.map((req) => (
+                        <div key={req.id} className="flex items-center justify-between px-3 py-2 bg-white text-xs">
+                          <div>
+                            <span className="font-semibold text-slate-900">{req.fromNickname}</span>
+                            <span className="text-[11px] text-slate-500 ml-1.5">친구 요청</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => handleRespondFriend(req, 'accepted')}
+                              className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-500 text-white font-semibold cursor-pointer"
+                            >
+                              <Check className="w-3 h-3" />
+                              수락
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => handleRespondFriend(req, 'declined')}
+                              className="px-2.5 py-1 rounded-md border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 cursor-pointer"
+                            >
+                              거절
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* My Friends List */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-bold text-slate-800">내 친구 ({acceptedFriends.length})</span>
+                    {canInviteFriends ? (
+                      <span className="text-[11px] text-emerald-700 font-semibold">
+                        방 {multiplayer?.roomCode} 초대 가능
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-slate-400">
+                        사설방/링크전 생성 시 친구 초대 가능
+                      </span>
+                    )}
+                  </div>
+                  {acceptedFriends.length === 0 ? (
+                    <div className="py-4 text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-lg">
+                      아직 등록된 친구가 없습니다. 아래에서 닉네임으로 검색해 친구를 추가해 보세요.
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-200 border border-slate-200 rounded-lg overflow-hidden">
+                      {acceptedFriends.map((req) => {
+                        const isSender = req.fromUid === account.uid;
+                        const friendUid = isSender ? req.toUid : req.fromUid;
+                        const friendNick = isSender ? req.toNickname : req.fromNickname;
+                        const friendChar = isSender ? req.toCharacter : req.fromCharacter;
+                        const charName = CHARACTER_LIST.find((c) => c.id === friendChar)?.name ?? friendChar;
+                        return (
+                          <div key={req.id} className="flex items-center justify-between px-3 py-2 bg-white text-xs">
+                            <div className="min-w-0">
+                              <div className="font-semibold text-slate-900 truncate">{friendNick}</div>
+                              <div className="text-[11px] text-slate-500">{charName}</div>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {canInviteFriends && (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => handleInviteToRoom(friendUid, friendNick)}
+                                  className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-950 hover:bg-slate-800 text-white font-semibold cursor-pointer"
+                                >
+                                  <Send className="w-3 h-3" />
+                                  방 초대
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                disabled={busy}
+                                aria-label="친구 삭제"
+                                onClick={() => handleRemoveFriend(req, '친구 삭제')}
+                                className="px-2 py-1 rounded-md border border-slate-200 bg-white hover:bg-red-50 text-slate-500 hover:text-red-600 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Outgoing Pending */}
+                {outgoingPendingRequests.length > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="text-xs font-semibold text-slate-600">
+                      보낸 친구 요청 ({outgoingPendingRequests.length})
+                    </div>
+                    <div className="divide-y divide-slate-200 border border-slate-200 rounded-lg overflow-hidden">
+                      {outgoingPendingRequests.map((req) => (
+                        <div key={req.id} className="flex items-center justify-between px-3 py-1.5 bg-slate-50 text-xs">
+                          <span className="text-slate-700 font-medium">{req.toNickname} (수락 대기)</span>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => handleRemoveFriend(req, '요청 취소')}
+                            className="px-2 py-0.5 rounded border border-slate-300 bg-white text-slate-600 hover:text-red-600 cursor-pointer"
+                          >
+                            취소
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Search Players to Add Friend */}
+                <div className="space-y-2 pt-2 border-t border-slate-200">
+                  <form onSubmit={handleSearchFriends} className="flex gap-2">
+                    <input
+                      type="text"
+                      data-testid="friend-search-input"
+                      maxLength={16}
+                      value={friendKeyword}
+                      onChange={(e) => setFriendKeyword(e.target.value)}
+                      placeholder="플레이어 닉네임 검색..."
+                      className="flex-1 px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-slate-900"
+                    />
+                    <button
+                      type="submit"
+                      data-testid="friend-search-btn"
+                      disabled={searching}
+                      className="flex items-center gap-1 px-3 py-2 rounded-lg bg-slate-950 hover:bg-slate-800 text-white text-xs font-semibold cursor-pointer"
+                    >
+                      <Search className="w-3.5 h-3.5" />
+                      검색
+                    </button>
+                  </form>
+
+                  <div className="max-h-44 overflow-y-auto divide-y divide-slate-200 border border-slate-200 rounded-lg">
+                    {searching ? (
+                      <div className="py-4 text-center text-xs text-slate-500">플레이어 검색 중...</div>
+                    ) : searchResults.length === 0 ? (
+                      <div className="py-4 text-center text-xs text-slate-400">일치하는 플레이어가 없습니다.</div>
+                    ) : (
+                      searchResults.map((player) => {
+                        const rel = friendRequests.find(
+                          (r) =>
+                            (r.fromUid === account.uid && r.toUid === player.uid) ||
+                            (r.toUid === account.uid && r.fromUid === player.uid)
+                        );
+                        return (
+                          <div key={player.uid} className="flex items-center justify-between px-3 py-2 text-xs bg-white">
+                            <div className="min-w-0">
+                              <div className="font-semibold text-slate-900 truncate">{player.nickname}</div>
+                              <div className="text-[11px] text-slate-500">
+                                {player.tier} · {player.elo} ELO
+                              </div>
+                            </div>
+                            {rel?.status === 'accepted' ? (
+                              <span className="px-2 py-1 rounded bg-emerald-50 text-emerald-700 font-semibold text-[11px]">
+                                친구
+                              </span>
+                            ) : rel?.status === 'pending' ? (
+                              <span className="px-2 py-1 rounded bg-slate-100 text-slate-500 font-semibold text-[11px]">
+                                대기 중
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => handleSendFriendRequest(player)}
+                                className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-950 hover:bg-slate-800 text-white font-semibold cursor-pointer"
+                              >
+                                <UserPlus className="w-3 h-3" />
+                                친추
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
               </div>
             )
           ) : (

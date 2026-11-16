@@ -20,6 +20,7 @@ import {
   MAP_ROTATION_SECONDS,
   canDamageTarget,
   getArenaBlocksForMap,
+  getJumpPadsForMap,
   getMapForElapsedTime,
   getNextMapId,
   tallyMapVotes,
@@ -60,7 +61,7 @@ test('GAME_MODES removes simulator and includes online_world and link_duel', () 
 test('computeMaceDamage scales strongly with fall height and triggers smash >= 2.0m', () => {
   const lowHit = computeMaceDamage(12, 1.0, 1.0, false);
   assert.equal(lowHit.isSmash, false);
-  assert.equal(lowHit.damage, 12);
+  assert.equal(lowHit.damage, 19);
 
   const mediumSmash = computeMaceDamage(12, 1.0, 6.0, false);
   assert.equal(mediumSmash.isSmash, true);
@@ -93,9 +94,13 @@ test('all 11 playable characters including ranged marksmen have distinct 6-item 
   }
   const kestrel = CHARACTER_LIST.find((c) => c.id === 'kestrel');
   const vexor = CHARACTER_LIST.find((c) => c.id === 'vexor');
+  const flame = CHARACTER_LIST.find((c) => c.id === 'flamefrags');
   assert.ok(kestrel && kestrel.loadout[0].id === 'bow');
   assert.ok(vexor && vexor.loadout[0].id === 'crossbow');
   assert.equal(ITEM_CATALOG.crossbow.maxCharges, 3);
+  assert.ok((ITEM_CATALOG.tnt_charge.damage ?? 0) >= 120);
+  assert.ok(flame && flame.loadout.some((i) => i.id === 'cobweb'));
+  assert.ok(flame && !flame.loadout.some((i) => i.id === 'tnt_charge'));
 });
 
 test('stackable cobweb charges consume down and recharge 1 at a time on cooldown', () => {
@@ -159,21 +164,24 @@ test('expanded 216m open world has outer biome landmarks and open origin spawn',
   assert.ok(Math.hypot(pushed.x - -18, pushed.z - -16) >= 1.6);
 });
 
-test('all 4 arena maps including Container Yard provide clear origin spawn and 3-minute rotation', () => {
-  assert.equal(MAP_ROTATION_SECONDS, 180);
+test('all 8 arena maps provide clear origin spawn, jump pads, and 15-minute rotation', () => {
+  assert.equal(MAP_ROTATION_SECONDS, 900);
+  assert.equal(MAP_ORDER.length, 8);
   assert.equal(MAP_ORDER[0], 'container_yard');
   for (const mapId of MAP_ORDER) {
     const blocks = getArenaBlocksForMap(mapId);
-    assert.ok(blocks.length >= 12, `${mapId} should have rich arena geometry`);
+    const pads = getJumpPadsForMap(mapId);
+    assert.ok(blocks.length >= 16, `${mapId} should have rich multi-tier arena geometry`);
+    assert.ok(pads.length >= 4, `${mapId} should include jump pads for vertical combat`);
     assert.equal(getSupportHeightAt(0, 0, 0.5, 0.55, blocks), 0, `${mapId} origin must stay open for safe spawn`);
   }
   const cyBlocks = getArenaBlocksForMap('container_yard');
   assert.ok(cyBlocks.some((b) => b.kind.startsWith('container_')));
 
   assert.equal(getMapForElapsedTime(0, 'container_yard'), 'container_yard');
-  assert.equal(getMapForElapsedTime(180, 'container_yard'), 'emerald_citadel');
-  assert.equal(getMapForElapsedTime(360, 'container_yard'), 'sky_dock');
-  assert.equal(getNextMapId('nether_foundry'), 'container_yard');
+  assert.equal(getMapForElapsedTime(900, 'container_yard'), 'emerald_citadel');
+  assert.equal(getMapForElapsedTime(1800, 'container_yard'), 'sky_dock');
+  assert.equal(getNextMapId('orbital_reactor'), 'container_yard');
 });
 
 test('tallyMapVotes picks majority map and canDamageTarget blocks friendly fire in team mode', () => {
@@ -192,3 +200,72 @@ test('tickCooldowns decrements cleanly down to zero', () => {
   tickCooldowns(cds, 0.5);
   assert.deepEqual(cds, [1.0, 0, 0]);
 });
+
+test('bot difficulty scales cooldowns, aim jitter, and shield block reaction', async () => {
+  const { getBotDifficultyConfig } = await import('./partyModes');
+  const easy = getBotDifficultyConfig('easy');
+  const medium = getBotDifficultyConfig('medium');
+  const hard = getBotDifficultyConfig('hard');
+
+  assert.ok(easy.attackCooldownMult > medium.attackCooldownMult);
+  assert.ok(hard.attackCooldownMult < medium.attackCooldownMult);
+  assert.ok(easy.shieldBlockChance < medium.shieldBlockChance);
+  assert.ok(hard.shieldBlockChance > medium.shieldBlockChance);
+  assert.equal(easy.allowAerialMace, false);
+  assert.equal(hard.allowAerialMace, true);
+});
+
+test('computeWaterBurnHealing heals when burning in water and ignores dry or non-burning states', async () => {
+  const { computeWaterBurnHealing } = await import('./partyModes');
+  const resHealed = computeWaterBurnHealing(true, true, 50, 100, 28);
+  assert.equal(resHealed.shouldHeal, true);
+  assert.equal(resHealed.nextHp, 78);
+  assert.equal(resHealed.healDelta, 28);
+
+  const resDry = computeWaterBurnHealing(true, false, 50, 100, 28);
+  assert.equal(resDry.shouldHeal, false);
+  assert.equal(resDry.nextHp, 50);
+
+  const resNoBurn = computeWaterBurnHealing(false, true, 50, 100, 28);
+  assert.equal(resNoBurn.shouldHeal, false);
+});
+
+test('getKnockoutRoundInfo, computeOneShotDamage, 1+1+1 Random Arsenal, and hostility helpers work properly', async () => {
+  const {
+    getKnockoutRoundInfo,
+    computeOneShotDamage,
+    getRandomArsenalLoadout,
+    isHostileTarget,
+    normalizeCustomBots,
+  } = await import('./partyModes');
+  const r1 = getKnockoutRoundInfo(1);
+  assert.equal(r1.quota, 1);
+  assert.equal(r1.durationSec, 45);
+
+  const r2 = getKnockoutRoundInfo(2);
+  assert.equal(r2.quota, 2);
+
+  assert.equal(computeOneShotDamage(15, false), 15);
+  assert.equal(computeOneShotDamage(15, true), 350);
+
+  const setA = getRandomArsenalLoadout(0);
+  assert.equal(setA.loadout.length, 6);
+  assert.ok(setA.name.length > 0);
+  assert.ok(setA.loadout[0] !== null);
+  assert.ok(setA.loadout[1] !== null);
+  assert.ok(setA.loadout[2] !== null);
+  assert.equal(setA.loadout[3], null);
+  assert.equal(setA.loadout[4], null);
+  assert.equal(setA.loadout[5], null);
+
+  assert.equal(isHostileTarget('team', 'red', 'red'), false);
+  assert.equal(isHostileTarget('team', 'red', 'blue'), true);
+  assert.equal(isHostileTarget('ffa', 'red', 'red'), true);
+
+  const normalized = normalizeCustomBots(
+    [{ id: 'b1', name: 'Bot 1', characterId: 'wemmbu', team: 'ffa' }],
+    'team'
+  );
+  assert.equal(normalized[0].team, 'red');
+});
+

@@ -15,10 +15,11 @@ import {
   Feather,
   ListOrdered,
   MapPin,
+  DoorOpen,
 } from 'lucide-react';
-import { CHARACTERS } from '../game/characters';
-import { MAP_DEFINITIONS } from '../game/maps';
-import type { HudSnapshot } from '../game/types';
+import { CHARACTER_LIST, CHARACTERS } from '../game/characters';
+import { MAP_DEFINITIONS, MAP_ORDER } from '../game/maps';
+import type { CharacterId, HudSnapshot, MapId } from '../game/types';
 import { WeaponIcon } from './WeaponIcons';
 
 interface GameHudProps {
@@ -29,6 +30,7 @@ interface GameHudProps {
   onOpenSettings: () => void;
   onPause: () => void;
   onRestart: () => void;
+  onExitMatch?: () => void;
   onSendChat?: (text: string) => void;
   onToggleMobileSprint?: () => void;
   onMobileElytra?: () => void;
@@ -38,6 +40,11 @@ interface GameHudProps {
   onMobileBlock?: (pressed: boolean) => void;
   onMobileMove?: (forward: number, right: number) => void;
   onMobileLook?: (dx: number, dy: number) => void;
+  onChangeCharacter?: (id: CharacterId) => void;
+  onChangeMap?: (mapId: MapId) => void;
+  onSpectatorPrev?: () => void;
+  onSpectatorNext?: () => void;
+  onToggleSpectatorMode?: () => void;
 }
 
 export function GameHud({
@@ -48,6 +55,7 @@ export function GameHud({
   onOpenSettings,
   onPause,
   onRestart,
+  onExitMatch,
   onSendChat,
   onToggleMobileSprint,
   onMobileElytra,
@@ -57,6 +65,11 @@ export function GameHud({
   onMobileBlock,
   onMobileMove,
   onMobileLook,
+  onChangeCharacter,
+  onChangeMap,
+  onSpectatorPrev,
+  onSpectatorNext,
+  onToggleSpectatorMode,
 }: GameHudProps) {
   const prof = CHARACTERS[hud.characterId];
   const mapDef = MAP_DEFINITIONS[hud.currentMapId] ?? MAP_DEFINITIONS.container_yard;
@@ -64,12 +77,16 @@ export function GameHud({
   const mapClock = `${String(Math.floor(mapRem / 60)).padStart(2, '0')}:${String(mapRem % 60).padStart(2, '0')}`;
   const hpPct = Math.max(0, Math.min(100, (hud.hp / hud.maxHp) * 100));
   const absPct = Math.max(0, Math.min(100, (hud.absorption / 30) * 100));
-  const activeWeapon = hud.loadout[hud.activeSlot] ?? hud.loadout[0];
+  const activeWeapon = hud.loadout[hud.activeSlot] ?? hud.loadout.find((s) => s !== null) ?? null;
   const lowHp = hud.hp <= hud.maxHp * 0.3;
 
   const [showTouchControls, setShowTouchControls] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.matchMedia?.('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+  });
+  const [isCompactViewport, setIsCompactViewport] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.innerWidth < 640;
   });
   const [mobileSprintOn, setMobileSprintOn] = useState(false);
   const [scoreboardHeld, setScoreboardHeld] = useState(false);
@@ -82,6 +99,12 @@ export function GameHud({
   const [joystickCenter, setJoystickCenter] = useState<{ x: number; y: number } | null>(null);
   const [joystickOffset, setJoystickOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const lookTouchRef = useRef<{ id: number; x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    const onResize = () => setIsCompactViewport(window.innerWidth < 640);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   useEffect(() => {
     if (chatScrollRef.current) {
@@ -202,21 +225,64 @@ export function GameHud({
         />
       )}
 
+      {!hud.multiplayer.roomCode && hud.mode === 'ffa' && (
+        <div
+          data-testid="practice-switcher-left"
+          className="fixed top-[128px] sm:top-[154px] left-2.5 sm:left-4 z-20 flex flex-wrap sm:flex-nowrap items-center gap-1.5 pointer-events-auto bg-white/95 border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-sm text-xs max-w-[192px] sm:max-w-none"
+        >
+          <span className="font-bold text-slate-700 whitespace-nowrap">연습장</span>
+          <select
+            data-testid="practice-char-select"
+            aria-label="연습장 캐릭터 변경"
+            value={hud.characterId}
+            onChange={(e) => {
+              e.currentTarget.blur();
+              onChangeCharacter?.(e.target.value as CharacterId);
+            }}
+            className="px-2 py-1 rounded-lg border border-slate-300 bg-white font-semibold text-slate-900 cursor-pointer text-[11px]"
+            title="캐릭터 즉시 변경"
+          >
+            {CHARACTER_LIST.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <select
+            data-testid="practice-map-select"
+            aria-label="연습장 맵 변경"
+            value={hud.currentMapId}
+            onChange={(e) => {
+              e.currentTarget.blur();
+              onChangeMap?.(e.target.value as MapId);
+            }}
+            className="px-2 py-1 rounded-lg border border-slate-300 bg-white font-semibold text-slate-900 cursor-pointer text-[11px]"
+            title="맵 즉시 변경"
+          >
+            {MAP_ORDER.map((mId) => (
+              <option key={mId} value={mId}>
+                {MAP_DEFINITIONS[mId].name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* Top-Left: Clean Light Vitality & Map Strip */}
-      <div className="fixed top-3 left-3 sm:top-4 sm:left-4 w-64 sm:w-76 bg-white/95 border border-slate-200 rounded-xl px-3.5 py-2.5 shadow-sm text-slate-900">
-        <div className="flex items-center justify-between gap-2 pb-1.5 mb-1.5 border-b border-slate-100 text-[11px]">
-          <div className="flex items-center gap-1.5 min-w-0">
+      <div className="fixed top-2.5 left-2.5 sm:top-4 sm:left-4 w-[156px] sm:w-76 bg-white/95 border border-slate-200 rounded-xl px-2.5 sm:px-3.5 py-2 sm:py-2.5 shadow-sm text-slate-900">
+        <div className="flex items-center justify-between gap-1.5 pb-1 mb-1 sm:pb-1.5 sm:mb-1.5 border-b border-slate-100 text-[10px] sm:text-[11px]">
+          <div className="flex items-center gap-1 min-w-0">
             <MapPin className="w-3 h-3 text-blue-600 shrink-0" />
             <span className="font-display font-bold text-slate-900 truncate" data-testid="hud-map-name">
               {mapDef.name}
             </span>
             {hud.roomMode === 'team' && (hud.playerTeam === 'red' || hud.playerTeam === 'blue') && (
               <span
-                className={`px-1.5 py-0.5 rounded text-[10px] font-bold text-white shrink-0 ${
+                className={`px-1 py-0.5 rounded text-[9px] sm:text-[10px] font-bold text-white shrink-0 ${
                   hud.playerTeam === 'red' ? 'bg-red-600' : 'bg-blue-600'
                 }`}
               >
-                {hud.playerTeam === 'red' ? '레드팀' : '블루팀'}
+                {hud.playerTeam === 'red' ? '레드' : '블루'}
               </span>
             )}
           </div>
@@ -229,18 +295,18 @@ export function GameHud({
           </span>
         </div>
 
-        <div className="flex items-baseline justify-between mb-1.5">
-          <div className="flex items-center gap-2">
+        <div className="flex items-baseline justify-between gap-1 mb-1 sm:mb-1.5">
+          <div className="flex items-center gap-1.5 min-w-0">
             <span
-              className="w-2.5 h-2.5 rounded-xs border border-black/20"
+              className="w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-xs border border-black/20 shrink-0"
               style={{ backgroundColor: prof.trimColor }}
             />
-            <span className="font-display text-sm font-bold tracking-tight text-slate-950">
+            <span className="font-display text-xs sm:text-sm font-bold tracking-tight text-slate-950 truncate">
               {prof.name}
             </span>
           </div>
-          <span className="font-mono-num text-xs font-bold text-slate-800">
-            {hud.hp} / {hud.maxHp}
+          <span className="font-mono-num text-[11px] sm:text-xs font-bold text-slate-800 shrink-0">
+            {hud.hp}/{hud.maxHp}
             {hud.absorption > 0 ? <span className="text-amber-600"> +{hud.absorption}</span> : null}
           </span>
         </div>
@@ -294,12 +360,12 @@ export function GameHud({
       </div>
 
       {/* Top-Right: Counters + Compact Utility Buttons */}
-      <div className="fixed top-3 right-3 sm:top-4 sm:right-4 flex flex-col sm:flex-row items-end sm:items-start gap-2">
-        <div className="bg-white/95 border border-slate-200 rounded-xl px-3 py-2 flex items-center gap-3 sm:gap-4 shadow-sm text-slate-900">
+      <div className="fixed top-2.5 right-2.5 sm:top-4 sm:right-4 flex flex-col sm:flex-row items-end sm:items-start gap-1.5 sm:gap-2 max-w-[202px] sm:max-w-none">
+        <div className="bg-white/95 border border-slate-200 rounded-xl px-2.5 sm:px-3 py-1.5 sm:py-2 flex items-center gap-2.5 sm:gap-4 shadow-sm text-slate-900">
           {hud.settings.showFps && (
             <div>
               <div className="text-[10px] font-medium text-slate-500">FPS</div>
-              <div className="font-display font-mono-num text-base sm:text-lg font-bold text-slate-900 leading-tight">
+              <div className="font-display font-mono-num text-sm sm:text-lg font-bold text-slate-900 leading-tight">
                 {hud.fps}
               </div>
             </div>
@@ -308,7 +374,7 @@ export function GameHud({
           {hud.mode === 'online_world' && (
             <div>
               <div className="text-[10px] font-medium text-slate-500">접속</div>
-              <div className="font-display font-mono-num text-base sm:text-lg font-bold text-emerald-700 leading-tight">
+              <div className="font-display font-mono-num text-sm sm:text-lg font-bold text-emerald-700 leading-tight">
                 {Math.max(1, hud.multiplayer.peers.length)}명
               </div>
             </div>
@@ -317,7 +383,7 @@ export function GameHud({
           {(hud.mode === 'multiplayer' || hud.mode === 'link_duel') && hud.multiplayer.roomCode && (
             <div>
               <div className="text-[10px] font-medium text-slate-500">코드</div>
-              <div className="font-display font-mono-num text-base sm:text-lg font-bold text-slate-900 leading-tight">
+              <div className="font-display font-mono-num text-sm sm:text-lg font-bold text-slate-900 leading-tight">
                 {hud.multiplayer.roomCode}
               </div>
             </div>
@@ -325,23 +391,23 @@ export function GameHud({
 
           <div>
             <div className="text-[10px] font-medium text-slate-500">처치</div>
-            <div className="font-display font-mono-num text-base sm:text-lg font-bold text-slate-950 leading-tight">
+            <div className="font-display font-mono-num text-sm sm:text-lg font-bold text-slate-950 leading-tight">
               {hud.kills}
               {hud.mode !== 'online_world' && (
-                <span className="text-xs text-slate-400">/{hud.targetKills}</span>
+                <span className="text-[11px] sm:text-xs text-slate-400">/{hud.targetKills}</span>
               )}
             </div>
           </div>
 
           <div>
             <div className="text-[10px] font-medium text-slate-500">시간</div>
-            <div className="font-display font-mono-num text-base sm:text-lg font-bold text-slate-700 leading-tight">
+            <div className="font-display font-mono-num text-sm sm:text-lg font-bold text-slate-700 leading-tight">
               {hud.elapsedTime}s
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 pointer-events-auto">
+        <div className="flex flex-wrap justify-end items-center gap-1 sm:gap-1.5 pointer-events-auto">
           <button
             type="button"
             tabIndex={-1}
@@ -352,13 +418,13 @@ export function GameHud({
               e.currentTarget.blur();
               setScoreboardToggled((v) => !v);
             }}
-            className={`w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl border shadow-sm cursor-pointer transition-colors ${
+            className={`w-7.5 h-7.5 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg sm:rounded-xl border shadow-sm cursor-pointer transition-colors ${
               showScoreboard
                 ? 'bg-slate-950 border-slate-950 text-white'
                 : 'bg-white/95 border-slate-200 text-slate-700 hover:text-slate-950'
             }`}
           >
-            <ListOrdered className="w-4 h-4" />
+            <ListOrdered className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
 
           <button
@@ -371,9 +437,9 @@ export function GameHud({
               e.currentTarget.blur();
               onOpenSettings();
             }}
-            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl bg-white/95 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
+            className="w-7.5 h-7.5 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg sm:rounded-xl bg-white/95 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
           >
-            <Settings className="w-4 h-4" />
+            <Settings className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
 
           <button
@@ -385,13 +451,13 @@ export function GameHud({
               e.currentTarget.blur();
               setShowTouchControls((v) => !v);
             }}
-            className={`w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl border shadow-sm cursor-pointer transition-colors ${
+            className={`w-7.5 h-7.5 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg sm:rounded-xl border shadow-sm cursor-pointer transition-colors ${
               showTouchControls
                 ? 'bg-slate-950 border-slate-950 text-white'
                 : 'bg-white/95 border-slate-200 text-slate-700 hover:text-slate-950'
             }`}
           >
-            <Gamepad2 className="w-4 h-4" />
+            <Gamepad2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
 
           <button
@@ -403,9 +469,9 @@ export function GameHud({
               e.currentTarget.blur();
               onToggleMute();
             }}
-            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl bg-white/95 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
+            className="w-7.5 h-7.5 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg sm:rounded-xl bg-white/95 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
           >
-            {hud.muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            {hud.muted ? <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
           </button>
 
           {hud.mode !== 'online_world' &&
@@ -420,9 +486,9 @@ export function GameHud({
                   e.currentTarget.blur();
                   onRestart();
                 }}
-                className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl bg-white/95 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
+                className="w-7.5 h-7.5 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg sm:rounded-xl bg-white/95 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
               >
-                <RotateCcw className="w-4 h-4" />
+                <RotateCcw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               </button>
             )}
 
@@ -435,20 +501,69 @@ export function GameHud({
               e.currentTarget.blur();
               onPause();
             }}
-            className="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-xl bg-white/95 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
+            className="w-7.5 h-7.5 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg sm:rounded-xl bg-white/95 border border-slate-200 text-slate-700 hover:text-slate-950 cursor-pointer shadow-sm"
           >
-            <Pause className="w-4 h-4" />
+            <Pause className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
           </button>
+
+          {onExitMatch && (
+            <button
+              type="button"
+              tabIndex={-1}
+              data-testid="hud-exit-match-btn"
+              aria-label="게임 나가기"
+              title="게임 나가기 (대기실/타이틀로 복귀)"
+              onClick={(e) => {
+                e.currentTarget.blur();
+                onExitMatch();
+              }}
+              className="h-7.5 sm:h-10 px-2 sm:px-3 flex items-center justify-center gap-1 rounded-lg sm:rounded-xl bg-white/95 border border-red-200 text-red-700 hover:bg-red-50 text-[11px] font-bold cursor-pointer shadow-sm whitespace-nowrap"
+            >
+              <DoorOpen className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">게임 나가기</span>
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Top-Center Competitive Score Banner (Valorant / CS:GO style) */}
+      {/* Top-Center Competitive & Party Mode Banner */}
       {(hud.mode === 'multiplayer' || hud.mode === 'link_duel' || hud.roomMode === 'team') && (
         <div
           data-testid="top-center-score-banner"
-          className="fixed top-3 left-1/2 -translate-x-1/2 pointer-events-none z-15 bg-white/95 border border-slate-200 rounded-2xl px-5 py-2 shadow-md flex items-center gap-4 text-slate-900"
+          className="fixed top-[128px] sm:top-3 left-1/2 -translate-x-1/2 pointer-events-none z-15 bg-white/95 border border-slate-200 rounded-2xl px-3 sm:px-5 py-1.5 sm:py-2 shadow-md flex items-center gap-3 sm:gap-4 text-slate-900 whitespace-nowrap"
         >
-          {hud.roomMode === 'team' ? (
+          {hud.mode === 'multiplayer' && hud.partyMode === 'boss_raid' ? (
+            <div className="flex flex-col items-center gap-1 min-w-[200px] sm:min-w-[280px]">
+              <div className="w-full flex items-center justify-between gap-3 text-xs font-display font-bold">
+                <span className="text-red-700">👹 {hud.bossName || '보스 레이드'}</span>
+                <span className="font-mono-num text-slate-900">
+                  {hud.bossCurrentHp ?? 650} / {hud.bossMaxHp ?? 650}
+                </span>
+              </div>
+              <div className="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
+                <div
+                  className="h-full bg-red-600 transition-all duration-100"
+                  style={{
+                    width: `${Math.max(
+                      0,
+                      Math.min(100, ((hud.bossCurrentHp ?? 0) / Math.max(1, hud.bossMaxHp ?? 650)) * 100)
+                    )}%`,
+                  }}
+                />
+              </div>
+            </div>
+          ) : hud.mode === 'multiplayer' && hud.partyMode === 'knockout' ? (
+            <div className="flex items-center gap-2.5 sm:gap-3.5 text-xs sm:text-sm font-display font-bold">
+              <span className="px-2 py-0.5 rounded bg-amber-500 text-slate-950 text-[11px]">
+                R{hud.knockoutRound ?? 1} 녹아웃
+              </span>
+              <span className="font-mono-num text-red-600">{hud.knockoutRemainingSec ?? 0}s</span>
+              <span className="text-slate-700">
+                할당 <strong className="font-mono-num text-slate-950">{hud.kills}/{hud.knockoutQuota ?? 1}킬</strong>
+              </span>
+              <span className="text-slate-500 text-[11px]">생존 {hud.knockoutAliveCount ?? 1}명</span>
+            </div>
+          ) : hud.roomMode === 'team' ? (
             <div className="flex items-center gap-3 text-xs sm:text-sm font-display font-bold">
               <span className="flex items-center gap-1.5 text-red-600">
                 <span className="w-2.5 h-2.5 rounded-full bg-red-600 inline-block" />
@@ -465,8 +580,12 @@ export function GameHud({
                 블루팀
                 <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block" />
               </span>
-              <span className="text-slate-400 font-normal text-[11px] ml-2 pl-2 border-l border-slate-200">
-                목표 {hud.targetKills}킬
+              <span className="text-slate-700 font-semibold text-[11px] ml-2 pl-2 border-l border-slate-300">
+                {hud.partyMode === 'random_arsenal'
+                  ? '랜덤 무기'
+                  : hud.partyMode === 'one_shot'
+                    ? '원샷원킬'
+                    : `목표 ${hud.targetKills}킬`}
               </span>
             </div>
           ) : hud.mode === 'link_duel' ? (
@@ -482,7 +601,13 @@ export function GameHud({
             </div>
           ) : (
             <div className="flex items-center gap-3 text-xs sm:text-sm font-display font-bold">
-              <span className="text-slate-700">⚔️ 매치 킬 수</span>
+              <span className="text-slate-700">
+                {hud.partyMode === 'random_arsenal'
+                  ? '🎲 랜덤 무기'
+                  : hud.partyMode === 'one_shot'
+                    ? '⚡ 원샷원킬'
+                    : '⚔️ 매치 킬 수'}
+              </span>
               <span className="font-mono-num text-slate-950 text-base">
                 {hud.kills} / {hud.targetKills} 킬
               </span>
@@ -491,9 +616,45 @@ export function GameHud({
         </div>
       )}
 
+      {/* Overwatch-style Multi-Kill Streak Banner */}
+      {hud.multiKillTimer > 0 && hud.multiKillText && (
+        <div
+          data-testid="multikill-banner"
+          className="fixed top-[174px] sm:top-[68px] left-1/2 -translate-x-1/2 pointer-events-none z-25"
+        >
+          <div className="flex items-center gap-2.5 px-5 py-2 rounded-2xl bg-slate-950 text-white border-2 border-amber-400 shadow-lg">
+            <span className="font-display font-mono-num text-base sm:text-lg font-extrabold text-amber-400">
+              {hud.multiKillStreak}x
+            </span>
+            <span className="font-display text-sm sm:text-base font-extrabold tracking-wide">
+              {hud.multiKillText}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Victory / Defeat Ceremony Cutscene Banner */}
+      {hud.ceremonyActive && hud.ceremonyTitle && (
+        <div
+          data-testid="ceremony-banner"
+          className="fixed bottom-24 sm:bottom-28 left-1/2 -translate-x-1/2 pointer-events-none z-30 max-w-[calc(100vw-24px)]"
+        >
+          <div className="px-6 py-3 rounded-2xl bg-white/95 border-2 border-amber-400 shadow-xl text-center">
+            <div className="font-display text-lg sm:text-2xl font-extrabold text-slate-950">
+              {hud.ceremonyTitle}
+            </div>
+            {hud.ceremonySubtitle && (
+              <div className="text-xs sm:text-sm font-semibold text-slate-600 mt-0.5">
+                {hud.ceremonySubtitle}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Transient Callout */}
-      {hud.calloutTimer > 0 && hud.calloutText && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 pointer-events-none">
+      {hud.calloutTimer > 0 && hud.calloutText && !hud.ceremonyActive && (
+        <div className="fixed top-[174px] sm:top-20 left-1/2 -translate-x-1/2 pointer-events-none">
           <div className="font-display text-sm sm:text-base font-bold px-4 py-1.5 rounded-lg bg-white/95 border border-slate-200 text-slate-900 shadow-sm">
             {hud.calloutText}
           </div>
@@ -502,7 +663,7 @@ export function GameHud({
 
       {/* Kill Feed (Modern Competitive Shooter Style with Weapon Icons & Team Colored Names) */}
       {hud.killFeed.length > 0 && (
-        <div className="fixed top-20 right-4 flex flex-col items-end gap-1.5 pointer-events-none z-20">
+        <div className="fixed top-[174px] sm:top-20 right-2.5 sm:right-4 flex flex-col items-end gap-1.5 pointer-events-none z-20">
           {hud.killFeed.map((item) => {
             const redKiller = item.killerTeam === 'red';
             const blueKiller = item.killerTeam === 'blue';
@@ -522,7 +683,7 @@ export function GameHud({
             return (
               <div
                 key={item.id}
-                className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-white/95 border border-slate-200 shadow-sm text-slate-800 backdrop-blur-xs"
+                className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-white/95 border border-slate-200 shadow-sm text-slate-800"
               >
                 {item.killerName ? (
                   <>
@@ -541,7 +702,8 @@ export function GameHud({
         </div>
       )}
 
-      {/* Center Crosshair + Hitmarker + 3s Cobweb Break Progress */}
+      {/* Center Crosshair + Hitmarker + 3s Cobweb Break Progress (hidden while spectating) */}
+      {!hud.isSpectating && (
       <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none flex items-center justify-center">
         <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
           <line x1="13" y1="3" x2="13" y2="9" stroke="#0f172a" strokeWidth="2.5" strokeOpacity="0.65" />
@@ -573,7 +735,7 @@ export function GameHud({
           </div>
         )}
 
-        {activeWeapon.id === 'mace' && hud.fallHeightReady >= 2 && (
+        {activeWeapon?.id === 'mace' && hud.fallHeightReady >= 2 && (
           <div className="absolute top-7 whitespace-nowrap font-mono-num text-xs font-bold text-white hud-text-stroke">
             SMASH +{hud.fallHeightReady}m
           </div>
@@ -602,6 +764,7 @@ export function GameHud({
           </div>
         )}
       </div>
+      )}
 
       {/* Live Tab Scoreboard Overlay */}
       {showScoreboard && (
@@ -735,16 +898,20 @@ export function GameHud({
       <div
         data-testid="hud-chat-panel"
         className={`fixed pointer-events-auto z-20 ${
-          showTouchControls ? 'top-36 left-3 w-60' : 'bottom-4 left-4 w-76'
+          showTouchControls || isCompactViewport
+            ? !hud.multiplayer.roomCode && hud.mode === 'ffa'
+              ? 'top-[224px] left-2.5 w-48'
+              : 'top-[174px] left-2.5 w-48'
+            : 'bottom-4 left-4 w-76'
         }`}
       >
-        {showTouchControls && !chatOpenMobile ? (
+        {(showTouchControls || isCompactViewport) && !chatOpenMobile ? (
           <button
             type="button"
             onClick={() => setChatOpenMobile(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/95 border border-slate-200 text-xs font-semibold text-slate-800 shadow-sm cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/95 border border-slate-200 text-[11px] font-semibold text-slate-800 shadow-sm cursor-pointer"
           >
-            <MessageSquare className="w-3.5 h-3.5" />
+            <MessageSquare className="w-3 h-3" />
             채팅 ({hud.chatMessages.length})
           </button>
         ) : (
@@ -754,7 +921,7 @@ export function GameHud({
                 <MessageSquare className="w-3 h-3" />
                 월드 채팅
               </span>
-              {showTouchControls && (
+              {(showTouchControls || isCompactViewport) && (
                 <button
                   type="button"
                   onClick={() => setChatOpenMobile(false)}
@@ -949,21 +1116,94 @@ export function GameHud({
         </>
       )}
 
-      {/* Bottom-Center: Clean 6-Slot Hotbar */}
+      {/* Bottom-Center: Spectator Control Bar OR 6-Slot Hotbar */}
+      {hud.isSpectating ? (
+        <div
+          data-testid="spectator-hud"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-25 pointer-events-auto bg-slate-950/95 border border-slate-700 text-white rounded-2xl px-4 py-3 shadow-xl flex flex-wrap items-center justify-center gap-3 text-xs max-w-[calc(100vw-24px)]"
+        >
+          <div className="flex items-center gap-2">
+            <span className="px-2 py-0.5 rounded bg-amber-500 text-slate-950 font-bold">관전 모드</span>
+            <span className="font-semibold text-slate-200">
+              {hud.spectatorViewMode === 'follow'
+                ? `대상: ${hud.spectatorTargetName || '생존자 탐색 중'} (${hud.spectatorTargetHp ?? 0}/${hud.spectatorTargetMaxHp ?? 100} HP · ${hud.spectatorTargetKills ?? 0}킬)`
+                : '자유 비행 (WASD + Space/Shift)'}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {hud.spectatorViewMode === 'follow' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onSpectatorPrev?.()}
+                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 font-semibold cursor-pointer"
+                >
+                  &lt; 이전 (A)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onSpectatorNext?.()}
+                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 font-semibold cursor-pointer"
+                >
+                  다음 (D) &gt;
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => onToggleSpectatorMode?.()}
+              className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 font-semibold cursor-pointer"
+            >
+              시점 전환 (V)
+            </button>
+            {onExitMatch && (
+              <button
+                type="button"
+                onClick={onExitMatch}
+                className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-500 font-semibold cursor-pointer"
+              >
+                게임 나가기
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
       <div className="fixed bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 z-20 max-w-[calc(100vw-16px)]">
         <div className="text-xs font-medium text-slate-900 bg-white/95 border border-slate-200 rounded-md px-2.5 py-0.5 shadow-xs whitespace-nowrap">
-          {activeWeapon.name}
-          {(hud.slotMaxCharges[hud.activeSlot] ?? 1) > 1 && (
-            <span className="text-amber-700 font-mono-num ml-1.5 font-semibold">
-              x{hud.slotCharges[hud.activeSlot]}/{hud.slotMaxCharges[hud.activeSlot]}
-            </span>
+          {activeWeapon ? (
+            <>
+              {activeWeapon.name}
+              {(hud.slotMaxCharges[hud.activeSlot] ?? 1) > 1 && (
+                <span className="text-amber-700 font-mono-num ml-1.5 font-semibold">
+                  x{hud.slotCharges[hud.activeSlot]}/{hud.slotMaxCharges[hud.activeSlot]}
+                </span>
+              )}
+              <span className="text-slate-400 mx-1.5">·</span>
+              <span className="text-slate-600">{activeWeapon.role}</span>
+            </>
+          ) : (
+            <span className="text-slate-400">빈 슬롯</span>
           )}
-          <span className="text-slate-400 mx-1.5">·</span>
-          <span className="text-slate-600">{activeWeapon.role}</span>
         </div>
 
         <div className="flex items-center gap-1 sm:gap-1.5 bg-white/95 border border-slate-200 rounded-xl p-1.5 pointer-events-auto shadow-sm overflow-x-auto max-w-full">
           {hud.loadout.map((slot, idx) => {
+            if (!slot) {
+              return (
+                <div
+                  key={`empty-${idx}`}
+                  data-slot-index={idx}
+                  aria-label={`${idx + 1}번 빈 슬롯`}
+                  className="relative w-10 h-10 sm:w-13 sm:h-13 rounded-lg border border-dashed border-slate-200 bg-slate-50/50 flex flex-col items-center justify-center text-slate-300 select-none"
+                >
+                  <span className="absolute top-0.5 left-1 sm:left-1.5 font-mono-num text-[9px] sm:text-[10px]">
+                    {idx + 1}
+                  </span>
+                  <span className="text-xs font-bold">-</span>
+                </div>
+              );
+            }
+
             const active = hud.activeSlot === idx;
             const cd = hud.slotCooldowns[idx] ?? 0;
             const maxCd = hud.slotMaxCooldowns[idx] ?? 0;
@@ -986,14 +1226,14 @@ export function GameHud({
                   e.currentTarget.blur();
                   onSelectSlot(idx);
                 }}
-                className={`relative w-12 h-12 sm:w-13 sm:h-13 rounded-lg border flex flex-col items-center justify-center transition-colors cursor-pointer overflow-hidden ${
+                className={`relative w-10 h-10 sm:w-13 sm:h-13 rounded-lg border flex flex-col items-center justify-center transition-colors cursor-pointer overflow-hidden ${
                   active
                     ? 'bg-slate-900 border-slate-900 text-white'
                     : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-400'
                 }`}
               >
                 <span
-                  className={`absolute top-0.5 left-1.5 font-mono-num text-[10px] ${
+                  className={`absolute top-0.5 left-1 sm:left-1.5 font-mono-num text-[9px] sm:text-[10px] ${
                     active ? 'text-slate-300' : 'text-slate-400'
                   }`}
                 >
@@ -1002,7 +1242,7 @@ export function GameHud({
 
                 {isStackable && (
                   <span
-                    className={`absolute top-0.5 right-1 font-mono-num text-[10px] font-bold leading-none ${
+                    className={`absolute top-0.5 right-1 font-mono-num text-[9px] sm:text-[10px] font-bold leading-none ${
                       charges > 0
                         ? active
                           ? 'text-amber-300'
@@ -1014,7 +1254,7 @@ export function GameHud({
                   </span>
                 )}
 
-                <WeaponIcon id={slot.id} className="w-6 h-6" />
+                <WeaponIcon id={slot.id} className="w-5 h-5 sm:w-6 sm:h-6" />
 
                 {isRechargingWithStock && (
                   <div className="absolute inset-x-0 bottom-0 h-1 bg-slate-200">
@@ -1047,6 +1287,7 @@ export function GameHud({
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }

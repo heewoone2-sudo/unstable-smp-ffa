@@ -26,9 +26,26 @@ type CharacterId =
   | 'kestrel'
   | 'vexor';
 
-type MapId = 'container_yard' | 'emerald_citadel' | 'sky_dock' | 'nether_foundry';
-const MAP_ORDER: MapId[] = ['container_yard', 'emerald_citadel', 'sky_dock', 'nether_foundry'];
-const MAP_ROTATION_MS = 180_000;
+type MapId =
+  | 'container_yard'
+  | 'emerald_citadel'
+  | 'sky_dock'
+  | 'nether_foundry'
+  | 'cyber_nexus'
+  | 'frost_bastion'
+  | 'ancient_temple'
+  | 'orbital_reactor';
+const MAP_ORDER: MapId[] = [
+  'container_yard',
+  'emerald_citadel',
+  'sky_dock',
+  'nether_foundry',
+  'cyber_nexus',
+  'frost_bastion',
+  'ancient_temple',
+  'orbital_reactor',
+];
+const MAP_ROTATION_MS = 900_000;
 
 const CHARACTER_HP: Record<CharacterId, number> = {
   wemmbu: 112,
@@ -65,8 +82,16 @@ interface RoomPeer {
   maxHp: number;
   absorption: number;
   alive: boolean;
+  activeSlot?: string;
   votedMap?: MapId;
   respawnTimer: NodeJS.Timeout | null;
+}
+
+interface CustomBotSlotRecord {
+  id: string;
+  name: string;
+  characterId: CharacterId;
+  team: 'red' | 'blue' | 'ffa';
 }
 
 interface RoomState {
@@ -76,6 +101,9 @@ interface RoomState {
   hostId: string;
   status: 'lobby' | 'playing';
   includeBots: boolean;
+  customBots?: CustomBotSlotRecord[];
+  botDifficulty?: 'easy' | 'medium' | 'hard';
+  partyMode?: 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot';
   targetKills: number;
   selectedMap: MapId;
   mapVotes: Map<string, MapId>;
@@ -123,12 +151,31 @@ function broadcastRoom(room: RoomState, payload: Record<string, unknown>, exclud
   }
 }
 
+function sanitizeCustomBots(raw: unknown): CustomBotSlotRecord[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CustomBotSlotRecord[] = [];
+  for (const item of raw.slice(0, 8)) {
+    if (!item || typeof item !== 'object') continue;
+    const obj = item as Record<string, unknown>;
+    const charId = CHARACTER_HP[obj.characterId as CharacterId] ? (obj.characterId as CharacterId) : 'wemmbu';
+    const team = obj.team === 'red' || obj.team === 'blue' || obj.team === 'ffa' ? obj.team : 'ffa';
+    const id = String(obj.id || `bot-${out.length}`).slice(0, 32);
+    const name = String(obj.name || `Bot ${out.length + 1}`).trim().slice(0, 16) || `Bot ${out.length + 1}`;
+    out.push({ id, name, characterId: charId, team });
+  }
+  return out;
+}
+
 function computeVoteCounts(room: RoomState): Record<MapId, number> {
   const counts: Record<MapId, number> = {
     container_yard: 0,
     emerald_citadel: 0,
     sky_dock: 0,
     nether_foundry: 0,
+    cyber_nexus: 0,
+    frost_bastion: 0,
+    ancient_temple: 0,
+    orbital_reactor: 0,
   };
   for (const [peerId, m] of room.mapVotes.entries()) {
     if (room.peers.has(peerId) && m in counts) {
@@ -163,6 +210,9 @@ function serializeRoom(room: RoomState) {
     hostId: room.hostId,
     status: room.status,
     includeBots: room.includeBots,
+    customBots: room.customBots || [],
+    botDifficulty: room.botDifficulty || 'medium',
+    partyMode: room.partyMode || 'classic',
     selectedMap: room.selectedMap,
     mapVotes: computeVoteCounts(room),
     targetKills: room.targetKills,
@@ -516,6 +566,10 @@ async function startServer() {
         const name = String(msg.name || 'Player').trim().slice(0, 16) || 'Player';
         const roomMode = msg.roomMode === 'team' ? 'team' : 'ffa';
         const team = (msg.team === 'red' || msg.team === 'blue' || msg.team === 'ffa') ? msg.team : (roomMode === 'team' ? 'red' : 'ffa');
+        const botDifficulty = msg.botDifficulty === 'easy' || msg.botDifficulty === 'hard' ? msg.botDifficulty : 'medium';
+        const partyMode = ['classic', 'knockout', 'boss_raid', 'random_arsenal', 'one_shot'].includes(String(msg.partyMode))
+          ? (msg.partyMode as 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot')
+          : 'classic';
         const room: RoomState = {
           code,
           kind: 'private',
@@ -523,6 +577,9 @@ async function startServer() {
           hostId: clientId,
           status: 'lobby',
           includeBots: Boolean(msg.includeBots),
+          customBots: sanitizeCustomBots(msg.customBots),
+          botDifficulty,
+          partyMode,
           targetKills: 15,
           selectedMap: 'container_yard',
           mapVotes: new Map(),
@@ -593,6 +650,9 @@ async function startServer() {
             selectedMap: room.selectedMap,
             mapStartedAt: room.mapStartedAt,
             targetKills: room.targetKills,
+            partyMode: room.partyMode || 'classic',
+            botDifficulty: room.botDifficulty || 'medium',
+            customBots: room.customBots || [],
           });
         }
         return;
@@ -635,6 +695,9 @@ async function startServer() {
         if (typeof msg.includeBots === 'boolean' && room.hostId === clientId) {
           room.includeBots = msg.includeBots;
         }
+        if (Array.isArray(msg.customBots) && room.hostId === clientId) {
+          room.customBots = sanitizeCustomBots(msg.customBots);
+        }
         if ((msg.roomMode === 'ffa' || msg.roomMode === 'team') && room.hostId === clientId) {
           room.roomMode = msg.roomMode;
           if (room.roomMode === 'team') {
@@ -650,6 +713,12 @@ async function startServer() {
         if (typeof msg.targetKills === 'number' && room.hostId === clientId) {
           room.targetKills = Math.max(5, Math.min(50, Math.round(msg.targetKills)));
         }
+        if (typeof msg.botDifficulty === 'string' && (msg.botDifficulty === 'easy' || msg.botDifficulty === 'medium' || msg.botDifficulty === 'hard') && room.hostId === clientId) {
+          room.botDifficulty = msg.botDifficulty;
+        }
+        if (typeof msg.partyMode === 'string' && ['classic', 'knockout', 'boss_raid', 'random_arsenal', 'one_shot'].includes(msg.partyMode) && room.hostId === clientId) {
+          room.partyMode = msg.partyMode as 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot';
+        }
         if (typeof msg.selectedMap === 'string' && MAP_ORDER.includes(msg.selectedMap as MapId) && room.hostId === clientId) {
           room.selectedMap = msg.selectedMap as MapId;
         }
@@ -662,6 +731,7 @@ async function startServer() {
         if (!MAP_ORDER.includes(voted)) return;
         room.mapVotes.set(clientId, voted);
         self.votedMap = voted;
+        room.selectedMap = resolveWinningMap(room);
         broadcastRoom(room, serializeRoom(room));
         return;
       }
@@ -693,11 +763,35 @@ async function startServer() {
           selectedMap: room.selectedMap,
           mapStartedAt: room.mapStartedAt,
           targetKills: room.targetKills,
+          partyMode: room.partyMode || 'classic',
+          botDifficulty: room.botDifficulty || 'medium',
+          customBots: room.customBots || [],
         });
         return;
       }
 
+      if (type === 'exit_match') {
+        if (self.respawnTimer) {
+          clearTimeout(self.respawnTimer);
+          self.respawnTimer = null;
+        }
+        self.alive = true;
+        self.hp = self.maxHp;
+        self.absorption = 0;
+        self.kills = 0;
+        self.deaths = 0;
+        if (room.hostId === clientId || room.peers.size <= 1) {
+          room.status = 'lobby';
+          room.placedBlocks = [];
+          broadcastRoom(room, serializeRoom(room));
+        } else {
+          sendJson(ws, serializeRoom(room));
+        }
+        return;
+      }
+
       if (type === 'player_state') {
+        self.activeSlot = String(msg.activeSlot || self.activeSlot || 'sword');
         broadcastRoom(
           room,
           {
@@ -765,7 +859,7 @@ async function startServer() {
         if (room.roomMode === 'team' && self.team !== 'ffa' && target.team !== 'ffa' && self.team === target.team) {
           return;
         }
-        const rawDmg = Math.max(1, Math.min(75, Math.round(Number(msg.damage || 10))));
+        const rawDmg = Math.max(1, Math.min(350, Math.round(Number(msg.damage || 10))));
         const isCrit = Boolean(msg.isCrit);
         const isSmash = Boolean(msg.isSmash);
         const kbX = Number(msg.kbX || 0);
@@ -812,7 +906,7 @@ async function startServer() {
             victimId: targetId,
             victimName: target.name,
             victimTeam: target.team || 'ffa',
-            weaponId: self.activeSlot || 'sword',
+            weaponId: String(msg.weaponId || self.activeSlot || 'sword'),
             killerKills: self.kills,
           });
           broadcastRoom(room, serializeRoom(room));
@@ -918,6 +1012,7 @@ async function startServer() {
             ...msg,
             type: 'world_event',
             senderId: clientId,
+            senderTeam: self.team || 'ffa',
           },
           clientId
         );

@@ -39,17 +39,17 @@ export function computeMaceDamage(
   onGround: boolean
 ): { damage: number; isSmash: boolean; shockwaveRadius: number } {
   const effectiveFall = onGround ? 0 : Math.max(0, fallDistance);
-  const isSmash = effectiveFall >= 2.0;
+  const isSmash = effectiveFall >= 1.5;
   if (!isSmash) {
     return {
-      damage: Math.round(baseDamage * characterMult),
+      damage: Math.round(baseDamage * 1.6 * characterMult),
       isSmash: false,
       shockwaveRadius: 0,
     };
   }
-  const bonus = Math.min(50, Math.pow(effectiveFall - 1.0, 1.18) * 3.5);
-  const damage = Math.round((baseDamage + bonus) * characterMult);
-  const shockwaveRadius = Math.min(7.8, 3.4 + effectiveFall * 0.24);
+  const bonus = Math.min(240, Math.pow(effectiveFall, 1.3) * 16.0);
+  const damage = Math.round((baseDamage + bonus) * characterMult * 1.8);
+  const shockwaveRadius = Math.min(10.5, 4.2 + effectiveFall * 0.38);
   return { damage, isSmash: true, shockwaveRadius };
 }
 

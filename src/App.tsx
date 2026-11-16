@@ -12,16 +12,21 @@ import {
 } from './firebase';
 import { CHARACTERS, DEFAULT_GAME_SETTINGS } from './game/characters';
 import { UnstableArenaEngine } from './game/engine';
+import { createEmptyMapVotes } from './game/maps';
 import type { CharacterId, GameModeId, HudSnapshot } from './game/types';
 
 const INITIAL_HUD: HudSnapshot = {
   screen: 'title',
   mode: 'online_world',
+  partyMode: 'classic',
+  botDifficulty: 'medium',
+  isSpectating: false,
+  spectatorViewMode: 'follow',
   characterId: 'wemmbu',
   roomMode: 'ffa',
   playerTeam: 'ffa',
   currentMapId: 'container_yard',
-  mapTimeRemaining: 180,
+  mapTimeRemaining: 900,
   hp: 110,
   maxHp: 110,
   absorption: 0,
@@ -78,6 +83,12 @@ const INITIAL_HUD: HudSnapshot = {
   calloutText: '',
   calloutAccent: '#fbbf24',
   calloutTimer: 0,
+  multiKillStreak: 0,
+  multiKillText: '',
+  multiKillTimer: 0,
+  ceremonyActive: false,
+  ceremonyTitle: '',
+  ceremonySubtitle: '',
   killFeed: [],
   chatMessages: [],
   scoreboard: [],
@@ -97,14 +108,10 @@ const INITIAL_HUD: HudSnapshot = {
     isHost: false,
     playerName: 'Player',
     includeBots: true,
+    customBots: [],
     linkQueueing: false,
     selectedMap: 'container_yard',
-    mapVotes: {
-      container_yard: 0,
-      emerald_citadel: 0,
-      sky_dock: 0,
-      nether_foundry: 0,
-    },
+    mapVotes: createEmptyMapVotes(),
     targetKills: 15,
     peers: [],
     error: null,
@@ -120,7 +127,7 @@ export default function App() {
   const [hud, setHud] = useState<HudSnapshot>(INITIAL_HUD);
   const [account, setAccount] = useState<PlayerAccountProfile | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [authModalTab, setAuthModalTab] = useState<'auth' | 'leaderboard'>('auth');
+  const [authModalTab, setAuthModalTab] = useState<'auth' | 'leaderboard' | 'friends'>('auth');
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [initialRoomCode] = useState(() => {
@@ -214,6 +221,8 @@ export default function App() {
     engineRef.current?.startGame();
   };
 
+  const activePlayerName = account?.nickname || hud.multiplayer.playerName || 'Player';
+
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-white">
       <div
@@ -245,7 +254,9 @@ export default function App() {
           onJoinLinkDuel={(code, name) => engineRef.current?.joinLinkDuelRoom(code, name)}
           onQueueLinkDuel={(name) => engineRef.current?.queueLinkDuel(name)}
           onCancelLinkQueue={() => engineRef.current?.cancelLinkQueue()}
-          onCreateRoom={(name, includeBots, roomMode, team) => engineRef.current?.createMultiplayerRoom(name, includeBots, roomMode, team)}
+          onCreateRoom={(name, includeBots, roomMode, team, botDifficulty, partyMode, customBots) =>
+            engineRef.current?.createMultiplayerRoom(name, includeBots, roomMode, team, botDifficulty, partyMode, customBots)
+          }
           onJoinRoom={(code, name, team) => engineRef.current?.joinMultiplayerRoom(code, name, team)}
           onUpdateLobby={(updates) => engineRef.current?.updateMultiplayerLobby(updates)}
           onVoteMap={(mapId) => engineRef.current?.voteMap(mapId)}
@@ -268,6 +279,7 @@ export default function App() {
           }}
           onPause={() => engineRef.current?.pauseGame()}
           onRestart={() => engineRef.current?.startGame()}
+          onExitMatch={() => engineRef.current?.exitMatchToLobby()}
           onSendChat={(text) => engineRef.current?.sendChatMessage(text)}
           onToggleMobileSprint={() => engineRef.current?.toggleMobileSprint()}
           onMobileElytra={() => engineRef.current?.mobileElytra()}
@@ -277,6 +289,11 @@ export default function App() {
           onMobileBlock={(pressed) => engineRef.current?.mobileBlock(pressed)}
           onMobileMove={(fwd, rt) => engineRef.current?.mobileMove(fwd, rt)}
           onMobileLook={(dx, dy) => engineRef.current?.mobileLook(dx, dy)}
+          onChangeCharacter={(charId) => engineRef.current?.setCharacter(charId)}
+          onChangeMap={(mapId) => engineRef.current?.voteMap(mapId)}
+          onSpectatorPrev={() => engineRef.current?.selectPrevSpectatorTarget()}
+          onSpectatorNext={() => engineRef.current?.selectNextSpectatorTarget()}
+          onToggleSpectatorMode={() => engineRef.current?.toggleSpectatorViewMode()}
         />
       )}
 
@@ -287,8 +304,10 @@ export default function App() {
           onResume={() => engineRef.current?.resumeGame()}
           onRestart={() => engineRef.current?.startGame()}
           onTitle={() => engineRef.current?.returnToTitle()}
-          onLeaveRoom={() => engineRef.current?.leaveMultiplayerRoom()}
+          onExitMatch={() => engineRef.current?.exitMatchToLobby()}
           onOpenSettings={() => setSettingsOpen(true)}
+          onChangeCharacter={(charId) => engineRef.current?.setCharacter(charId)}
+          onChangeMap={(mapId) => engineRef.current?.voteMap(mapId)}
         />
       )}
 
@@ -297,6 +316,17 @@ export default function App() {
         initialTab={authModalTab}
         account={account}
         selectedCharacter={hud.characterId}
+        multiplayer={hud.multiplayer}
+        onJoinRoomFromInvite={(code, mode) => {
+          engineRef.current?.setMode('multiplayer');
+          engineRef.current?.joinMultiplayerRoom(code, activePlayerName, mode === 'team' ? 'red' : 'ffa');
+          setAuthModalOpen(false);
+        }}
+        onJoinLinkFromInvite={(code) => {
+          engineRef.current?.setMode('link_duel');
+          engineRef.current?.joinLinkDuelRoom(code, activePlayerName);
+          setAuthModalOpen(false);
+        }}
         onClose={() => setAuthModalOpen(false)}
         onAccountUpdated={(profile) => setAccount(profile)}
       />

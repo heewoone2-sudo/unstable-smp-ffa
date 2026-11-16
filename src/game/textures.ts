@@ -469,6 +469,79 @@ export function createShadowDiscTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+function createCyberPanelTexture(anisotropy: number, seed: number): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const rand = createMulberry32(seed);
+
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(6, 6, size - 12, size - 12);
+
+  // Subtle circuit lines & neon cyan border
+  ctx.strokeStyle = '#06b6d4';
+  ctx.globalAlpha = 0.72;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(14, 14, size - 28, size - 28);
+
+  ctx.strokeStyle = '#22d3ee';
+  ctx.globalAlpha = 0.28;
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 6; i++) {
+    const y = 38 + i * 36;
+    ctx.beginPath();
+    ctx.moveTo(22, y);
+    ctx.lineTo(size - 22, y);
+    ctx.stroke();
+  }
+  for (let i = 0; i < 40; i++) {
+    ctx.fillStyle = rand() > 0.5 ? '#22d3ee' : '#818cf8';
+    ctx.globalAlpha = 0.12 + rand() * 0.16;
+    ctx.fillRect(24 + rand() * (size - 64), 24 + rand() * (size - 48), 8 + rand() * 14, 3);
+  }
+  ctx.globalAlpha = 1;
+  return finalizePbrTexture(canvas, anisotropy, true);
+}
+
+function createReactorCoreTexture(anisotropy: number, seed: number): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const rand = createMulberry32(seed);
+
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(0, 0, size, size);
+
+  // Industrial hazard chevron band & glowing plasma core strips
+  for (let i = 0; i < 4; i++) {
+    const y = 32 + i * 54;
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(16, y, size - 32, 24);
+    ctx.fillStyle = i % 2 === 0 ? '#f59e0b' : '#38bdf8';
+    ctx.globalAlpha = 0.85;
+    ctx.fillRect(24, y + 7, size - 48, 10);
+    ctx.globalAlpha = 1;
+  }
+  for (let i = 0; i < 80; i++) {
+    ctx.fillStyle = rand() > 0.5 ? '#94a3b8' : '#1e293b';
+    ctx.globalAlpha = 0.15;
+    ctx.fillRect(rand() * size, rand() * size, 6 + rand() * 12, 2);
+  }
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = '#64748b';
+  ctx.lineWidth = 8;
+  ctx.strokeRect(4, 4, size - 8, size - 8);
+  return finalizePbrTexture(canvas, anisotropy, true);
+}
+
 export interface ArenaMaterialSet {
   ground: THREE.MeshStandardMaterial;
   deepslate: THREE.MeshStandardMaterial;
@@ -486,6 +559,10 @@ export interface ArenaMaterialSet {
   wood_crate: THREE.MeshStandardMaterial;
   basalt: THREE.MeshStandardMaterial;
   crimson_brick: THREE.MeshStandardMaterial;
+  cyber_panel: THREE.MeshStandardMaterial;
+  ice_brick: THREE.MeshStandardMaterial;
+  sandstone: THREE.MeshStandardMaterial;
+  reactor_core: THREE.MeshStandardMaterial;
   cliff: THREE.MeshStandardMaterial;
   shadowDisc: THREE.MeshBasicMaterial;
   skyDomeTex: THREE.CanvasTexture;
@@ -523,6 +600,10 @@ export function createArenaMaterials(renderer: THREE.WebGLRenderer): ArenaMateri
   const woodCrateTex = createCrateTexture(anisotropy, 1106);
   const basaltTex = createCarvedStoneTexture('#38343d', '#57534e', '#1c1917', anisotropy, 1107, 4);
   const crimsonBrickTex = createCarvedStoneTexture('#7f1d1d', '#b91c1c', '#450a0a', anisotropy, 1108, 4);
+  const cyberPanelTex = createCyberPanelTexture(anisotropy, 1109);
+  const iceBrickTex = createCarvedStoneTexture('#7dd3fc', '#e0f2fe', '#0284c7', anisotropy, 1110, 4);
+  const sandstoneTex = createCarvedStoneTexture('#d9a05b', '#f5cb86', '#9a682e', anisotropy, 1111, 4);
+  const reactorCoreTex = createReactorCoreTexture(anisotropy, 1112);
 
   const shadowTex = createShadowDiscTexture();
   const skyDomeTex = createSkyDomeTexture();
@@ -664,6 +745,44 @@ export function createArenaMaterials(renderer: THREE.WebGLRenderer): ArenaMateri
     roughness: 0.62,
     metalness: 0.18,
   });
+  const cyber_panel = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: cyberPanelTex,
+    bumpMap,
+    bumpScale: 0.04,
+    roughness: 0.34,
+    metalness: 0.52,
+    emissive: new THREE.Color('#083344'),
+    emissiveIntensity: 0.25,
+  });
+  const ice_brick = new THREE.MeshPhysicalMaterial({
+    color: 0xffffff,
+    map: iceBrickTex,
+    bumpMap,
+    bumpScale: 0.04,
+    roughness: 0.18,
+    metalness: 0.08,
+    clearcoat: 0.88,
+    clearcoatRoughness: 0.1,
+  });
+  const sandstone = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: sandstoneTex,
+    bumpMap,
+    bumpScale: 0.06,
+    roughness: 0.82,
+    metalness: 0.04,
+  });
+  const reactor_core = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    map: reactorCoreTex,
+    bumpMap,
+    bumpScale: 0.045,
+    roughness: 0.36,
+    metalness: 0.68,
+    emissive: new THREE.Color('#1e3a8a'),
+    emissiveIntensity: 0.22,
+  });
 
   const cliff = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -695,6 +814,10 @@ export function createArenaMaterials(renderer: THREE.WebGLRenderer): ArenaMateri
     wood_crate,
     basalt,
     crimson_brick,
+    cyber_panel,
+    ice_brick,
+    sandstone,
+    reactor_core,
     cliff,
     shadowDisc,
     skyDomeTex,
@@ -720,6 +843,10 @@ export function createArenaMaterials(renderer: THREE.WebGLRenderer): ArenaMateri
       woodCrateTex,
       basaltTex,
       crimsonBrickTex,
+      cyberPanelTex,
+      iceBrickTex,
+      sandstoneTex,
+      reactorCoreTex,
       shadowTex,
       skyDomeTex,
       lavaTex,

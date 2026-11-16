@@ -56,7 +56,9 @@
             "clownpierce",
             "princezam",
             "jumperwho",
-            "minutetech"
+            "minutetech",
+            "kestrel",
+            "vexor"
           ]
         },
         "tier": {
@@ -84,6 +86,165 @@
         }
       },
       "required": ["uid", "nickname", "favoriteCharacter", "tier", "elo", "wins", "losses", "kills", "deaths", "updatedAt"]
+    },
+    "FriendRequest": {
+      "title": "FriendRequest",
+      "description": "Friend request and friendship relationship document between two authenticated players.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "fromUid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "toUid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "fromNickname": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 16
+        },
+        "toNickname": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 16
+        },
+        "fromCharacter": {
+          "type": "string",
+          "enum": [
+            "wemmbu",
+            "flamefrags",
+            "parrotx2",
+            "spokeishere",
+            "manepear",
+            "clownpierce",
+            "princezam",
+            "jumperwho",
+            "minutetech",
+            "kestrel",
+            "vexor"
+          ]
+        },
+        "toCharacter": {
+          "type": "string",
+          "enum": [
+            "wemmbu",
+            "flamefrags",
+            "parrotx2",
+            "spokeishere",
+            "manepear",
+            "clownpierce",
+            "princezam",
+            "jumperwho",
+            "minutetech",
+            "kestrel",
+            "vexor"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "accepted", "declined"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "fromUid",
+        "toUid",
+        "fromNickname",
+        "toNickname",
+        "fromCharacter",
+        "toCharacter",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "RoomInvite": {
+      "title": "RoomInvite",
+      "description": "Real-time custom room or 1v1 link duel invite between two authenticated players.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "fromUid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "toUid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "maxLength": 128
+        },
+        "fromNickname": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 16
+        },
+        "toNickname": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 16
+        },
+        "roomCode": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]+$",
+          "minLength": 4,
+          "maxLength": 8
+        },
+        "roomKind": {
+          "type": "string",
+          "enum": ["private", "link_duel"]
+        },
+        "roomMode": {
+          "type": "string",
+          "enum": ["ffa", "team"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "accepted", "declined"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "fromUid",
+        "toUid",
+        "fromNickname",
+        "toNickname",
+        "roomCode",
+        "roomKind",
+        "roomMode",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -94,6 +255,14 @@
     "/leaderboard/{userId}": {
       "schema": { "$ref": "#/entities/LeaderboardProfile" },
       "description": "Public ranked ELO leaderboard and combat record, owner-writable only."
+    },
+    "/friendRequests/{requestId}": {
+      "schema": { "$ref": "#/entities/FriendRequest" },
+      "description": "Friend request and active friend pairs between authenticated users."
+    },
+    "/roomInvites/{inviteId}": {
+      "schema": { "$ref": "#/entities/RoomInvite" },
+      "description": "Private room and 1v1 link duel invitations between friends."
     }
   }
 }

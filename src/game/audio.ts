@@ -476,4 +476,42 @@ export class GameAudio {
     const now = ctx.currentTime;
     this.triggerDullThud(ctx, now, 360, 128, 72, 0.14, 0.1);
   }
+
+  public playJumpPad(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(190, now);
+    osc.frequency.exponentialRampToValueAtTime(640, now + 0.19);
+    g.gain.setValueAtTime(0.26, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+    osc.connect(g).connect(this.masterGain ?? ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.23);
+    this.triggerDullThud(ctx, now, 540, 140, 62, 0.26, 0.09);
+  }
+
+  public playMultiKillChime(streak: number): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const baseFreqs = [523.25, 659.25, 783.99, 1046.5];
+    const count = Math.max(1, Math.min(4, streak));
+    for (let i = 0; i < count; i++) {
+      const t = now + i * 0.055;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(baseFreqs[i], t);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.22, t + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
+      osc.connect(g).connect(this.masterGain ?? ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.25);
+    }
+  }
 }

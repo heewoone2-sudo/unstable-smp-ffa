@@ -1,5 +1,7 @@
 import type { PlayerAccountProfile } from '../firebase';
-import type { HudSnapshot } from '../game/types';
+import { CHARACTER_LIST } from '../game/characters';
+import { MAP_DEFINITIONS, MAP_ORDER } from '../game/maps';
+import type { CharacterId, HudSnapshot, MapId } from '../game/types';
 
 interface StatusModalProps {
   hud: HudSnapshot;
@@ -7,8 +9,10 @@ interface StatusModalProps {
   onResume: () => void;
   onRestart: () => void;
   onTitle: () => void;
-  onLeaveRoom: () => void;
+  onExitMatch: () => void;
   onOpenSettings: () => void;
+  onChangeCharacter?: (id: CharacterId) => void;
+  onChangeMap?: (mapId: MapId) => void;
 }
 
 export function StatusModal({
@@ -17,14 +21,19 @@ export function StatusModal({
   onResume,
   onRestart,
   onTitle,
-  onLeaveRoom,
+  onExitMatch,
   onOpenSettings,
+  onChangeCharacter,
+  onChangeMap,
 }: StatusModalProps) {
   const isPause = hud.screen === 'paused';
   const isVictory = hud.outcome === 'victory';
   const isNetworked =
     Boolean(hud.multiplayer.roomCode) &&
     (hud.mode === 'online_world' || hud.mode === 'multiplayer' || hud.mode === 'link_duel');
+  const isRoomMatch =
+    Boolean(hud.multiplayer.roomCode) &&
+    (hud.mode === 'multiplayer' || hud.mode === 'link_duel');
   const isLinkDuel = hud.mode === 'link_duel';
 
   const heading = isPause
@@ -40,8 +49,8 @@ export function StatusModal({
   const subtitle = isPause
     ? hud.mode === 'online_world'
       ? '초원 216m 글로벌 오픈월드가 실시간으로 진행 중입니다.'
-      : isNetworked
-        ? '실시간 온라인 매치가 진행 중입니다.'
+      : isRoomMatch
+        ? '게임 나가기를 누르면 방을 유지한 채 사설 대기실로 돌아갑니다.'
         : '전투를 재개하거나 타이틀로 돌아갈 수 있습니다.'
     : isVictory
       ? isLinkDuel
@@ -99,6 +108,40 @@ export function StatusModal({
           </div>
         )}
 
+        {isPause && !isNetworked && hud.mode === 'ffa' && (
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2 text-xs">
+            <div className="font-bold text-slate-800">연습장 캐릭터 &amp; 맵 즉시 변경</div>
+            <div className="grid grid-cols-2 gap-2">
+              <select
+                data-testid="pause-char-select"
+                aria-label="일시정지 캐릭터 변경"
+                value={hud.characterId}
+                onChange={(e) => onChangeCharacter?.(e.target.value as CharacterId)}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold text-slate-900 cursor-pointer"
+              >
+                {CHARACTER_LIST.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                data-testid="pause-map-select"
+                aria-label="일시정지 맵 변경"
+                value={hud.currentMapId}
+                onChange={(e) => onChangeMap?.(e.target.value as MapId)}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white font-semibold text-slate-900 cursor-pointer"
+              >
+                {MAP_ORDER.map((mId) => (
+                  <option key={mId} value={mId}>
+                    {MAP_DEFINITIONS[mId].name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
           {isPause ? (
             <button
@@ -141,10 +184,11 @@ export function StatusModal({
 
           <button
             type="button"
-            onClick={isNetworked ? onLeaveRoom : onTitle}
-            className="px-4 py-2.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-medium text-sm cursor-pointer"
+            data-testid="modal-exit-match-btn"
+            onClick={isNetworked ? onExitMatch : onTitle}
+            className="px-4 py-2.5 rounded-lg border border-slate-300 bg-white hover:bg-red-50 text-slate-700 hover:text-red-700 font-medium text-sm cursor-pointer"
           >
-            {hud.mode === 'online_world' ? '월드 나가기' : isNetworked ? '방 나가기' : '타이틀로'}
+            {hud.mode === 'online_world' ? '월드 나가기' : isRoomMatch ? '게임 나가기' : '타이틀로'}
           </button>
         </div>
       </div>

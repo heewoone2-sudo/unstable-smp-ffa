@@ -14,16 +14,38 @@ export type CharacterId =
 export type GameModeId = 'online_world' | 'ffa' | 'link_duel' | 'multiplayer';
 export type RoomMode = 'ffa' | 'team';
 export type PlayerTeam = 'red' | 'blue' | 'ffa';
-export type MapId = 'container_yard' | 'emerald_citadel' | 'sky_dock' | 'nether_foundry';
+export type MapId =
+  | 'container_yard'
+  | 'emerald_citadel'
+  | 'sky_dock'
+  | 'nether_foundry'
+  | 'cyber_nexus'
+  | 'frost_bastion'
+  | 'ancient_temple'
+  | 'orbital_reactor';
 export type CameraMode = 'firstperson' | 'shiftlock' | 'free';
 export type CameraViewMode = CameraMode;
 export type GraphicsQuality = 'low' | 'medium' | 'high';
+export type BotDifficulty = 'easy' | 'medium' | 'hard';
+export type CustomPartyMode =
+  | 'classic'
+  | 'knockout'
+  | 'boss_raid'
+  | 'random_arsenal'
+  | 'one_shot';
 export type AiPolicy =
   | 'wind_diver'
   | 'sword_duelist'
   | 'pearl_flanker'
   | 'bruiser_charger'
   | 'ranged_kite';
+
+export interface CustomBotSlot {
+  id: string;
+  name: string;
+  characterId: CharacterId;
+  team: PlayerTeam;
+}
 
 export type WeaponSlotId =
   | 'sword'
@@ -133,6 +155,9 @@ export interface MultiplayerHudState {
   isHost: boolean;
   playerName: string;
   includeBots: boolean;
+  customBots?: CustomBotSlot[];
+  botDifficulty?: BotDifficulty;
+  partyMode?: CustomPartyMode;
   linkQueueing: boolean;
   selectedMap: MapId;
   mapVotes: Record<MapId, number>;
@@ -182,6 +207,22 @@ export interface KillFeedEntry {
 export interface HudSnapshot {
   screen: ScreenState;
   mode: GameModeId;
+  partyMode: CustomPartyMode;
+  botDifficulty: BotDifficulty;
+  isSpectating: boolean;
+  spectatorTargetName?: string;
+  spectatorTargetTeam?: PlayerTeam;
+  spectatorTargetHp?: number;
+  spectatorTargetMaxHp?: number;
+  spectatorTargetKills?: number;
+  spectatorViewMode: 'follow' | 'free';
+  knockoutRound?: number;
+  knockoutRemainingSec?: number;
+  knockoutQuota?: number;
+  knockoutAliveCount?: number;
+  bossCurrentHp?: number;
+  bossMaxHp?: number;
+  bossName?: string;
   characterId: CharacterId;
   roomMode: RoomMode;
   playerTeam: PlayerTeam;
@@ -192,7 +233,7 @@ export interface HudSnapshot {
   absorption: number;
   stamina: number;
   activeSlot: number;
-  loadout: SixTuple<LoadoutItemConfig>;
+  loadout: SixTuple<LoadoutItemConfig | null>;
   slotCooldowns: SixTuple<number>;
   slotMaxCooldowns: SixTuple<number>;
   slotCharges: SixTuple<number>;
@@ -222,6 +263,12 @@ export interface HudSnapshot {
   calloutText: string;
   calloutAccent: string;
   calloutTimer: number;
+  multiKillStreak: number;
+  multiKillText: string;
+  multiKillTimer: number;
+  ceremonyActive: boolean;
+  ceremonyTitle: string;
+  ceremonySubtitle: string;
   killFeed: KillFeedEntry[];
   chatMessages: ChatEntry[];
   scoreboard: ScoreboardEntry[];
@@ -250,7 +297,11 @@ export type ArenaBlockKind =
   | 'asphalt'
   | 'wood_crate'
   | 'basalt'
-  | 'crimson_brick';
+  | 'crimson_brick'
+  | 'cyber_panel'
+  | 'ice_brick'
+  | 'sandstone'
+  | 'reactor_core';
 
 export interface ArenaBlock {
   id: string;
@@ -282,6 +333,17 @@ export interface HazardPoolZone {
   y: number;
   z: number;
   radius: number;
+}
+
+export interface JumpPadZone {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  boostY: number;
+  boostForward?: number;
+  color: string;
 }
 
 export interface FighterStats {
