@@ -9,7 +9,7 @@ import type {
   RoomMode,
   RoomPeerInfo,
 } from './types';
-import { createEmptyMapVotes } from './maps';
+import { createEmptyMapVotes, getRotationWindow } from './maps';
 
 export interface NetEventHandlers {
   onRoomChange: (
@@ -119,25 +119,30 @@ export function getCustomServerUrl(): string {
 export class MultiplayerClient {
   private ws: WebSocket | null = null;
   private handlers: NetEventHandlers;
-  private state: MultiplayerHudState = {
-    status: 'idle',
-    roomKind: 'global',
-    roomMode: 'ffa',
-    roomCode: null,
-    selfId: null,
-    isHost: false,
-    playerName: 'Player',
-    includeBots: true,
-    customBots: [],
-    botDifficulty: 'medium',
-    partyMode: 'classic',
-    linkQueueing: false,
-    selectedMap: 'container_yard',
-    mapVotes: createEmptyMapVotes(),
-    targetKills: 15,
-    peers: [],
-    error: null,
-  };
+  private state: MultiplayerHudState = (() => {
+    const rot = getRotationWindow();
+    return {
+      status: 'idle',
+      roomKind: 'global',
+      roomMode: 'ffa',
+      roomCode: null,
+      selfId: null,
+      isHost: false,
+      playerName: 'Player',
+      includeBots: true,
+      customBots: [],
+      botDifficulty: 'medium',
+      partyMode: 'knockout',
+      linkQueueing: false,
+      selectedMap: rot.activeMaps[0],
+      mapVotes: createEmptyMapVotes(),
+      activeRotationMaps: rot.activeMaps,
+      rotationEndsAt: rot.endsAtMs,
+      targetKills: 15,
+      peers: [],
+      error: null,
+    };
+  })();
   private pendingActions: Array<Record<string, unknown>> = [];
   private disposed = false;
   private retryCount = 0;
@@ -312,6 +317,12 @@ export class MultiplayerClient {
           }
           this.state.mapVotes = nextVotes;
         }
+        if (Array.isArray(msg.activeRotationMaps)) {
+          this.state.activeRotationMaps = msg.activeRotationMaps as MapId[];
+        }
+        if (typeof msg.rotationEndsAt === 'number') {
+          this.state.rotationEndsAt = msg.rotationEndsAt;
+        }
         this.state.customBots = Array.isArray(msg.customBots) ? (msg.customBots as CustomBotSlot[]) : [];
         this.state.targetKills = typeof msg.targetKills === 'number' ? msg.targetKills : 15;
         this.state.mapStartedAt = typeof msg.mapStartedAt === 'number' ? msg.mapStartedAt : undefined;
@@ -326,6 +337,17 @@ export class MultiplayerClient {
         return;
       }
 
+      if (type === 'rotation_sync') {
+        if (Array.isArray(msg.activeRotationMaps)) {
+          this.state.activeRotationMaps = msg.activeRotationMaps as MapId[];
+        }
+        if (typeof msg.rotationEndsAt === 'number') {
+          this.state.rotationEndsAt = msg.rotationEndsAt;
+        }
+        this.handlers.onRoomChange(this.getState());
+        return;
+      }
+
       if (type === 'match_started') {
         const rk = msg.roomKind === 'global' || msg.roomKind === 'link_duel' ? msg.roomKind : 'private';
         this.state.roomKind = rk;
@@ -336,6 +358,12 @@ export class MultiplayerClient {
         }
         if (typeof msg.mapStartedAt === 'number') {
           this.state.mapStartedAt = msg.mapStartedAt;
+        }
+        if (Array.isArray(msg.activeRotationMaps)) {
+          this.state.activeRotationMaps = msg.activeRotationMaps as MapId[];
+        }
+        if (typeof msg.rotationEndsAt === 'number') {
+          this.state.rotationEndsAt = msg.rotationEndsAt;
         }
         if (typeof msg.targetKills === 'number') {
           this.state.targetKills = msg.targetKills;
@@ -490,10 +518,10 @@ export class MultiplayerClient {
     this.send({ type: 'chat_message', text: clean });
   }
 
-  public joinGlobal(name: string, characterId: CharacterId): void {
+  public joinGlobal(name: string, characterId: CharacterId, mapId?: MapId): void {
     this.state.playerName = name.trim() || 'Fighter';
     this.retryCount = 0;
-    this.send({ type: 'join_global', name: this.state.playerName, characterId });
+    this.send({ type: 'join_global', name: this.state.playerName, characterId, mapId });
   }
 
   public createLinkDuel(name: string, characterId: CharacterId): void {
@@ -570,6 +598,18 @@ export class MultiplayerClient {
   }): void {
     if (updates.name !== undefined) {
       this.state.playerName = updates.name.trim() || 'Player';
+    }
+    if (updates.includeBots !== undefined) {
+      this.state.includeBots = updates.includeBots;
+    }
+    if (updates.roomMode !== undefined) {
+      this.state.roomMode = updates.roomMode;
+    }
+    if (updates.targetKills !== undefined) {
+      this.state.targetKills = updates.targetKills;
+    }
+    if (updates.selectedMap !== undefined) {
+      this.state.selectedMap = updates.selectedMap;
     }
     if (updates.botDifficulty !== undefined) {
       this.state.botDifficulty = updates.botDifficulty;

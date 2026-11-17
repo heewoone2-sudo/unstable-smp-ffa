@@ -22,7 +22,20 @@ export type MapId =
   | 'cyber_nexus'
   | 'frost_bastion'
   | 'ancient_temple'
-  | 'orbital_reactor';
+  | 'orbital_reactor'
+  | 'volcanic_caldera'
+  | 'bamboo_sanctuary'
+  | 'neon_downtown'
+  | 'sunken_atlantis'
+  | 'clockwork_tower'
+  | 'desert_mirage'
+  | 'crystal_cavern'
+  | 'cherry_pagoda'
+  | 'obsidian_keep'
+  | 'solar_observatory'
+  | 'toxic_refinery'
+  | 'aether_spire';
+export type MapCategory = 'industrial' | 'nature' | 'citadel' | 'cosmic';
 export type CameraMode = 'firstperson' | 'shiftlock' | 'free';
 export type CameraViewMode = CameraMode;
 export type GraphicsQuality = 'low' | 'medium' | 'high';
@@ -161,6 +174,8 @@ export interface MultiplayerHudState {
   linkQueueing: boolean;
   selectedMap: MapId;
   mapVotes: Record<MapId, number>;
+  activeRotationMaps?: MapId[];
+  rotationEndsAt?: number;
   targetKills: number;
   mapStartedAt?: number;
   peers: RoomPeerInfo[];
@@ -204,11 +219,19 @@ export interface KillFeedEntry {
   color: string;
 }
 
+export type EliminationAnimKind =
+  | 'trapdoor_abyss'
+  | 'sky_launch_plunge'
+  | 'meteor_knockback'
+  | 'ufo_abduction_drop'
+  | 'anvil_yeet_pancake';
+
 export interface HudSnapshot {
   screen: ScreenState;
   mode: GameModeId;
   partyMode: CustomPartyMode;
   botDifficulty: BotDifficulty;
+  isPractice?: boolean;
   isSpectating: boolean;
   spectatorTargetName?: string;
   spectatorTargetTeam?: PlayerTeam;
@@ -220,6 +243,11 @@ export interface HudSnapshot {
   knockoutRemainingSec?: number;
   knockoutQuota?: number;
   knockoutAliveCount?: number;
+  knockoutMutatorTitle?: string;
+  knockoutMutatorDesc?: string;
+  knockoutMutatorAccent?: string;
+  bountyTargetName?: string;
+  bountyTargetKills?: number;
   bossCurrentHp?: number;
   bossMaxHp?: number;
   bossName?: string;
@@ -228,6 +256,8 @@ export interface HudSnapshot {
   playerTeam: PlayerTeam;
   currentMapId: MapId;
   mapTimeRemaining: number;
+  activeRotationMaps: MapId[];
+  rotationEndsAt: number;
   hp: number;
   maxHp: number;
   absorption: number;
@@ -240,6 +270,7 @@ export interface HudSnapshot {
   slotMaxCharges: SixTuple<number>;
   elytraCooldown: number;
   elytraMaxCooldown: number;
+  elytraFlightRemaining?: number;
   isGliding: boolean;
   isBlocking: boolean;
   isStealthed: boolean;
@@ -269,6 +300,8 @@ export interface HudSnapshot {
   ceremonyActive: boolean;
   ceremonyTitle: string;
   ceremonySubtitle: string;
+  activeBuffs?: ActiveBuffState[];
+  activeArenaEvent?: ActiveArenaEventState | null;
   killFeed: KillFeedEntry[];
   chatMessages: ChatEntry[];
   scoreboard: ScoreboardEntry[];
@@ -280,6 +313,27 @@ export interface HudSnapshot {
   fps: number;
   settings: GameSettings;
   multiplayer: MultiplayerHudState;
+}
+
+export type ArenaBuffKind = 'berserk' | 'haste' | 'aegis' | 'overcharge';
+
+export interface ActiveBuffState {
+  kind: ArenaBuffKind;
+  label: string;
+  shortDesc: string;
+  color: string;
+  remainingSec: number;
+  durationSec: number;
+}
+
+export type ArenaEventKind = 'low_gravity' | 'hyper_cooldown' | 'bounty_rush' | 'berserk_frenzy';
+
+export interface ActiveArenaEventState {
+  kind: ArenaEventKind;
+  title: string;
+  subtitle: string;
+  accent: string;
+  remainingSec: number;
 }
 
 export type ArenaBlockKind =

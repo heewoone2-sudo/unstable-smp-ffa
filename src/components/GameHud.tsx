@@ -16,10 +16,24 @@ import {
   ListOrdered,
   MapPin,
   DoorOpen,
+  X,
 } from 'lucide-react';
 import { CHARACTER_LIST, CHARACTERS } from '../game/characters';
 import { MAP_DEFINITIONS, MAP_ORDER } from '../game/maps';
-import type { CharacterId, HudSnapshot, MapId } from '../game/types';
+import {
+  ARENA_BUFF_DEFINITIONS,
+  ARENA_BUFF_ORDER,
+  ARENA_EVENT_ORDER,
+  ARENA_SURGE_EVENTS,
+} from '../game/partyModes';
+import type {
+  ArenaBuffKind,
+  ArenaEventKind,
+  CharacterId,
+  HudSnapshot,
+  MapCategory,
+  MapId,
+} from '../game/types';
 import { WeaponIcon } from './WeaponIcons';
 
 interface GameHudProps {
@@ -42,6 +56,8 @@ interface GameHudProps {
   onMobileLook?: (dx: number, dy: number) => void;
   onChangeCharacter?: (id: CharacterId) => void;
   onChangeMap?: (mapId: MapId) => void;
+  onTriggerPracticeBuff?: (kind: ArenaBuffKind) => void;
+  onTriggerPracticeEvent?: (kind: ArenaEventKind) => void;
   onSpectatorPrev?: () => void;
   onSpectatorNext?: () => void;
   onToggleSpectatorMode?: () => void;
@@ -67,6 +83,8 @@ export function GameHud({
   onMobileLook,
   onChangeCharacter,
   onChangeMap,
+  onTriggerPracticeBuff,
+  onTriggerPracticeEvent,
   onSpectatorPrev,
   onSpectatorNext,
   onToggleSpectatorMode,
@@ -93,6 +111,8 @@ export function GameHud({
   const [scoreboardToggled, setScoreboardToggled] = useState(false);
   const [chatText, setChatText] = useState('');
   const [chatOpenMobile, setChatOpenMobile] = useState(false);
+  const [practiceModalOpen, setPracticeModalOpen] = useState(false);
+  const [practiceCatFilter, setPracticeCatFilter] = useState<'all' | MapCategory>('all');
   const chatInputRef = useRef<HTMLInputElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -112,6 +132,8 @@ export function GameHud({
     }
   }, [hud.chatMessages.length]);
 
+  const isPracticeOffline = Boolean(hud.isPractice) && !hud.multiplayer.roomCode && hud.mode === 'ffa';
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Tab') {
@@ -119,6 +141,15 @@ export function GameHud({
           e.preventDefault();
           setScoreboardHeld(true);
         }
+      } else if (e.code === 'KeyM' && isPracticeOffline && document.activeElement !== chatInputRef.current) {
+        e.preventDefault();
+        setPracticeModalOpen((prev) => {
+          const next = !prev;
+          if (next) {
+            document.exitPointerLock?.();
+          }
+          return next;
+        });
       } else if (e.code === 'Enter') {
         const active = document.activeElement;
         if (active !== chatInputRef.current) {
@@ -127,8 +158,12 @@ export function GameHud({
           setChatOpenMobile(true);
           window.setTimeout(() => chatInputRef.current?.focus(), 10);
         }
-      } else if (e.code === 'Escape' && document.activeElement === chatInputRef.current) {
-        chatInputRef.current?.blur();
+      } else if (e.code === 'Escape') {
+        if (document.activeElement === chatInputRef.current) {
+          chatInputRef.current?.blur();
+        } else {
+          setPracticeModalOpen(false);
+        }
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -145,7 +180,7 @@ export function GameHud({
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
-  }, []);
+  }, [isPracticeOffline]);
 
   const showScoreboard = scoreboardHeld || scoreboardToggled;
   const redBoard = hud.scoreboard.filter((s) => s.team === 'red');
@@ -225,7 +260,7 @@ export function GameHud({
         />
       )}
 
-      {!hud.multiplayer.roomCode && hud.mode === 'ffa' && (
+      {isPracticeOffline && (
         <div
           data-testid="practice-switcher-left"
           className="fixed top-[128px] sm:top-[154px] left-2.5 sm:left-4 z-20 flex flex-wrap sm:flex-nowrap items-center gap-1.5 pointer-events-auto bg-white/95 border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-sm text-xs max-w-[192px] sm:max-w-none"
@@ -265,11 +300,25 @@ export function GameHud({
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            tabIndex={-1}
+            data-testid="practice-quick-modal-btn"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              document.exitPointerLock?.();
+              setPracticeModalOpen(true);
+            }}
+            className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-[11px] cursor-pointer whitespace-nowrap"
+            title="전체 20종 맵·캐릭터 선택 [M]"
+          >
+            전체 20맵 [M]
+          </button>
         </div>
       )}
 
       {/* Top-Left: Clean Light Vitality & Map Strip */}
-      <div className="fixed top-2.5 left-2.5 sm:top-4 sm:left-4 w-[156px] sm:w-76 bg-white/95 border border-slate-200 rounded-xl px-2.5 sm:px-3.5 py-2 sm:py-2.5 shadow-sm text-slate-900">
+      <div className="fixed top-2.5 left-2.5 sm:top-4 sm:left-4 z-20 w-[156px] sm:w-76 bg-white/95 border border-slate-200 rounded-xl px-2.5 sm:px-3.5 py-2 sm:py-2.5 shadow-sm text-slate-900">
         <div className="flex items-center justify-between gap-1.5 pb-1 mb-1 sm:pb-1.5 sm:mb-1.5 border-b border-slate-100 text-[10px] sm:text-[11px]">
           <div className="flex items-center gap-1 min-w-0">
             <MapPin className="w-3 h-3 text-blue-600 shrink-0" />
@@ -288,7 +337,7 @@ export function GameHud({
           </div>
           <span
             data-testid="hud-map-timer"
-            title="다음 맵 전환까지 남은 시간"
+            title="다음 오픈월드 4맵 추첨까지 남은 시간"
             className="font-mono-num font-bold text-slate-600 shrink-0"
           >
             {mapClock}
@@ -360,7 +409,7 @@ export function GameHud({
       </div>
 
       {/* Top-Right: Counters + Compact Utility Buttons */}
-      <div className="fixed top-2.5 right-2.5 sm:top-4 sm:right-4 flex flex-col sm:flex-row items-end sm:items-start gap-1.5 sm:gap-2 max-w-[202px] sm:max-w-none">
+      <div className="fixed top-2.5 right-2.5 sm:top-4 sm:right-4 z-20 flex flex-col sm:flex-row items-end sm:items-start gap-1.5 sm:gap-2 max-w-[202px] sm:max-w-none">
         <div className="bg-white/95 border border-slate-200 rounded-xl px-2.5 sm:px-3 py-1.5 sm:py-2 flex items-center gap-2.5 sm:gap-4 shadow-sm text-slate-900">
           {hud.settings.showFps && (
             <div>
@@ -393,7 +442,7 @@ export function GameHud({
             <div className="text-[10px] font-medium text-slate-500">처치</div>
             <div className="font-display font-mono-num text-sm sm:text-lg font-bold text-slate-950 leading-tight">
               {hud.kills}
-              {hud.mode !== 'online_world' && (
+              {hud.mode !== 'online_world' && hud.partyMode !== 'knockout' && (
                 <span className="text-[11px] sm:text-xs text-slate-400">/{hud.targetKills}</span>
               )}
             </div>
@@ -526,23 +575,55 @@ export function GameHud({
         </div>
       </div>
 
+      {/* Active Arena Surge Event Banner */}
+      {hud.activeArenaEvent && (
+        <div
+          data-testid="active-arena-event-banner"
+          className={`fixed left-1/2 -translate-x-1/2 pointer-events-none z-15 bg-zinc-950/92 border border-white/15 rounded-xl px-3.5 py-1.5 shadow-lg flex items-center gap-2.5 text-white whitespace-nowrap ${
+            hud.mode === 'multiplayer' ||
+            hud.mode === 'link_duel' ||
+            hud.roomMode === 'team' ||
+            (hud.mode === 'ffa' && hud.partyMode !== 'classic')
+              ? 'top-[168px] sm:top-14'
+              : 'top-14 sm:top-3.5'
+          }`}
+        >
+          <span
+            className="w-2 h-2 rounded-full shrink-0"
+            style={{ backgroundColor: hud.activeArenaEvent.accent }}
+          />
+          <span className="font-display text-xs sm:text-sm font-bold" style={{ color: hud.activeArenaEvent.accent }}>
+            ⚡ {hud.activeArenaEvent.title}
+          </span>
+          <span className="hidden sm:inline text-[11px] text-zinc-300">
+            {hud.activeArenaEvent.subtitle}
+          </span>
+          <span className="font-mono-num text-xs font-bold px-1.5 py-0.5 rounded bg-white/10 text-white">
+            {Math.ceil(hud.activeArenaEvent.remainingSec)}s
+          </span>
+        </div>
+      )}
+
       {/* Top-Center Competitive & Party Mode Banner */}
-      {(hud.mode === 'multiplayer' || hud.mode === 'link_duel' || hud.roomMode === 'team') && (
+      {(hud.mode === 'multiplayer' ||
+        hud.mode === 'link_duel' ||
+        hud.roomMode === 'team' ||
+        (hud.mode === 'ffa' && hud.partyMode !== 'classic')) && (
         <div
           data-testid="top-center-score-banner"
-          className="fixed top-[128px] sm:top-3 left-1/2 -translate-x-1/2 pointer-events-none z-15 bg-white/95 border border-slate-200 rounded-2xl px-3 sm:px-5 py-1.5 sm:py-2 shadow-md flex items-center gap-3 sm:gap-4 text-slate-900 whitespace-nowrap"
+          className="fixed top-[128px] sm:top-3 left-1/2 -translate-x-1/2 pointer-events-none z-15 bg-zinc-950/92 border border-white/15 rounded-xl px-3 sm:px-5 py-1.5 sm:py-2 shadow-lg flex items-center gap-3 sm:gap-4 text-white whitespace-nowrap"
         >
-          {hud.mode === 'multiplayer' && hud.partyMode === 'boss_raid' ? (
+          {(hud.mode === 'multiplayer' || hud.mode === 'ffa') && hud.partyMode === 'boss_raid' ? (
             <div className="flex flex-col items-center gap-1 min-w-[200px] sm:min-w-[280px]">
               <div className="w-full flex items-center justify-between gap-3 text-xs font-display font-bold">
-                <span className="text-red-700">👹 {hud.bossName || '보스 레이드'}</span>
-                <span className="font-mono-num text-slate-900">
+                <span className="text-rose-400">👹 {hud.bossName || '보스 레이드'}</span>
+                <span className="font-mono-num text-white">
                   {hud.bossCurrentHp ?? 650} / {hud.bossMaxHp ?? 650}
                 </span>
               </div>
-              <div className="w-full h-2 rounded-full bg-slate-200 overflow-hidden">
+              <div className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
                 <div
-                  className="h-full bg-red-600 transition-all duration-100"
+                  className="h-full bg-rose-500 transition-all duration-100"
                   style={{
                     width: `${Math.max(
                       0,
@@ -552,35 +633,78 @@ export function GameHud({
                 />
               </div>
             </div>
-          ) : hud.mode === 'multiplayer' && hud.partyMode === 'knockout' ? (
-            <div className="flex items-center gap-2.5 sm:gap-3.5 text-xs sm:text-sm font-display font-bold">
-              <span className="px-2 py-0.5 rounded bg-amber-500 text-slate-950 text-[11px]">
-                R{hud.knockoutRound ?? 1} 녹아웃
-              </span>
-              <span className="font-mono-num text-red-600">{hud.knockoutRemainingSec ?? 0}s</span>
-              <span className="text-slate-700">
-                할당 <strong className="font-mono-num text-slate-950">{hud.kills}/{hud.knockoutQuota ?? 1}킬</strong>
-              </span>
-              <span className="text-slate-500 text-[11px]">생존 {hud.knockoutAliveCount ?? 1}명</span>
-            </div>
+          ) : (hud.mode === 'multiplayer' || hud.mode === 'ffa') && hud.partyMode === 'knockout' ? (
+            (() => {
+              const koRem = Math.max(0, Math.ceil(hud.knockoutRemainingSec ?? 180));
+              const koClock = `${String(Math.floor(koRem / 60)).padStart(2, '0')}:${String(koRem % 60).padStart(2, '0')}`;
+              const urgent = koRem <= 20;
+              const quotaMet = hud.kills >= (hud.knockoutQuota ?? 1);
+              return (
+                <div
+                  data-testid="knockout-timer-hud"
+                  className="flex flex-wrap items-center justify-center gap-2 sm:gap-3.5 text-xs sm:text-sm font-display font-bold"
+                >
+                  <span className="px-2 py-0.5 rounded bg-rose-600 text-white text-[11px] font-black tracking-wide">
+                    R{hud.knockoutRound ?? 1} 녹아웃
+                  </span>
+                  <span
+                    data-testid="knockout-clock"
+                    className={`font-mono-num text-lg sm:text-2xl font-black px-2.5 py-0.5 rounded-lg border ${
+                      urgent
+                        ? 'bg-rose-600/25 border-rose-500 text-rose-300 animate-pulse'
+                        : 'bg-white/10 border-white/15 text-amber-300'
+                    }`}
+                  >
+                    {koClock}
+                  </span>
+                  <span className="text-zinc-200">
+                    할당{' '}
+                    <strong className={`font-mono-num ${quotaMet ? 'text-emerald-400' : 'text-white'}`}>
+                      {hud.kills}/{hud.knockoutQuota ?? 1}킬
+                    </strong>
+                  </span>
+                  <span className="text-zinc-400 text-[11px] hidden sm:inline">
+                    생존 {hud.knockoutAliveCount ?? 1}명
+                  </span>
+                  {hud.knockoutMutatorTitle && (
+                    <span
+                      data-testid="knockout-mutator-badge"
+                      title={hud.knockoutMutatorDesc}
+                      className="hidden md:inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/10 border border-white/15 text-[11px] font-bold"
+                      style={{ color: hud.knockoutMutatorAccent ?? '#fbbf24' }}
+                    >
+                      ⚡ {hud.knockoutMutatorTitle}
+                    </span>
+                  )}
+                  {hud.bountyTargetName && (
+                    <span
+                      data-testid="bounty-target-badge"
+                      className="hidden lg:inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-400/50 text-amber-300 text-[11px] font-bold"
+                    >
+                      👑 현상금: {hud.bountyTargetName}
+                    </span>
+                  )}
+                </div>
+              );
+            })()
           ) : hud.roomMode === 'team' ? (
             <div className="flex items-center gap-3 text-xs sm:text-sm font-display font-bold">
-              <span className="flex items-center gap-1.5 text-red-600">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-600 inline-block" />
+              <span className="flex items-center gap-1.5 text-rose-400">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 inline-block" />
                 레드팀
-                <span className="font-mono-num text-base font-extrabold text-red-700 ml-0.5">
+                <span className="font-mono-num text-base font-extrabold text-white ml-0.5">
                   {hud.scoreboard.filter((s) => s.team === 'red').reduce((acc, s) => acc + s.kills, 0)}
                 </span>
               </span>
-              <span className="text-slate-300 font-normal text-xs">:</span>
-              <span className="flex items-center gap-1.5 text-blue-600">
-                <span className="font-mono-num text-base font-extrabold text-blue-700 mr-0.5">
+              <span className="text-zinc-500 font-normal text-xs">:</span>
+              <span className="flex items-center gap-1.5 text-cyan-400">
+                <span className="font-mono-num text-base font-extrabold text-white mr-0.5">
                   {hud.scoreboard.filter((s) => s.team === 'blue').reduce((acc, s) => acc + s.kills, 0)}
                 </span>
                 블루팀
-                <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block" />
+                <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 inline-block" />
               </span>
-              <span className="text-slate-700 font-semibold text-[11px] ml-2 pl-2 border-l border-slate-300">
+              <span className="text-zinc-300 font-semibold text-[11px] ml-2 pl-2 border-l border-white/15">
                 {hud.partyMode === 'random_arsenal'
                   ? '랜덤 무기'
                   : hud.partyMode === 'one_shot'
@@ -590,25 +714,25 @@ export function GameHud({
             </div>
           ) : hud.mode === 'link_duel' ? (
             <div className="flex items-center gap-3 text-xs sm:text-sm font-display font-bold">
-              <span className="text-slate-700">1v1 링크전</span>
-              <span className="font-mono-num text-amber-600">
+              <span className="text-zinc-200">1v1 링크전</span>
+              <span className="font-mono-num text-rose-400">
                 {hud.kills} 승
               </span>
-              <span className="text-slate-300">/</span>
-              <span className="font-mono-num text-slate-500">
+              <span className="text-zinc-500">/</span>
+              <span className="font-mono-num text-cyan-400">
                 3선승
               </span>
             </div>
           ) : (
             <div className="flex items-center gap-3 text-xs sm:text-sm font-display font-bold">
-              <span className="text-slate-700">
+              <span className="text-cyan-400">
                 {hud.partyMode === 'random_arsenal'
                   ? '🎲 랜덤 무기'
                   : hud.partyMode === 'one_shot'
                     ? '⚡ 원샷원킬'
                     : '⚔️ 매치 킬 수'}
               </span>
-              <span className="font-mono-num text-slate-950 text-base">
+              <span className="font-mono-num text-white text-base">
                 {hud.kills} / {hud.targetKills} 킬
               </span>
             </div>
@@ -622,8 +746,8 @@ export function GameHud({
           data-testid="multikill-banner"
           className="fixed top-[174px] sm:top-[68px] left-1/2 -translate-x-1/2 pointer-events-none z-25"
         >
-          <div className="flex items-center gap-2.5 px-5 py-2 rounded-2xl bg-slate-950 text-white border-2 border-amber-400 shadow-lg">
-            <span className="font-display font-mono-num text-base sm:text-lg font-extrabold text-amber-400">
+          <div className="flex items-center gap-2.5 px-5 py-2 rounded-2xl bg-zinc-950/95 text-white border-2 border-rose-500 shadow-lg">
+            <span className="font-display font-mono-num text-base sm:text-lg font-extrabold text-cyan-400">
               {hud.multiKillStreak}x
             </span>
             <span className="font-display text-sm sm:text-base font-extrabold tracking-wide">
@@ -639,12 +763,12 @@ export function GameHud({
           data-testid="ceremony-banner"
           className="fixed bottom-24 sm:bottom-28 left-1/2 -translate-x-1/2 pointer-events-none z-30 max-w-[calc(100vw-24px)]"
         >
-          <div className="px-6 py-3 rounded-2xl bg-white/95 border-2 border-amber-400 shadow-xl text-center">
-            <div className="font-display text-lg sm:text-2xl font-extrabold text-slate-950">
+          <div className="px-6 py-3 rounded-2xl bg-zinc-950/95 border-2 border-cyan-400 shadow-xl text-center">
+            <div className="font-display text-lg sm:text-2xl font-extrabold text-white">
               {hud.ceremonyTitle}
             </div>
             {hud.ceremonySubtitle && (
-              <div className="text-xs sm:text-sm font-semibold text-slate-600 mt-0.5">
+              <div className="text-xs sm:text-sm font-semibold text-zinc-300 mt-0.5">
                 {hud.ceremonySubtitle}
               </div>
             )}
@@ -654,8 +778,8 @@ export function GameHud({
 
       {/* Transient Callout */}
       {hud.calloutTimer > 0 && hud.calloutText && !hud.ceremonyActive && (
-        <div className="fixed top-[174px] sm:top-20 left-1/2 -translate-x-1/2 pointer-events-none">
-          <div className="font-display text-sm sm:text-base font-bold px-4 py-1.5 rounded-lg bg-white/95 border border-slate-200 text-slate-900 shadow-sm">
+        <div className="fixed top-[210px] sm:top-[108px] left-1/2 -translate-x-1/2 pointer-events-none z-20">
+          <div className="font-display text-sm sm:text-base font-bold px-4 py-1.5 rounded-lg bg-white/95 border border-slate-200 text-slate-900 shadow-sm whitespace-nowrap">
             {hud.calloutText}
           </div>
         </div>
@@ -716,11 +840,15 @@ export function GameHud({
           <line x1="17" y1="13" x2="23" y2="13" stroke="#ffffff" strokeWidth="1.5" />
           <circle cx="13" cy="13" r="1.5" fill="#f59e0b" />
           {hud.hitmarkerTimer > 0 && (
-            <g stroke={hud.hitmarkerCrit ? '#d97706' : '#dc2626'} strokeWidth="2.5">
-              <line x1="4" y1="4" x2="9" y2="9" />
-              <line x1="22" y1="4" x2="17" y2="9" />
-              <line x1="4" y1="22" x2="9" y2="17" />
-              <line x1="22" y1="22" x2="17" y2="17" />
+            <g
+              stroke={hud.hitmarkerCrit ? '#facc15' : '#ef4444'}
+              strokeWidth={hud.hitmarkerCrit ? '3' : '2.2'}
+              strokeLinecap="round"
+            >
+              <line x1={hud.hitmarkerCrit ? '2' : '4'} y1={hud.hitmarkerCrit ? '2' : '4'} x2="9" y2="9" />
+              <line x1={hud.hitmarkerCrit ? '24' : '22'} y1={hud.hitmarkerCrit ? '2' : '4'} x2="17" y2="9" />
+              <line x1={hud.hitmarkerCrit ? '2' : '4'} y1={hud.hitmarkerCrit ? '24' : '22'} x2="9" y2="17" />
+              <line x1={hud.hitmarkerCrit ? '24' : '22'} y1={hud.hitmarkerCrit ? '24' : '22'} x2="17" y2="17" />
             </g>
           )}
         </svg>
@@ -899,7 +1027,7 @@ export function GameHud({
         data-testid="hud-chat-panel"
         className={`fixed pointer-events-auto z-20 ${
           showTouchControls || isCompactViewport
-            ? !hud.multiplayer.roomCode && hud.mode === 'ffa'
+            ? isPracticeOffline
               ? 'top-[224px] left-2.5 w-48'
               : 'top-[174px] left-2.5 w-48'
             : 'bottom-4 left-4 w-76'
@@ -1056,7 +1184,9 @@ export function GameHud({
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/95 border border-slate-300 text-slate-900 font-bold text-[11px] shadow-sm cursor-pointer active:scale-95"
               >
                 <Feather className="w-3.5 h-3.5 text-sky-600" />
-                겉날개 {hud.elytraCooldown > 0.05 ? `${hud.elytraCooldown.toFixed(1)}s` : 'READY'}
+                {hud.isGliding
+                  ? `비행 ${(hud.elytraFlightRemaining ?? 10).toFixed(1)}s`
+                  : `겉날개 ${hud.elytraCooldown > 0.05 ? `${hud.elytraCooldown.toFixed(1)}s` : 'READY'}`}
               </button>
 
               <div className="flex items-end gap-2">
@@ -1169,6 +1299,30 @@ export function GameHud({
         </div>
       ) : (
       <div className="fixed bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 z-20 max-w-[calc(100vw-16px)]">
+        {hud.activeBuffs && hud.activeBuffs.length > 0 && (
+          <div
+            data-testid="active-buffs-strip"
+            className="flex flex-wrap items-center justify-center gap-1.5"
+          >
+            {hud.activeBuffs.map((buff) => (
+              <div
+                key={buff.kind}
+                data-testid={`active-buff-${buff.kind}`}
+                className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-slate-950/92 border border-white/15 text-white text-[11px] font-semibold shadow-sm"
+              >
+                <span
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: buff.color }}
+                />
+                <span>{buff.label}</span>
+                <span className="text-slate-300 text-[10px]">{buff.shortDesc}</span>
+                <span className="font-mono-num font-bold text-amber-300">
+                  {Math.ceil(buff.remainingSec)}s
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="text-xs font-medium text-slate-900 bg-white/95 border border-slate-200 rounded-md px-2.5 py-0.5 shadow-xs whitespace-nowrap">
           {activeWeapon ? (
             <>
@@ -1279,14 +1433,212 @@ export function GameHud({
 
           <div className="w-px h-8 bg-slate-200 mx-0.5" aria-hidden="true" />
 
-          <div className="px-2 py-1 rounded-lg bg-slate-50 border border-slate-200 text-center min-w-14">
+          <div
+            data-testid="hud-elytra-status"
+            className={`px-2 py-1 rounded-lg border text-center min-w-16 ${
+              hud.isGliding
+                ? (hud.elytraFlightRemaining ?? 10) <= 2.5
+                  ? 'bg-rose-50 border-rose-300'
+                  : 'bg-sky-50 border-sky-300'
+                : 'bg-slate-50 border-slate-200'
+            }`}
+          >
             <div className="text-[10px] font-medium text-slate-500">겉날개 [F]</div>
-            <div className="font-mono-num text-xs font-bold text-slate-900">
-              {hud.elytraCooldown > 0.05 ? `${hud.elytraCooldown.toFixed(1)}s` : 'READY'}
+            <div
+              className={`font-mono-num text-xs font-bold ${
+                hud.isGliding
+                  ? (hud.elytraFlightRemaining ?? 10) <= 2.5
+                    ? 'text-rose-600 animate-pulse'
+                    : 'text-sky-700'
+                  : 'text-slate-900'
+              }`}
+            >
+              {hud.isGliding
+                ? `비행 ${(hud.elytraFlightRemaining ?? 10).toFixed(1)}s`
+                : hud.elytraCooldown > 0.05
+                  ? `${hud.elytraCooldown.toFixed(1)}s`
+                  : 'READY'}
             </div>
           </div>
         </div>
       </div>
+      )}
+
+      {/* Practice 20-Map & Character Quick Switcher Modal ([M]) */}
+      {isPracticeOffline && practiceModalOpen && (
+        <div
+          data-testid="practice-quick-modal"
+          className="fixed inset-0 z-35 flex items-center justify-center bg-slate-950/50 p-4 pointer-events-auto"
+        >
+          <div className="w-full max-w-2xl bg-white border border-slate-200 rounded-2xl shadow-xl p-5 space-y-4 text-slate-900 max-h-[88vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+              <div>
+                <h2 className="font-display text-lg font-bold text-slate-950">
+                  연습장 맵 &amp; 캐릭터 즉시 변경 [M]
+                </h2>
+                <p className="text-xs text-slate-500">
+                  현재 맵: <strong className="text-slate-900">{mapDef.name}</strong> · 캐릭터:{' '}
+                  <strong className="text-slate-900">{prof.name}</strong>
+                </p>
+              </div>
+              <button
+                type="button"
+                data-testid="practice-quick-modal-close"
+                onClick={() => setPracticeModalOpen(false)}
+                className="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 cursor-pointer"
+                aria-label="닫기"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-xs font-bold text-slate-800">캐릭터 변경 (11명)</div>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                {CHARACTER_LIST.map((c) => {
+                  const active = hud.characterId === c.id;
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      data-testid={`practice-modal-char-${c.id}`}
+                      onClick={() => onChangeCharacter?.(c.id)}
+                      className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold text-left truncate cursor-pointer transition-colors ${
+                        active
+                          ? 'bg-slate-950 border-slate-950 text-white'
+                          : 'bg-white border-slate-200 text-slate-800 hover:border-slate-400'
+                      }`}
+                    >
+                      {c.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div className="space-y-1.5">
+                <div className="text-xs font-bold text-slate-800">보급 코어 버프 즉시 테스트</div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {ARENA_BUFF_ORDER.map((bKind) => {
+                    const bDef = ARENA_BUFF_DEFINITIONS[bKind];
+                    return (
+                      <button
+                        key={bKind}
+                        type="button"
+                        data-testid={`practice-buff-${bKind}`}
+                        onClick={() => onTriggerPracticeBuff?.(bKind)}
+                        className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-left cursor-pointer transition-colors"
+                      >
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: bDef.color }}
+                          />
+                          <span className="truncate">{bDef.label}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500 truncate mt-0.5">{bDef.shortDesc}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="text-xs font-bold text-slate-800">돌발 아레나 서지 이벤트 발동</div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {ARENA_EVENT_ORDER.map((eKind) => {
+                    const eDef = ARENA_SURGE_EVENTS[eKind];
+                    return (
+                      <button
+                        key={eKind}
+                        type="button"
+                        data-testid={`practice-event-${eKind}`}
+                        onClick={() => onTriggerPracticeEvent?.(eKind)}
+                        className="px-2 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-left cursor-pointer transition-colors"
+                      >
+                        <div
+                          className="text-[11px] font-bold truncate"
+                          style={{ color: eDef.accent }}
+                        >
+                          {eDef.title}
+                        </div>
+                        <div className="text-[10px] text-slate-500 truncate mt-0.5">{eDef.durationSec}초 지속</div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-bold text-slate-800">아레나 맵 변경 (전체 20종)</span>
+                <div className="flex flex-wrap items-center gap-1">
+                  {(
+                    [
+                      { id: 'all', label: '전체 20' },
+                      { id: 'industrial', label: '산업·도시' },
+                      { id: 'nature', label: '자연·유적' },
+                      { id: 'citadel', label: '요새·용암' },
+                      { id: 'cosmic', label: '우주·특수' },
+                    ] as Array<{ id: 'all' | MapCategory; label: string }>
+                  ).map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setPracticeCatFilter(cat.id)}
+                      className={`px-2 py-0.5 rounded-md text-[11px] font-semibold cursor-pointer ${
+                        practiceCatFilter === cat.id
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {MAP_ORDER.filter(
+                  (mId) =>
+                    practiceCatFilter === 'all' ||
+                    MAP_DEFINITIONS[mId].category === practiceCatFilter
+                ).map((mId) => {
+                  const def = MAP_DEFINITIONS[mId];
+                  const active = hud.currentMapId === mId;
+                  return (
+                    <button
+                      key={mId}
+                      type="button"
+                      data-testid={`practice-modal-map-${mId}`}
+                      onClick={() => {
+                        onChangeMap?.(mId);
+                        setPracticeModalOpen(false);
+                      }}
+                      className={`p-2 rounded-xl border text-left transition-colors cursor-pointer ${
+                        active
+                          ? 'bg-slate-950 border-slate-950 text-white'
+                          : 'bg-white border-slate-200 text-slate-800 hover:border-slate-400'
+                      }`}
+                    >
+                      <span
+                        className="text-[9px] font-bold px-1.5 py-0.5 rounded inline-block"
+                        style={{
+                          backgroundColor: active ? 'rgba(255,255,255,0.16)' : `${def.accentHex}18`,
+                          color: active ? '#ffffff' : def.accentHex,
+                        }}
+                      >
+                        {def.badge}
+                      </span>
+                      <div className="font-display text-xs font-bold mt-1 truncate">{def.name}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

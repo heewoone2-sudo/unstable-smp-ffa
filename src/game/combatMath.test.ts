@@ -16,6 +16,7 @@ import {
   tickSlotRecharge,
 } from './combatMath';
 import {
+  MAP_DEFINITIONS,
   MAP_ORDER,
   MAP_ROTATION_SECONDS,
   canDamageTarget,
@@ -23,6 +24,7 @@ import {
   getJumpPadsForMap,
   getMapForElapsedTime,
   getNextMapId,
+  getRotationWindow,
   tallyMapVotes,
 } from './maps';
 
@@ -50,8 +52,9 @@ test('sword and fire_sword have zero cooldown and swing continuously without coo
   assert.equal(cds[0], 0);
 });
 
-test('GAME_MODES removes simulator and includes online_world and link_duel', () => {
+test('GAME_MODES puts ffa Knockout Arcade first and includes multiplayer, link_duel, and online_world', () => {
   const ids = GAME_MODES.map((m) => m.id);
+  assert.equal(ids[0], 'ffa');
   assert.equal(ids.includes('simulator' as never), false);
   assert.equal(ids.includes('online_world'), true);
   assert.equal(ids.includes('link_duel'), true);
@@ -164,14 +167,16 @@ test('expanded 216m open world has outer biome landmarks and open origin spawn',
   assert.ok(Math.hypot(pushed.x - -18, pushed.z - -16) >= 1.6);
 });
 
-test('all 8 arena maps provide clear origin spawn, jump pads, and 15-minute rotation', () => {
+test('all 20 arena maps provide clear origin spawn, jump pads, and 15-minute 4-map rotation', () => {
   assert.equal(MAP_ROTATION_SECONDS, 900);
-  assert.equal(MAP_ORDER.length, 8);
+  assert.equal(MAP_ORDER.length, 20);
   assert.equal(MAP_ORDER[0], 'container_yard');
   for (const mapId of MAP_ORDER) {
+    const def = MAP_DEFINITIONS[mapId];
     const blocks = getArenaBlocksForMap(mapId);
     const pads = getJumpPadsForMap(mapId);
-    assert.ok(blocks.length >= 16, `${mapId} should have rich multi-tier arena geometry`);
+    assert.ok(def.worldRadius <= 52, `${mapId} should be compact (${def.worldRadius}m)`);
+    assert.ok(blocks.length >= 36, `${mapId} should have enclosed Valorant tactical geometry (${blocks.length})`);
     assert.ok(pads.length >= 4, `${mapId} should include jump pads for vertical combat`);
     assert.equal(getSupportHeightAt(0, 0, 0.5, 0.55, blocks), 0, `${mapId} origin must stay open for safe spawn`);
   }
@@ -181,7 +186,20 @@ test('all 8 arena maps provide clear origin spawn, jump pads, and 15-minute rota
   assert.equal(getMapForElapsedTime(0, 'container_yard'), 'container_yard');
   assert.equal(getMapForElapsedTime(900, 'container_yard'), 'emerald_citadel');
   assert.equal(getMapForElapsedTime(1800, 'container_yard'), 'sky_dock');
-  assert.equal(getNextMapId('orbital_reactor'), 'container_yard');
+  assert.equal(getNextMapId('aether_spire'), 'container_yard');
+
+  const w1 = getRotationWindow(1_000);
+  const w1Same = getRotationWindow(500_000);
+  assert.equal(w1.activeMaps.length, 4);
+  assert.equal(new Set(w1.activeMaps).size, 4);
+  assert.deepEqual(w1.activeMaps, w1Same.activeMaps);
+  for (const m of w1.activeMaps) {
+    assert.ok(MAP_ORDER.includes(m));
+  }
+  const w2 = getRotationWindow(900_001);
+  assert.equal(w2.activeMaps.length, 4);
+  assert.equal(new Set(w2.activeMaps).size, 4);
+  assert.notEqual(w1.windowIndex, w2.windowIndex);
 });
 
 test('tallyMapVotes picks majority map and canDamageTarget blocks friendly fire in team mode', () => {
@@ -240,10 +258,11 @@ test('getKnockoutRoundInfo, computeOneShotDamage, 1+1+1 Random Arsenal, and host
   } = await import('./partyModes');
   const r1 = getKnockoutRoundInfo(1);
   assert.equal(r1.quota, 1);
-  assert.equal(r1.durationSec, 45);
+  assert.equal(r1.durationSec, 180);
 
   const r2 = getKnockoutRoundInfo(2);
   assert.equal(r2.quota, 2);
+  assert.equal(r2.durationSec, 180);
 
   assert.equal(computeOneShotDamage(15, false), 15);
   assert.equal(computeOneShotDamage(15, true), 350);
@@ -269,3 +288,135 @@ test('getKnockoutRoundInfo, computeOneShotDamage, 1+1+1 Random Arsenal, and host
   assert.equal(normalized[0].team, 'red');
 });
 
+test('resolveEffectiveRoomMode, computeBuffMultipliers, and computeSurgeModifiers scale gameplay and hostility accurately', async () => {
+  const {
+    resolveEffectiveRoomMode,
+    isHostileTarget,
+    computeBuffMultipliers,
+    pickArenaSurgeEvent,
+    computeSurgeModifiers,
+  } = await import('./partyModes');
+
+  assert.equal(resolveEffectiveRoomMode('ffa', 'team', 'classic'), 'ffa');
+  assert.equal(resolveEffectiveRoomMode('online_world', 'team', 'classic'), 'ffa');
+  assert.equal(resolveEffectiveRoomMode('multiplayer', 'team', 'knockout'), 'ffa');
+  assert.equal(resolveEffectiveRoomMode('multiplayer', 'team', 'classic'), 'team');
+  assert.equal(resolveEffectiveRoomMode('multiplayer', 'ffa', 'classic'), 'ffa');
+
+  // In custom FFA or knockout, even if a peer had team 'red', they are hostile
+  const effFfa = resolveEffectiveRoomMode('multiplayer', 'ffa', 'classic');
+  assert.equal(isHostileTarget(effFfa, 'red', 'red'), true);
+
+  // In custom Team mode, opposing team is hostile and same team is ally
+  const effTeam = resolveEffectiveRoomMode('multiplayer', 'team', 'classic');
+  assert.equal(isHostileTarget(effTeam, 'red', 'blue'), true);
+  assert.equal(isHostileTarget(effTeam, 'red', 'red'), false);
+
+  const buffs = computeBuffMultipliers([
+    { kind: 'berserk', remainingSec: 8 },
+    { kind: 'haste', remainingSec: 6 },
+  ]);
+  assert.equal(buffs.damageMult, 1.35);
+  assert.equal(buffs.speedMult, 1.3);
+  assert.equal(buffs.jumpMult, 1.18);
+  assert.equal(buffs.cooldownRateMult, 1.35);
+
+  const evt0 = pickArenaSurgeEvent(0);
+  const evt1 = pickArenaSurgeEvent(1);
+  assert.notEqual(evt0.kind, evt1.kind);
+
+  const lowGravMods = computeSurgeModifiers({ kind: 'low_gravity', remainingSec: 10 });
+  assert.ok(lowGravMods.gravityMult < 0.7);
+  assert.ok(lowGravMods.jumpMult > 1.15);
+
+  const idleMods = computeSurgeModifiers(null);
+  assert.equal(idleMods.gravityMult, 1.0);
+  assert.equal(idleMods.cooldownRateMult, 1.0);
+});
+
+test('pickKnockoutEliminationAnim returns normal animations and rare funny variants', async () => {
+  const { pickKnockoutEliminationAnim } = await import('./partyModes');
+  const norm = pickKnockoutEliminationAnim(() => 0.5);
+  assert.equal(norm.isRare, false);
+  assert.ok(['trapdoor_abyss', 'sky_launch_plunge', 'meteor_knockback'].includes(norm.kind));
+
+  const seq = (vals: number[]) => {
+    let i = 0;
+    return () => vals[i++ % vals.length];
+  };
+  const rareUfo = pickKnockoutEliminationAnim(seq([0.04, 0.2]));
+  assert.equal(rareUfo.isRare, true);
+  assert.equal(rareUfo.kind, 'ufo_abduction_drop');
+
+  const rareAnvil = pickKnockoutEliminationAnim(seq([0.04, 0.8]));
+  assert.equal(rareAnvil.isRare, true);
+  assert.equal(rareAnvil.kind, 'anvil_yeet_pancake');
+});
+
+test('ender pearl cooldown is reduced to 2.4s and elytra continuous flight expires after 10s', async () => {
+  assert.equal(ITEM_CATALOG.ender_pearl.cooldown, 2.4);
+
+  const { MAX_ELYTRA_FLIGHT_SEC, stepElytraFlightLimit } = await import('./partyModes');
+  assert.equal(MAX_ELYTRA_FLIGHT_SEC, 10);
+
+  let rem = MAX_ELYTRA_FLIGHT_SEC;
+  let gliding = true;
+  let expired = false;
+  for (let i = 0; i < 9; i++) {
+    const step = stepElytraFlightLimit(gliding, rem, 1.0);
+    gliding = step.stillGliding;
+    rem = step.nextRemainingSec;
+    expired = step.expired;
+    assert.equal(gliding, true);
+    assert.equal(expired, false);
+  }
+  const finalStep = stepElytraFlightLimit(gliding, rem, 1.0);
+  assert.equal(finalStep.stillGliding, false);
+  assert.equal(finalStep.nextRemainingSec, 0);
+  assert.equal(finalStep.expired, true);
+});
+
+test('Quick Match Knockout never terminates early on 15-kill limit and scales mutators & bounty leaders across rounds', async () => {
+  const {
+    shouldEndMatchOnKillLimit,
+    pickKnockoutMutator,
+    pickBountyLeader,
+    ARENA_EVENT_ORDER,
+    ARENA_SURGE_EVENTS,
+  } = await import('./partyModes');
+
+  assert.equal(shouldEndMatchOnKillLimit('knockout', 'ffa'), false);
+  assert.equal(shouldEndMatchOnKillLimit('knockout', 'multiplayer'), false);
+  assert.equal(shouldEndMatchOnKillLimit('boss_raid', 'multiplayer'), false);
+  assert.equal(shouldEndMatchOnKillLimit('classic', 'ffa'), true);
+  assert.equal(shouldEndMatchOnKillLimit('classic', 'online_world'), false);
+
+  const m1 = pickKnockoutMutator(1);
+  const m2 = pickKnockoutMutator(2);
+  const m3 = pickKnockoutMutator(3);
+  const m4 = pickKnockoutMutator(4);
+  assert.equal(m1.id, 'opening_brawl');
+  assert.equal(m2.id, 'sky_leap');
+  assert.ok(m2.jumpMult > 1.15 && m2.gravityMult < 0.9);
+  assert.equal(m3.id, 'overdrive_clash');
+  assert.ok(m3.cooldownRateMult > 1.5);
+  assert.equal(m4.id, 'final_rumble');
+  assert.ok(m4.damageMult > 1.15);
+
+  const noBounty = pickBountyLeader([
+    { id: 'local', name: 'Me', kills: 9, alive: true, isLocal: true },
+    { id: 'b1', name: 'Bot1', kills: 1, alive: true },
+  ]);
+  assert.equal(noBounty, null);
+
+  const bounty = pickBountyLeader([
+    { id: 'local', name: 'Me', kills: 9, alive: true, isLocal: true },
+    { id: 'b1', name: 'Bot1', kills: 4, alive: false },
+    { id: 'b2', name: 'Bot2', kills: 3, alive: true },
+    { id: 'b3', name: 'Bot3', kills: 2, alive: true },
+  ]);
+  assert.deepEqual(bounty, { id: 'b2', name: 'Bot2', kills: 3 });
+
+  assert.ok(ARENA_EVENT_ORDER.includes('berserk_frenzy'));
+  assert.ok(ARENA_SURGE_EVENTS.berserk_frenzy.cooldownRateMult > 1.2);
+});

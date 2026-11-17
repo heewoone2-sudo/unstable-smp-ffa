@@ -34,7 +34,19 @@ type MapId =
   | 'cyber_nexus'
   | 'frost_bastion'
   | 'ancient_temple'
-  | 'orbital_reactor';
+  | 'orbital_reactor'
+  | 'volcanic_caldera'
+  | 'bamboo_sanctuary'
+  | 'neon_downtown'
+  | 'sunken_atlantis'
+  | 'clockwork_tower'
+  | 'desert_mirage'
+  | 'crystal_cavern'
+  | 'cherry_pagoda'
+  | 'obsidian_keep'
+  | 'solar_observatory'
+  | 'toxic_refinery'
+  | 'aether_spire';
 const MAP_ORDER: MapId[] = [
   'container_yard',
   'emerald_citadel',
@@ -44,8 +56,53 @@ const MAP_ORDER: MapId[] = [
   'frost_bastion',
   'ancient_temple',
   'orbital_reactor',
+  'volcanic_caldera',
+  'bamboo_sanctuary',
+  'neon_downtown',
+  'sunken_atlantis',
+  'clockwork_tower',
+  'desert_mirage',
+  'crystal_cavern',
+  'cherry_pagoda',
+  'obsidian_keep',
+  'solar_observatory',
+  'toxic_refinery',
+  'aether_spire',
 ];
 const MAP_ROTATION_MS = 900_000;
+
+function seededPrngServer(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function getRotationWindowServer(nowMs = Date.now()): {
+  windowIndex: number;
+  activeMaps: [MapId, MapId, MapId, MapId];
+  endsAtMs: number;
+} {
+  const safeNow = Math.max(0, nowMs);
+  const windowIndex = Math.floor(safeNow / MAP_ROTATION_MS);
+  const endsAtMs = (windowIndex + 1) * MAP_ROTATION_MS;
+  const pool = [...MAP_ORDER];
+  const rand = seededPrngServer(windowIndex * 2654435761 + 1013904223);
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const tmp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = tmp;
+  }
+  return {
+    windowIndex,
+    activeMaps: [pool[0], pool[1], pool[2], pool[3]],
+    endsAtMs,
+  };
+}
 
 const CHARACTER_HP: Record<CharacterId, number> = {
   wemmbu: 112,
@@ -130,7 +187,7 @@ function generateRoomCode(): string {
     for (let i = 0; i < 4; i++) {
       code += chars[Math.floor(Math.random() * chars.length)];
     }
-    if (code !== 'GLOBAL' && !rooms.has(code)) return code;
+    if (!code.startsWith('GLOBAL') && !rooms.has(code)) return code;
   }
   return String(Math.floor(1000 + Math.random() * 8999));
 }
@@ -167,16 +224,7 @@ function sanitizeCustomBots(raw: unknown): CustomBotSlotRecord[] {
 }
 
 function computeVoteCounts(room: RoomState): Record<MapId, number> {
-  const counts: Record<MapId, number> = {
-    container_yard: 0,
-    emerald_citadel: 0,
-    sky_dock: 0,
-    nether_foundry: 0,
-    cyber_nexus: 0,
-    frost_bastion: 0,
-    ancient_temple: 0,
-    orbital_reactor: 0,
-  };
+  const counts = Object.fromEntries(MAP_ORDER.map((m) => [m, 0])) as Record<MapId, number>;
   for (const [peerId, m] of room.mapVotes.entries()) {
     if (room.peers.has(peerId) && m in counts) {
       counts[m] += 1;
@@ -202,6 +250,7 @@ function resolveWinningMap(room: RoomState): MapId {
 }
 
 function serializeRoom(room: RoomState) {
+  const rot = getRotationWindowServer(Date.now());
   return {
     type: 'room_state',
     code: room.code,
@@ -215,6 +264,8 @@ function serializeRoom(room: RoomState) {
     partyMode: room.partyMode || 'classic',
     selectedMap: room.selectedMap,
     mapVotes: computeVoteCounts(room),
+    activeRotationMaps: rot.activeMaps,
+    rotationEndsAt: rot.endsAtMs,
     targetKills: room.targetKills,
     mapStartedAt: room.mapStartedAt,
     placedBlocks: room.placedBlocks,
@@ -259,25 +310,26 @@ function removePeerFromRoom(peerId: string, roomCode: string | null): void {
   broadcastRoom(room, serializeRoom(room));
 }
 
-function ensureGlobalRoom(hostId: string): RoomState {
-  const existing = rooms.get('GLOBAL');
+function ensureGlobalRoom(hostId: string, mapId: MapId): RoomState {
+  const code = `GLOBAL_${mapId}`;
+  const existing = rooms.get(code);
   if (existing) return existing;
   const created: RoomState = {
-    code: 'GLOBAL',
+    code,
     kind: 'global',
     roomMode: 'ffa',
     hostId,
     status: 'playing',
     includeBots: true,
     targetKills: 999,
-    selectedMap: 'container_yard',
+    selectedMap: mapId,
     mapVotes: new Map(),
     mapStartedAt: Date.now(),
     peers: new Map(),
     placedBlocks: [],
     seenEvents: new Set(),
   };
-  rooms.set('GLOBAL', created);
+  rooms.set(code, created);
   return created;
 }
 
@@ -291,10 +343,19 @@ async function startServer() {
   });
 
   app.get('/api/health', (_req, res) => {
+    let globalPlayers = 0;
+    for (const r of rooms.values()) {
+      if (r.kind === 'global') {
+        globalPlayers += r.peers.size;
+      }
+    }
+    const rot = getRotationWindowServer(Date.now());
     res.json({
       ok: true,
       rooms: rooms.size,
-      globalPlayers: rooms.get('GLOBAL')?.peers.size ?? 0,
+      globalPlayers,
+      activeRotationMaps: rot.activeMaps,
+      rotationEndsAt: rot.endsAtMs,
     });
   });
 
@@ -309,21 +370,20 @@ async function startServer() {
     }
   }, 20000);
 
+  let lastRotationWindow = getRotationWindowServer(Date.now()).windowIndex;
   const mapRotationInterval = setInterval(() => {
-    const now = Date.now();
-    for (const room of rooms.values()) {
-      if (room.status !== 'playing' || room.peers.size === 0) continue;
-      if (now - room.mapStartedAt >= MAP_ROTATION_MS) {
-        const idx = MAP_ORDER.indexOf(room.selectedMap);
-        room.selectedMap = MAP_ORDER[(idx + 1) % MAP_ORDER.length];
-        room.mapStartedAt = now;
-        room.placedBlocks = [];
-        broadcastRoom(room, {
-          type: 'map_changed',
-          mapId: room.selectedMap,
-          mapStartedAt: room.mapStartedAt,
-        });
-        broadcastRoom(room, serializeRoom(room));
+    const rot = getRotationWindowServer(Date.now());
+    if (rot.windowIndex === lastRotationWindow) return;
+    lastRotationWindow = rot.windowIndex;
+    // Never interrupt ongoing matches mid-combat: only sync updated 4-map window metadata.
+    const payload = JSON.stringify({
+      type: 'rotation_sync',
+      activeRotationMaps: rot.activeMaps,
+      rotationEndsAt: rot.endsAtMs,
+    });
+    for (const client of wss.clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(payload);
       }
     }
   }, 2000);
@@ -358,7 +418,10 @@ async function startServer() {
       if (type === 'join_global') {
         removeFromQueue(clientId);
         removePeerFromRoom(clientId, currentRoomCode);
-        const room = ensureGlobalRoom(clientId);
+        const rot = getRotationWindowServer(Date.now());
+        const reqMap = typeof msg.mapId === 'string' ? (msg.mapId as MapId) : rot.activeMaps[0];
+        const chosenMap: MapId = rot.activeMaps.includes(reqMap) ? reqMap : rot.activeMaps[0];
+        const room = ensureGlobalRoom(clientId, chosenMap);
         if (room.peers.size >= 32) {
           sendJson(ws, { type: 'room_error', message: '글로벌 월드 인원이 가득 찼습니다 (최대 32명).' });
           return;
@@ -380,14 +443,16 @@ async function startServer() {
           alive: true,
           respawnTimer: null,
         });
-        currentRoomCode = 'GLOBAL';
+        currentRoomCode = room.code;
         broadcastRoom(room, serializeRoom(room));
         sendJson(ws, {
           type: 'match_started',
-          code: 'GLOBAL',
+          code: room.code,
           roomKind: 'global',
           selectedMap: room.selectedMap,
           mapStartedAt: room.mapStartedAt,
+          activeRotationMaps: rot.activeMaps,
+          rotationEndsAt: rot.endsAtMs,
           targetKills: room.targetKills,
         });
         return;

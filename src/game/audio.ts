@@ -514,4 +514,96 @@ export class GameAudio {
       osc.stop(t + 0.25);
     }
   }
+
+  public playMapVotePop(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(480, now);
+    osc.frequency.exponentialRampToValueAtTime(760, now + 0.08);
+    g.gain.setValueAtTime(0.16, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+    osc.connect(g).connect(this.masterGain ?? ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.11);
+  }
+
+  public playRouletteTick(step = 0): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'triangle';
+    const freq = 360 + (step % 8) * 32;
+    osc.frequency.setValueAtTime(freq, now);
+    osc.frequency.exponentialRampToValueAtTime(freq * 0.72, now + 0.04);
+    g.gain.setValueAtTime(0.14, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+    osc.connect(g).connect(this.masterGain ?? ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.055);
+  }
+
+  public playRouletteLock(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const freqs = [523.25, 783.99, 1046.5];
+    for (let i = 0; i < freqs.length; i++) {
+      const t = now + i * 0.045;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freqs[i], t);
+      g.gain.setValueAtTime(0.2, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
+      osc.connect(g).connect(this.masterGain ?? ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.25);
+    }
+  }
+
+  public playBountyClaim(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const notes = [587.33, 739.99, 880, 1174.66];
+    for (let i = 0; i < notes.length; i++) {
+      const t = now + i * 0.05;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(notes[i], t);
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.24, t + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+      osc.connect(g).connect(this.masterGain ?? ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.32);
+    }
+  }
+
+  public playRoundAdvance(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const notes = [440, 554.37, 659.25, 880];
+    for (let i = 0; i < notes.length; i++) {
+      const t = now + i * 0.065;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(notes[i], t);
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.22, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.34);
+      osc.connect(g).connect(this.masterGain ?? ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.36);
+    }
+  }
 }

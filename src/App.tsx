@@ -12,21 +12,25 @@ import {
 } from './firebase';
 import { CHARACTERS, DEFAULT_GAME_SETTINGS } from './game/characters';
 import { UnstableArenaEngine } from './game/engine';
-import { createEmptyMapVotes } from './game/maps';
+import { createEmptyMapVotes, getRotationWindow } from './game/maps';
 import type { CharacterId, GameModeId, HudSnapshot } from './game/types';
+
+const INITIAL_ROTATION = getRotationWindow();
 
 const INITIAL_HUD: HudSnapshot = {
   screen: 'title',
-  mode: 'online_world',
-  partyMode: 'classic',
+  mode: 'ffa',
+  partyMode: 'knockout',
   botDifficulty: 'medium',
   isSpectating: false,
   spectatorViewMode: 'follow',
   characterId: 'wemmbu',
   roomMode: 'ffa',
   playerTeam: 'ffa',
-  currentMapId: 'container_yard',
-  mapTimeRemaining: 900,
+  currentMapId: INITIAL_ROTATION.activeMaps[0],
+  mapTimeRemaining: INITIAL_ROTATION.remainingSeconds,
+  activeRotationMaps: INITIAL_ROTATION.activeMaps,
+  rotationEndsAt: INITIAL_ROTATION.endsAtMs,
   hp: 110,
   maxHp: 110,
   absorption: 0,
@@ -60,6 +64,7 @@ const INITIAL_HUD: HudSnapshot = {
   ],
   elytraCooldown: 0,
   elytraMaxCooldown: 3.8,
+  elytraFlightRemaining: 0,
   isGliding: false,
   isBlocking: false,
   isStealthed: false,
@@ -99,6 +104,7 @@ const INITIAL_HUD: HudSnapshot = {
   muted: false,
   fps: 60,
   settings: DEFAULT_GAME_SETTINGS,
+  isPractice: false,
   multiplayer: {
     status: 'idle',
     roomKind: 'global',
@@ -109,9 +115,13 @@ const INITIAL_HUD: HudSnapshot = {
     playerName: 'Player',
     includeBots: true,
     customBots: [],
+    botDifficulty: 'medium',
+    partyMode: 'knockout',
     linkQueueing: false,
-    selectedMap: 'container_yard',
+    selectedMap: INITIAL_ROTATION.activeMaps[0],
     mapVotes: createEmptyMapVotes(),
+    activeRotationMaps: INITIAL_ROTATION.activeMaps,
+    rotationEndsAt: INITIAL_ROTATION.endsAtMs,
     targetKills: 15,
     peers: [],
     error: null,
@@ -224,7 +234,7 @@ export default function App() {
   const activePlayerName = account?.nickname || hud.multiplayer.playerName || 'Player';
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden bg-white">
+    <main className="relative w-screen h-screen overflow-hidden bg-zinc-950">
       <div
         ref={canvasMountRef}
         data-testid="arena-canvas"
@@ -235,6 +245,10 @@ export default function App() {
         <TitleScreen
           selectedCharacter={hud.characterId}
           selectedMode={hud.mode}
+          isPractice={Boolean(hud.isPractice)}
+          currentMapId={hud.currentMapId}
+          activeRotationMaps={hud.activeRotationMaps}
+          rotationEndsAt={hud.rotationEndsAt}
           multiplayer={hud.multiplayer}
           settings={hud.settings}
           chatMessages={hud.chatMessages}
@@ -243,6 +257,10 @@ export default function App() {
           initialLinkCode={initialLinkCode}
           onSelectCharacter={handleSelectCharacter}
           onSelectMode={handleSelectMode}
+          onSetPracticeMode={(enabled) => engineRef.current?.setPracticeMode(enabled)}
+          onSelectOpenWorldMap={(mapId) => engineRef.current?.setOpenWorldMap(mapId)}
+          onSelectPracticeMap={(mapId) => engineRef.current?.voteMap(mapId)}
+          onPlayUiSound={(kind, step) => engineRef.current?.playUiSound(kind, step)}
           onStart={handleStart}
           onSetPlayerName={(name) => engineRef.current?.setPlayerName(name)}
           onOpenAuth={(tab) => {
@@ -291,6 +309,8 @@ export default function App() {
           onMobileLook={(dx, dy) => engineRef.current?.mobileLook(dx, dy)}
           onChangeCharacter={(charId) => engineRef.current?.setCharacter(charId)}
           onChangeMap={(mapId) => engineRef.current?.voteMap(mapId)}
+          onTriggerPracticeBuff={(kind) => engineRef.current?.triggerPracticeBuff(kind)}
+          onTriggerPracticeEvent={(kind) => engineRef.current?.triggerPracticeArenaEvent(kind)}
           onSpectatorPrev={() => engineRef.current?.selectPrevSpectatorTarget()}
           onSpectatorNext={() => engineRef.current?.selectNextSpectatorTarget()}
           onToggleSpectatorMode={() => engineRef.current?.toggleSpectatorViewMode()}

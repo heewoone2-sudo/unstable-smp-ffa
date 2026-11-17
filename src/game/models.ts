@@ -1,6 +1,28 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import type { CharacterProfile, WeaponSlotId } from './types';
+import type { ArenaBuffKind, CharacterProfile, WeaponSlotId } from './types';
+
+function createExtrudedOutlineGeometry(
+  sourceGeo: THREE.BufferGeometry,
+  thickness: number
+): THREE.BufferGeometry {
+  const geo = sourceGeo.clone();
+  if (!geo.attributes.normal) {
+    geo.computeVertexNormals();
+  }
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const norm = geo.attributes.normal as THREE.BufferAttribute;
+  for (let i = 0; i < pos.count; i++) {
+    pos.setXYZ(
+      i,
+      pos.getX(i) + norm.getX(i) * thickness,
+      pos.getY(i) + norm.getY(i) * thickness,
+      pos.getZ(i) + norm.getZ(i) * thickness
+    );
+  }
+  pos.needsUpdate = true;
+  return geo;
+}
 
 export interface FighterRig {
   root: THREE.Group;
@@ -624,31 +646,72 @@ export function createFighterModel(
 
   bodyGroup.add(leftArmPivot, rightArmPivot);
 
-  // Enemy Silhouette Outline Shells (BackSide extrusion on main body parts)
+  // High-Visibility Non-Overlapping Enemy Silhouette Outline Shells (Normal-Extruded + Unlit Neon Rose)
   const outlineMat = new THREE.MeshBasicMaterial({
-    color: 0xef4444,
+    color: 0xff1744,
     side: THREE.BackSide,
     transparent: true,
-    opacity: 0.96,
+    opacity: 0.98,
     depthWrite: false,
+    toneMapped: false,
+    fog: false,
+    polygonOffset: true,
+    polygonOffsetFactor: 2,
+    polygonOffsetUnits: 2,
   });
   const outlineMeshes: THREE.Mesh[] = [];
-  const attachOutline = (mesh: THREE.Mesh, scale = 1.095) => {
-    const om = new THREE.Mesh(mesh.geometry, outlineMat);
+  const attachExtrudedOutline = (mesh: THREE.Mesh, thickness = 0.068) => {
+    const om = new THREE.Mesh(createExtrudedOutlineGeometry(mesh.geometry, thickness), outlineMat);
     om.position.copy(mesh.position);
     om.rotation.copy(mesh.rotation);
-    om.scale.setScalar(scale);
+    om.renderOrder = 2;
     om.visible = false;
     mesh.parent?.add(om);
     outlineMeshes.push(om);
   };
-  attachOutline(torso, 1.095);
-  attachOutline(chestPlate, 1.09);
-  attachOutline(headMesh, 1.1);
-  attachOutline(leftArm, 1.11);
-  attachOutline(rightArm, 1.11);
-  attachOutline(leftLeg, 1.095);
-  attachOutline(rightLeg, 1.095);
+  // Outer head + hair + hood unified silhouette shell so hair/hood never poke through or overlap
+  const headOuterOutlineGeo = createExtrudedOutlineGeometry(
+    new RoundedBoxGeometry(0.56, 0.54, 0.56, 4, 0.11),
+    0.068
+  );
+  const headOutlineMesh = new THREE.Mesh(headOuterOutlineGeo, outlineMat);
+  headOutlineMesh.position.set(0, 0.26, -0.02);
+  headOutlineMesh.renderOrder = 2;
+  headOutlineMesh.visible = false;
+  headGroup.add(headOutlineMesh);
+  outlineMeshes.push(headOutlineMesh);
+
+  attachExtrudedOutline(torso, 0.072);
+  attachExtrudedOutline(chestPlate, 0.068);
+  attachExtrudedOutline(belt, 0.062);
+  attachExtrudedOutline(leftShoulder, 0.062);
+  attachExtrudedOutline(leftArm, 0.066);
+  attachExtrudedOutline(rightShoulder, 0.062);
+  attachExtrudedOutline(rightArm, 0.066);
+  attachExtrudedOutline(leftLeg, 0.066);
+  attachExtrudedOutline(leftBoot, 0.06);
+  attachExtrudedOutline(rightLeg, 0.066);
+  attachExtrudedOutline(rightBoot, 0.06);
+
+  // Ground Target Ring for instant hostile identification from any elevation
+  const enemyBeaconRingGeo = new THREE.RingGeometry(0.68, 0.88, 32);
+  enemyBeaconRingGeo.rotateX(-Math.PI / 2);
+  const enemyBeaconRing = new THREE.Mesh(
+    enemyBeaconRingGeo,
+    new THREE.MeshBasicMaterial({
+      color: 0xff1744,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      toneMapped: false,
+      fog: false,
+    })
+  );
+  enemyBeaconRing.position.y = 0.035;
+  enemyBeaconRing.visible = false;
+  root.add(enemyBeaconRing);
+  outlineMeshes.push(enemyBeaconRing);
 
   // Aerodynamic Swept Elytra Glider Wings
   const wingsGroup = new THREE.Group();
@@ -1237,33 +1300,43 @@ export function createBossMonsterModel(
 
   bodyGroup.add(leftArmPivot, rightArmPivot);
 
-  // Enemy Red Silhouette Outline Shells across monster body parts
+  // Enemy High-Visibility Normal-Extruded Silhouette Outline Shells across monster body parts
   const outlineMat = new THREE.MeshBasicMaterial({
-    color: 0xef4444,
+    color: 0xff1744,
     side: THREE.BackSide,
     transparent: true,
-    opacity: 0.96,
+    opacity: 0.98,
     depthWrite: false,
+    toneMapped: false,
+    fog: false,
+    polygonOffset: true,
+    polygonOffsetFactor: 2,
+    polygonOffsetUnits: 2,
   });
   const outlineMeshes: THREE.Mesh[] = [];
-  const attachOutline = (mesh: THREE.Mesh, scale = 1.075) => {
-    const om = new THREE.Mesh(mesh.geometry, outlineMat);
+  const attachExtrudedOutline = (mesh: THREE.Mesh, thickness = 0.095) => {
+    const om = new THREE.Mesh(createExtrudedOutlineGeometry(mesh.geometry, thickness), outlineMat);
     om.position.copy(mesh.position);
     om.rotation.copy(mesh.rotation);
-    om.scale.setScalar(scale);
+    om.renderOrder = 2;
     om.visible = false;
     mesh.parent?.add(om);
     outlineMeshes.push(om);
   };
-  attachOutline(chestMass, 1.06);
-  attachOutline(waist, 1.07);
-  attachOutline(cranium, 1.08);
-  attachOutline(leftBuilt.pauldron, 1.08);
-  attachOutline(leftBuilt.gauntlet, 1.08);
-  attachOutline(rightBuilt.pauldron, 1.08);
-  attachOutline(rightBuilt.gauntlet, 1.08);
-  attachOutline(leftThigh, 1.08);
-  attachOutline(rightThigh, 1.08);
+  attachExtrudedOutline(chestMass, 0.1);
+  attachExtrudedOutline(waist, 0.095);
+  attachExtrudedOutline(cranium, 0.095);
+  attachExtrudedOutline(snout, 0.085);
+  attachExtrudedOutline(leftBuilt.pauldron, 0.095);
+  attachExtrudedOutline(leftBuilt.upperArm, 0.085);
+  attachExtrudedOutline(leftBuilt.gauntlet, 0.095);
+  attachExtrudedOutline(rightBuilt.pauldron, 0.095);
+  attachExtrudedOutline(rightBuilt.upperArm, 0.085);
+  attachExtrudedOutline(rightBuilt.gauntlet, 0.095);
+  attachExtrudedOutline(leftThigh, 0.095);
+  attachExtrudedOutline(leftShin, 0.085);
+  attachExtrudedOutline(rightThigh, 0.095);
+  attachExtrudedOutline(rightShin, 0.085);
 
   // Fiery Wing Membranes
   const wingsGroup = new THREE.Group();
@@ -1430,4 +1503,58 @@ export function createCrownMesh(): THREE.Group {
   g.add(ruby);
   return g;
 }
+
+/**
+ * Composite 3D Floating Arena Supply Core Mesh (Berserk / Haste / Aegis / Overcharge).
+ */
+export function createSupplyOrbMesh(kind: ArenaBuffKind): THREE.Group {
+  const g = new THREE.Group();
+  const palette: Record<ArenaBuffKind, { primary: number; glow: number }> = {
+    berserk: { primary: 0xff2e54, glow: 0xfbbf24 },
+    haste: { primary: 0x06b6d4, glow: 0xbae6fd },
+    aegis: { primary: 0x10b981, glow: 0xfef08a },
+    overcharge: { primary: 0xa855f7, glow: 0xe879f9 },
+  };
+  const colors = palette[kind] ?? palette.berserk;
+
+  // Floating core group only (no ground disk, no vertical beam)
+  const coreGroup = new THREE.Group();
+  coreGroup.name = 'supplyOrbCore';
+  coreGroup.position.y = 1.0;
+
+  const crystalCore = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.42, 0),
+    makeClearcoatMat(colors.primary, 0.1, 0.35, colors.primary, 0.95, 1.0)
+  );
+  const innerGem = new THREE.Mesh(
+    new THREE.OctahedronGeometry(0.24, 1),
+    new THREE.MeshBasicMaterial({
+      color: colors.glow,
+      toneMapped: false,
+    })
+  );
+
+  const ringOuter = new THREE.Mesh(
+    new THREE.TorusGeometry(0.62, 0.036, 10, 28),
+    new THREE.MeshBasicMaterial({
+      color: colors.glow,
+      toneMapped: false,
+    })
+  );
+  ringOuter.rotation.x = Math.PI / 3;
+
+  const ringInner = new THREE.Mesh(
+    new THREE.TorusGeometry(0.5, 0.028, 8, 24),
+    new THREE.MeshBasicMaterial({
+      color: colors.primary,
+      toneMapped: false,
+    })
+  );
+  ringInner.rotation.y = Math.PI / 3;
+
+  coreGroup.add(crystalCore, innerGem, ringOuter, ringInner);
+  g.add(coreGroup);
+  return g;
+}
+
 

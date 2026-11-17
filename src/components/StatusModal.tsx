@@ -48,7 +48,7 @@ export function StatusModal({
 
   const subtitle = isPause
     ? hud.mode === 'online_world'
-      ? '초원 216m 글로벌 오픈월드가 실시간으로 진행 중입니다.'
+      ? '20종 중 4맵 로테이션 오픈월드가 실시간으로 진행 중입니다.'
       : isRoomMatch
         ? '게임 나가기를 누르면 방을 유지한 채 사설 대기실로 돌아갑니다.'
         : '전투를 재개하거나 타이틀로 돌아갈 수 있습니다.'
@@ -108,7 +108,7 @@ export function StatusModal({
           </div>
         )}
 
-        {isPause && !isNetworked && hud.mode === 'ffa' && (
+        {isPause && !isNetworked && Boolean(hud.isPractice) && (
           <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2 text-xs">
             <div className="font-bold text-slate-800">연습장 캐릭터 &amp; 맵 즉시 변경</div>
             <div className="grid grid-cols-2 gap-2">
