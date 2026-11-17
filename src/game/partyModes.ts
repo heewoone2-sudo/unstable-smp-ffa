@@ -94,7 +94,7 @@ export function computeWaterBurnHealing(
 }
 
 /**
- * Fall Guys-style Kill Knockout Round Configuration (3 minutes = 180s per round).
+ * Fall Guys-style Kill Knockout Round Configuration (1 minute = 60s per round).
  */
 export interface KnockoutRoundInfo {
   round: number;
@@ -102,18 +102,94 @@ export interface KnockoutRoundInfo {
   durationSec: number;
 }
 
+export const MAX_KNOCKOUT_ROUNDS = 3;
+
 export function getKnockoutRoundInfo(round: number): KnockoutRoundInfo {
-  const safeRound = Math.max(1, Math.floor(round));
-  if (safeRound === 1) return { round: 1, quota: 1, durationSec: 180 };
-  if (safeRound === 2) return { round: 2, quota: 2, durationSec: 180 };
-  if (safeRound === 3) return { round: 3, quota: 3, durationSec: 180 };
-  return { round: safeRound, quota: Math.min(5, safeRound), durationSec: 180 };
+  const safeRound = Math.max(1, Math.min(MAX_KNOCKOUT_ROUNDS, Math.floor(round)));
+  if (safeRound === 1) return { round: 1, quota: 1, durationSec: 60 };
+  if (safeRound === 2) return { round: 2, quota: 2, durationSec: 60 };
+  return { round: 3, quota: 3, durationSec: 60 };
 }
 
 export function shouldEndMatchOnKillLimit(partyMode: CustomPartyMode, mode: GameModeId): boolean {
   if (mode === 'online_world' || mode === 'link_duel') return false;
   if (partyMode === 'knockout' || partyMode === 'boss_raid') return false;
   return true;
+}
+
+export interface KnockoutRoundCandidate {
+  id: string;
+  kills: number;
+  hp: number;
+}
+
+export interface KnockoutFinalContender {
+  id: string;
+  kills: number;
+  hp: number;
+  isLocal?: boolean;
+}
+
+/**
+ * Resolves the Round 3 Final Showdown so Knockout always crowns a single Champion
+ * and never loops endlessly into Round 4+.
+ */
+export function resolveKnockoutFinalShowdown(
+  contenders: ReadonlyArray<KnockoutFinalContender>
+): { championId: string | null; eliminatedIds: Set<string> } {
+  if (contenders.length === 0) {
+    return { championId: null, eliminatedIds: new Set<string>() };
+  }
+  const sorted = contenders.slice().sort((a, b) => {
+    if (b.kills !== a.kills) return b.kills - a.kills;
+    if (b.hp !== a.hp) return b.hp - a.hp;
+    return (b.isLocal ? 1 : 0) - (a.isLocal ? 1 : 0);
+  });
+  const championId = sorted[0]?.id ?? null;
+  const eliminatedIds = new Set<string>();
+  for (let i = 1; i < sorted.length; i++) {
+    eliminatedIds.add(sorted[i].id);
+  }
+  return { championId, eliminatedIds };
+}
+
+/**
+ * Resolves which AI rivals are eliminated at the end of a Knockout round.
+ * Guarantees multi-round progression (R1 -> R2 -> R3+) when enough contenders remain
+ * so matches never unexpectedly end in Round 1 due to every rival sitting at 0 kills.
+ */
+export function selectKnockoutRoundEliminations(
+  round: number,
+  quota: number,
+  candidates: ReadonlyArray<KnockoutRoundCandidate>
+): { eliminatedIds: Set<string>; survivorIds: Set<string> } {
+  const safeRound = Math.max(1, Math.floor(round));
+  const minSurvivingRivals =
+    safeRound === 1
+      ? Math.min(candidates.length, 3)
+      : safeRound === 2
+        ? Math.min(candidates.length, 2)
+        : 0;
+
+  const qualified = candidates.filter((c) => c.kills >= quota);
+  const belowQuota = candidates
+    .filter((c) => c.kills < quota)
+    .slice()
+    .sort((a, b) => (b.kills !== a.kills ? b.kills - a.kills : b.hp - a.hp));
+
+  const wildcardNeed = Math.max(0, minSurvivingRivals - qualified.length);
+  const survivorIds = new Set<string>(qualified.map((c) => c.id));
+  const eliminatedIds = new Set<string>();
+
+  belowQuota.forEach((c, idx) => {
+    if (idx < wildcardNeed) {
+      survivorIds.add(c.id);
+    } else {
+      eliminatedIds.add(c.id);
+    }
+  });
+
+  return { eliminatedIds, survivorIds };
 }
 
 export interface KnockoutMutatorConfig {
@@ -377,10 +453,9 @@ export function getRandomArsenalLoadout(cycleIdx: number): {
 export function resolveEffectiveRoomMode(
   mode: GameModeId,
   roomMode: RoomMode,
-  partyMode: CustomPartyMode = 'classic'
+  _partyMode: CustomPartyMode = 'classic'
 ): RoomMode {
   if (mode !== 'multiplayer') return 'ffa';
-  if (partyMode === 'knockout') return 'ffa';
   return roomMode === 'team' ? 'team' : 'ffa';
 }
 
@@ -605,4 +680,189 @@ export function computeSurgeModifiers(
     killHealBonus: cfg.killHealBonus,
   };
 }
+
+/**
+ * Realistic player callsigns (Korean & global gamer handles) used for Humanized Challenger AI
+ * so opponents in Quick Match, Ranked Duel, and Open World feel like real human players.
+ */
+export const HUMAN_LIKE_CALLSIGNS: readonly string[] = [
+  '박치기공룡',
+  '철퇴장인현우',
+  '딸피킬러',
+  '엔더진주장인',
+  '뒤치기장인',
+  '크리티컬중독',
+  '김점프',
+  '블록깎는노인',
+  '민트초코단장',
+  '한대만때리자',
+  '풍압점프러',
+  '무빙지리네',
+  '서리검객',
+  '단검술사지훈',
+  '황금사과먹방',
+  '석궁원툴',
+  '번개삼지창',
+  '용암밟았네',
+  '쉐도우탭',
+  '실드브레이커',
+  '왕관내꺼야',
+  '점프패드요정',
+  '흑요석건축가',
+  '폭탄광민수',
+  '거미줄극혐',
+  '아까비',
+  '고인물',
+  '뉴비입니다',
+  '살려주세요',
+  '오늘만산다',
+  '치킨먹고싶다',
+  '마우스고장남',
+  '새벽반유저',
+  '방패깨고감',
+  '진주타고옴',
+  '활맞고울음',
+  '공중제비장인',
+  '피방사장님',
+  '배고프다',
+  '닉네임뭐하지',
+];
+
+export function pickHumanizedChallengerNames(
+  count: number,
+  excludeName = '',
+  seed = Date.now()
+): string[] {
+  const cleanExclude = excludeName.trim().toLowerCase();
+  const pool = HUMAN_LIKE_CALLSIGNS.filter((n) => n.toLowerCase() !== cleanExclude);
+  let s = (Math.floor(seed) ^ 0x9e3779b9) >>> 0;
+  const nextRand = () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(nextRand() * (i + 1));
+    const tmp = pool[i];
+    pool[i] = pool[j];
+    pool[j] = tmp;
+  }
+  return pool.slice(0, Math.max(1, count));
+}
+
+export interface PlayerSkillEvaluationInput {
+  elo?: number;
+  wins?: number;
+  losses?: number;
+  kills?: number;
+  deaths?: number;
+  recentKd?: number;
+  winStreak?: number;
+  lossStreak?: number;
+}
+
+export interface SkillMatchmakingDecision {
+  skillScore: number;
+  recommendedDifficulty: BotDifficulty;
+  frequentAiMatch: boolean;
+  targetWaitSec: number;
+  skillBracketLabel: string;
+}
+
+export type SkillEvaluationResult = SkillMatchmakingDecision;
+
+/**
+ * Continuously evaluates a player's live skill (ELO, overall K/D, recent K/D, and win/loss streaks)
+ * to decide:
+ * 1) Whether to frequently trigger early AI matches (for lower-tier / rookie / struggling players)
+ *    or search up to the full 30-second window for real human opponents.
+ * 2) Whether AI difficulty should be scaled up to 'hard' (어려움), 'medium' (보통), or 'easy' (쉬움).
+ */
+export function evaluatePlayerSkillForMatchmaking(
+  input: PlayerSkillEvaluationInput,
+  rng: () => number = Math.random
+): SkillMatchmakingDecision {
+  const elo = typeof input.elo === 'number' && Number.isFinite(input.elo) ? input.elo : 1000;
+  const wins = Math.max(0, input.wins ?? 0);
+  const losses = Math.max(0, input.losses ?? 0);
+  const kills = Math.max(0, input.kills ?? 0);
+  const deaths = Math.max(0, input.deaths ?? 0);
+  const totalGames = wins + losses;
+  const overallKd = deaths > 0 ? kills / deaths : kills > 0 ? kills : 1.0;
+  const recentKd =
+    typeof input.recentKd === 'number' && Number.isFinite(input.recentKd)
+      ? input.recentKd
+      : overallKd;
+  const effectiveKd = recentKd * 0.65 + overallKd * 0.35;
+  const winRate = totalGames > 0 ? wins / totalGames : 0.5;
+  const winStreak = Math.max(0, input.winStreak ?? 0);
+  const lossStreak = Math.max(0, input.lossStreak ?? 0);
+
+  const skillScore = Math.round(
+    elo +
+      (effectiveKd - 1.0) * 190 +
+      (winRate - 0.5) * 180 +
+      winStreak * 75 -
+      lossStreak * 85
+  );
+
+  let recommendedDifficulty: BotDifficulty = 'medium';
+  if (
+    skillScore >= 1220 ||
+    elo >= 1250 ||
+    effectiveKd >= 1.55 ||
+    winStreak >= 3
+  ) {
+    recommendedDifficulty = 'hard';
+  } else if (
+    skillScore < 940 ||
+    lossStreak >= 2 ||
+    (deaths >= 3 && effectiveKd < 0.68)
+  ) {
+    recommendedDifficulty = 'easy';
+  }
+
+  // Low-tier / rookie / struggling players get frequent fast AI matches (7~13s),
+  // whereas mid/high-skill players search longer for real humans up to the 30s cap.
+  const isLowTierOrStruggling =
+    elo < 1060 && skillScore < 1080 && winStreak < 2;
+  const roll = Math.max(0, Math.min(0.999, rng()));
+
+  if (isLowTierOrStruggling) {
+    const frequentAiMatch = roll < 0.85 || lossStreak >= 1;
+    const waitSec = frequentAiMatch ? Math.round(7 + roll * 6) : 30;
+    return {
+      skillScore,
+      recommendedDifficulty,
+      frequentAiMatch,
+      targetWaitSec: Math.min(30, Math.max(6, waitSec)),
+      skillBracketLabel:
+        recommendedDifficulty === 'easy'
+          ? '루키 구간 · 빠른 매칭'
+          : '초중급 구간 · 빠른 매칭 우선',
+    };
+  }
+
+  if (recommendedDifficulty === 'hard') {
+    const earlyRoll = roll < 0.2;
+    return {
+      skillScore,
+      recommendedDifficulty: 'hard',
+      frequentAiMatch: earlyRoll,
+      targetWaitSec: earlyRoll ? Math.round(18 + roll * 8) : 30,
+      skillBracketLabel: '챌린저 구간 · 상위 매칭',
+    };
+  }
+
+  const midEarly = roll < 0.45;
+  return {
+    skillScore,
+    recommendedDifficulty,
+    frequentAiMatch: midEarly,
+    targetWaitSec: midEarly ? Math.round(12 + roll * 10) : 30,
+    skillBracketLabel: '실력자 표준 구간 · 실시간 유저 & 밸런스 매칭',
+  };
+}
+
 

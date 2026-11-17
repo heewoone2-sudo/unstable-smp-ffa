@@ -645,7 +645,9 @@ export function GameHud({
                   className="flex flex-wrap items-center justify-center gap-2 sm:gap-3.5 text-xs sm:text-sm font-display font-bold"
                 >
                   <span className="px-2 py-0.5 rounded bg-rose-600 text-white text-[11px] font-black tracking-wide">
-                    R{hud.knockoutRound ?? 1} 녹아웃
+                    {(hud.knockoutRound ?? 1) >= 3
+                      ? `R${hud.knockoutRound} · 결승 녹아웃`
+                      : `R${hud.knockoutRound ?? 1} / 3 녹아웃`}
                   </span>
                   <span
                     data-testid="knockout-clock"
@@ -958,11 +960,6 @@ export function GameHud({
                                   {entry.name}
                                   {entry.isLocal ? ' (나)' : ''}
                                 </span>
-                                {entry.isBot && (
-                                  <span className="px-1 py-0.5 rounded bg-slate-200 text-slate-600 text-[9px] font-bold">
-                                    BOT
-                                  </span>
-                                )}
                               </div>
                               <div className="flex items-center gap-3 shrink-0">
                                 <div className="w-12 h-1.5 bg-slate-200 rounded-xs overflow-hidden">
@@ -1002,11 +999,6 @@ export function GameHud({
                           {entry.name}
                           {entry.isLocal ? ' (나)' : ''}
                         </span>
-                        {entry.isBot && (
-                          <span className="px-1 py-0.5 rounded bg-slate-200 text-slate-600 text-[9px] font-bold shrink-0">
-                            BOT
-                          </span>
-                        )}
                       </div>
                       <span className="col-span-3 text-slate-600 truncate">{cProf?.name ?? entry.characterId}</span>
                       <span className="col-span-2 font-mono-num text-slate-700">{Math.max(0, entry.hp)}</span>

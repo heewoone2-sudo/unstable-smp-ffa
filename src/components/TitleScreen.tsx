@@ -1,7 +1,5 @@
 import {
   Check,
-  ChevronDown,
-  ChevronUp,
   Clock,
   Copy,
   Crown,
@@ -10,13 +8,12 @@ import {
   GripVertical,
   Link2,
   MapPin,
+  Play,
   Plus,
   Settings,
   Shield,
-  Shuffle,
   Sparkles,
   Swords,
-  Target,
   Trash2,
   Trophy,
   UserPlus,
@@ -26,9 +23,14 @@ import {
   Zap,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import type { LocalSkillStats } from '../App';
 import type { PlayerAccountProfile } from '../firebase';
 import { CHARACTER_LIST, CHARACTER_MAP, GAME_MODES } from '../game/characters';
 import { MAP_DEFINITIONS, MAP_ORDER } from '../game/maps';
+import {
+  evaluatePlayerSkillForMatchmaking,
+  type SkillEvaluationResult,
+} from '../game/partyModes';
 import type {
   BotDifficulty,
   CharacterId,
@@ -43,6 +45,7 @@ import type {
   PlayerTeam,
   RoomMode,
 } from '../game/types';
+import { OverwatchHeroSelect } from './OverwatchHeroSelect';
 import { WeaponIcon } from './WeaponIcons';
 
 function formatRotationTimer(seconds: number): string {
@@ -60,9 +63,9 @@ const ARENA_RULE_LIST: Array<{
 }> = [
   {
     id: 'knockout',
-    label: '녹아웃 서바이벌',
-    badge: '3:00',
-    shortDesc: '3분마다 킬 할당 미달자 탈락',
+    label: '1분 녹아웃 서바이벌',
+    badge: '1:00',
+    shortDesc: '1분마다 킬 할당 미달자 탈락',
   },
   {
     id: 'random_arsenal',
@@ -119,6 +122,7 @@ interface TitleScreenProps {
   settings: GameSettings;
   chatMessages: ChatEntry[];
   account: PlayerAccountProfile | null;
+  skillStats?: LocalSkillStats;
   initialRoomCode: string;
   initialLinkCode: string;
   onSelectCharacter: (id: CharacterId) => void;
@@ -128,6 +132,7 @@ interface TitleScreenProps {
   onSelectPracticeMap: (mapId: MapId) => void;
   onPlayUiSound?: (kind: 'vote' | 'tick' | 'lock', step?: number) => void;
   onStart: () => void;
+  onLaunchMatchedGame?: (skillDifficulty?: BotDifficulty) => void;
   onSetPlayerName: (name: string) => void;
   onOpenAuth: (tab: 'auth' | 'leaderboard' | 'friends') => void;
   onOpenSettings: () => void;
@@ -135,6 +140,8 @@ interface TitleScreenProps {
   onJoinLinkDuel: (code: string, name: string) => void;
   onQueueLinkDuel: (name: string) => void;
   onCancelLinkQueue: () => void;
+  onQueueQuickMatch?: (name: string) => void;
+  onCancelQuickQueue?: () => void;
   onCreateRoom: (
     name: string,
     includeBots: boolean,
@@ -155,20 +162,21 @@ interface TitleScreenProps {
 
 const PATCH_NOTES = [
   {
-    version: 'v3.6 — 화이트 아레나 로비 & 사설 상단 직결 개편',
+    version: 'v3.7 — 실시간 매칭 대기열 & 실력 기반 매칭',
     date: '최신 업데이트',
     highlights: [
-      '전체 로비를 밝은 화이트 스튜디오 테마로 통일하고 상단 바 3등분(좌 랭킹전·데스매치 / 중앙 빠른 대전·사설 / 우 유틸) 배치',
-      '가로 드래그 없는 11명 전체 캐릭터 격자 선택 + 대칭 랜덤 버튼 적용',
-      '좌측 패널 세로 풀사이즈 확장 및 대형 화이트 전장/서버 버튼 배치',
+      '빠른 대전·랭킹전 실시간 매칭 대기열(00:00~00:30 대형 타이머) 및 30초 자동 성사 적용',
+      '플레이어 ELO·전적·최근 K/D·연승/연패 기반 실시간 랭크 매칭 및 밸런스 보정 적용',
+      '데스매치 오픈월드 및 연습장 즉시 입장, 3라운드 결승 녹아웃 개편',
     ],
   },
   {
-    version: 'v3.5 — 겉날개 10초 제한 & 엔더진주 쿨타임 단축',
+    version: 'v3.6 — 화이트 아레나 로비 & 사용자 설정 게임 개편',
     date: '이전 업데이트',
     highlights: [
-      '겉날개(Elytra) 무한 고공 비행 방지를 위해 연속 비행 최대 10초 제한 및 인게임 카운트다운 추가',
-      '엔더 진주 쿨타임 4.8초 → 2.4초 대폭 단축으로 기동성·추격전 강화',
+      '전체 로비를 밝은 화이트 스튜디오 테마로 통일하고 빠른 대전을 상단 정중앙(50%)에 배치',
+      '가로 드래그 없는 11명 전체 캐릭터 격자 선택 + 대칭 랜덤 버튼 적용',
+      '3분 녹아웃 라운드 종료 시 9종 스펙터클 탈락 연출(희귀 잭팟 4종 포함) 추가',
     ],
   },
 ];
@@ -183,6 +191,7 @@ export function TitleScreen({
   multiplayer,
   settings,
   account,
+  skillStats,
   initialRoomCode,
   initialLinkCode,
   onSelectCharacter,
@@ -192,6 +201,7 @@ export function TitleScreen({
   onSelectPracticeMap,
   onPlayUiSound,
   onStart,
+  onLaunchMatchedGame,
   onSetPlayerName,
   onOpenAuth,
   onOpenSettings,
@@ -199,6 +209,8 @@ export function TitleScreen({
   onJoinLinkDuel,
   onQueueLinkDuel,
   onCancelLinkQueue,
+  onQueueQuickMatch,
+  onCancelQuickQueue,
   onCreateRoom,
   onJoinRoom,
   onUpdateLobby,
@@ -208,8 +220,6 @@ export function TitleScreen({
 }: TitleScreenProps) {
   const char = CHARACTER_MAP[selectedCharacter] ?? CHARACTER_LIST[0];
   const modeInfo = GAME_MODES.find((m) => m.id === selectedMode) ?? GAME_MODES[0];
-  const activeRuleId: CustomPartyMode = multiplayer.partyMode ?? 'knockout';
-  const activeRule = ARENA_RULE_LIST.find((p) => p.id === activeRuleId) ?? ARENA_RULE_LIST[0];
 
   const [joinCodeInput, setJoinCodeInput] = useState(initialRoomCode || '');
   const [linkCodeInput, setLinkCodeInput] = useState(initialLinkCode || '');
@@ -217,8 +227,9 @@ export function TitleScreen({
   const [copiedLink, setCopiedLink] = useState(false);
 
   const [updatesOpen, setUpdatesOpen] = useState(false);
-  const [loadoutExpanded, setLoadoutExpanded] = useState(false);
-  const [showAll20Maps, setShowAll20Maps] = useState(false);
+  const [heroSelectMode, setHeroSelectMode] = useState<'quick_launch' | 'browse' | null>(null);
+  const [heroSelectSec, setHeroSelectSec] = useState(15);
+  const [heroSelectLaunching, setHeroSelectLaunching] = useState(false);
 
   // Drag & Drop Bot state (inside Custom Room mode)
   const [dragPayload, setDragPayload] = useState<{
@@ -235,6 +246,26 @@ export function TitleScreen({
   const [lastVotedMap, setLastVotedMap] = useState<MapId | null>(null);
   const [rouletteSpinning, setRouletteSpinning] = useState(false);
   const [rouletteHighlightMap, setRouletteHighlightMap] = useState<MapId | null>(null);
+
+  // Real-time Matchmaking Queue state (Quick Match & Ranked 1v1)
+  const [queueActiveMode, setQueueActiveMode] = useState<'ffa' | 'link_duel' | null>(null);
+  const [queueElapsedSec, setQueueElapsedSec] = useState(0);
+  const [matchFoundState, setMatchFoundState] = useState(false);
+  const [activeQueueDecision, setActiveQueueDecision] = useState<SkillEvaluationResult | null>(null);
+
+  const liveSkillEvaluation = evaluatePlayerSkillForMatchmaking(
+    {
+      elo: account?.elo ?? 1000,
+      wins: (account?.wins ?? 0) + (skillStats?.wins ?? 0),
+      losses: (account?.losses ?? 0) + (skillStats?.losses ?? 0),
+      kills: (account?.kills ?? 0) + (skillStats?.kills ?? 0),
+      deaths: (account?.deaths ?? 0) + (skillStats?.deaths ?? 0),
+      recentKd: skillStats?.recentKd ?? 1.0,
+      winStreak: skillStats?.winStreak ?? 0,
+      lossStreak: skillStats?.lossStreak ?? 0,
+    },
+    () => 0.45
+  );
 
   // Live rotation countdown
   const [rotationSecondsLeft, setRotationSecondsLeft] = useState(() =>
@@ -259,6 +290,75 @@ export function TitleScreen({
   const customBots = multiplayer.customBots ?? [];
   const playerCallsign = account?.nickname || multiplayer.playerName || 'Player';
 
+  const handleStartMatchmakingQueue = (targetMode: 'ffa' | 'link_duel') => {
+    const decision = evaluatePlayerSkillForMatchmaking({
+      elo: account?.elo ?? 1000,
+      wins: (account?.wins ?? 0) + (skillStats?.wins ?? 0),
+      losses: (account?.losses ?? 0) + (skillStats?.losses ?? 0),
+      kills: (account?.kills ?? 0) + (skillStats?.kills ?? 0),
+      deaths: (account?.deaths ?? 0) + (skillStats?.deaths ?? 0),
+      recentKd: skillStats?.recentKd ?? 1.0,
+      winStreak: skillStats?.winStreak ?? 0,
+      lossStreak: skillStats?.lossStreak ?? 0,
+    });
+    setActiveQueueDecision(decision);
+    setQueueElapsedSec(0);
+    setMatchFoundState(false);
+    setQueueActiveMode(targetMode);
+    onPlayUiSound?.('vote');
+
+    if (targetMode === 'link_duel') {
+      onQueueLinkDuel(playerCallsign);
+    } else {
+      onSetPracticeMode(false);
+      onQueueQuickMatch?.(playerCallsign);
+    }
+  };
+
+  const handleCancelMatchmakingQueue = () => {
+    if (queueActiveMode === 'link_duel') {
+      onCancelLinkQueue();
+    } else if (queueActiveMode === 'ffa') {
+      onCancelQuickQueue?.();
+    }
+    setQueueActiveMode(null);
+    setQueueElapsedSec(0);
+    setMatchFoundState(false);
+  };
+
+  const handleTriggerMatchFoundAndLaunch = () => {
+    if (matchFoundState) return;
+    setMatchFoundState(true);
+    onPlayUiSound?.('lock');
+    const diff = (activeQueueDecision ?? liveSkillEvaluation).recommendedDifficulty;
+    window.setTimeout(() => {
+      setQueueActiveMode(null);
+      setMatchFoundState(false);
+      if (onLaunchMatchedGame) {
+        onLaunchMatchedGame(diff);
+      } else {
+        onStart();
+      }
+    }, 900);
+  };
+
+  useEffect(() => {
+    if (!queueActiveMode || matchFoundState) return;
+    const id = window.setInterval(() => {
+      setQueueElapsedSec((prev) => prev + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [queueActiveMode, matchFoundState]);
+
+  useEffect(() => {
+    if (!queueActiveMode || matchFoundState) return;
+    const decision = activeQueueDecision ?? liveSkillEvaluation;
+    // Wait up to decision.targetWaitSec (7~13s for low-tier frequent AI matches, or 30s human search)
+    if (queueElapsedSec >= decision.targetWaitSec || queueElapsedSec >= 30) {
+      handleTriggerMatchFoundAndLaunch();
+    }
+  }, [queueElapsedSec, queueActiveMode, matchFoundState, activeQueueDecision]);
+
   const handleCopyRoomCode = (code: string) => {
     navigator.clipboard?.writeText(code).catch(() => {});
     setCopiedCode(true);
@@ -275,18 +375,51 @@ export function TitleScreen({
     setTimeout(() => setCopiedLink(false), 1800);
   };
 
-  const handlePickRandomCharacter = () => {
-    const candidates = CHARACTER_LIST.filter((c) => c.id !== selectedCharacter);
-    const chosen =
-      candidates[Math.floor(Math.random() * candidates.length)] ?? CHARACTER_LIST[0];
-    onSelectCharacter(chosen.id);
+  const handleConfirmHeroSelect = () => {
+    if (heroSelectLaunching) return;
+    onPlayUiSound?.('lock');
+    if (heroSelectMode === 'quick_launch') {
+      setHeroSelectLaunching(true);
+      const diff = (activeQueueDecision ?? liveSkillEvaluation).recommendedDifficulty;
+      window.setTimeout(() => {
+        setHeroSelectMode(null);
+        setHeroSelectLaunching(false);
+        if (onLaunchMatchedGame) {
+          onLaunchMatchedGame(diff);
+        } else {
+          onStart();
+        }
+      }, 250);
+    } else {
+      setHeroSelectMode(null);
+    }
   };
+
+  const handleCancelHeroSelect = () => {
+    if (heroSelectMode === 'quick_launch') {
+      onCancelQuickQueue?.();
+    }
+    setHeroSelectMode(null);
+    setHeroSelectLaunching(false);
+  };
+
+  useEffect(() => {
+    if (heroSelectMode !== 'quick_launch' || heroSelectLaunching) return;
+    if (heroSelectSec <= 0) {
+      handleConfirmHeroSelect();
+      return;
+    }
+    const id = window.setTimeout(() => {
+      setHeroSelectSec((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => window.clearTimeout(id);
+  }, [heroSelectMode, heroSelectSec, heroSelectLaunching]);
 
   const handleAddBotToTeam = (characterId: CharacterId, team: PlayerTeam) => {
     const cProf = CHARACTER_MAP[characterId] ?? CHARACTER_LIST[0];
     const nextBot: CustomBotSlot = {
       id: `bot-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-      name: `${cProf.name} 봇`,
+      name: cProf.name,
       characterId,
       team,
     };
@@ -348,19 +481,18 @@ export function TitleScreen({
   };
 
   const handleQuickRuleSelectChange = (val: QuickRuleSelectValue) => {
+    if (queueActiveMode) {
+      handleCancelMatchmakingQueue();
+    }
     if (val === 'practice') {
       onSelectMode('ffa');
       onSetPracticeMode(true);
-      setShowAll20Maps(true);
       return;
     }
-    setShowAll20Maps(false);
     onSelectMode('ffa');
     onSetPracticeMode(false);
     onUpdateLobby({ partyMode: val });
   };
-
-  const quickDropdownValue: QuickRuleSelectValue = isPractice ? 'practice' : activeRuleId;
 
   const totalVotes = MAP_ORDER.reduce((sum, mId) => sum + (multiplayer.mapVotes?.[mId] ?? 0), 0);
   const inCustomLobby =
@@ -376,11 +508,97 @@ export function TitleScreen({
       practiceCategoryFilter === 'all' || MAP_DEFINITIONS[mId].category === practiceCategoryFilter
   );
 
-  const quickMatchCtaLabel = isPractice
-    ? '연습장 입장'
-    : activeRuleId === 'knockout'
-      ? '빠른 대전 즉시 출전'
-      : `${activeRule.label} 즉시 출전`;
+  const handlePrimaryLaunch = () => {
+    if (rouletteSpinning) return;
+    if (inCustomLobby) {
+      handleLaunchCustomMatchWithRoulette();
+    } else if (selectedMode === 'multiplayer') {
+      onCreateRoom(
+        playerCallsign,
+        multiplayer.includeBots,
+        'ffa',
+        'ffa',
+        multiplayer.botDifficulty ?? 'medium',
+        multiplayer.partyMode ?? 'knockout',
+        customBots
+      );
+    } else if (selectedMode === 'ffa' && !isPractice) {
+      const decision = evaluatePlayerSkillForMatchmaking({
+        elo: account?.elo ?? 1000,
+        wins: (account?.wins ?? 0) + (skillStats?.wins ?? 0),
+        losses: (account?.losses ?? 0) + (skillStats?.losses ?? 0),
+        kills: (account?.kills ?? 0) + (skillStats?.kills ?? 0),
+        deaths: (account?.deaths ?? 0) + (skillStats?.deaths ?? 0),
+        recentKd: skillStats?.recentKd ?? 1.0,
+        winStreak: skillStats?.winStreak ?? 0,
+        lossStreak: skillStats?.lossStreak ?? 0,
+      });
+      setActiveQueueDecision(decision);
+      onSetPracticeMode(false);
+      onQueueQuickMatch?.(playerCallsign);
+      onPlayUiSound?.('vote');
+      setHeroSelectSec(15);
+      setHeroSelectLaunching(false);
+      setHeroSelectMode('quick_launch');
+    } else if (selectedMode === 'link_duel') {
+      if (queueActiveMode === 'link_duel') {
+        handleTriggerMatchFoundAndLaunch();
+      } else {
+        handleStartMatchmakingQueue('link_duel');
+      }
+    } else {
+      if (queueActiveMode) {
+        handleCancelMatchmakingQueue();
+      }
+      onSetPracticeMode(selectedMode === 'ffa' && isPractice);
+      onStart();
+    }
+  };
+
+  const primaryPlayLabel = rouletteSpinning
+    ? '맵 추첨 중...'
+    : matchFoundState
+      ? '전장 입장 중...'
+      : inCustomLobby
+        ? 'PLAY · 커스텀 시작'
+        : selectedMode === 'ffa'
+          ? isPractice
+            ? 'PLAY · 연습장'
+            : 'PLAY · 빠른 대전'
+          : selectedMode === 'online_world'
+            ? 'PLAY · 데스매치'
+            : selectedMode === 'link_duel'
+              ? queueActiveMode === 'link_duel'
+                ? `매칭 중 (${formatRotationTimer(queueElapsedSec)}) · 즉시 시작`
+                : 'PLAY · 랭킹전'
+              : '방 만들기';
+
+  if (heroSelectMode !== null) {
+    return (
+      <OverwatchHeroSelect
+        selectedCharacter={selectedCharacter}
+        modeTitle={
+          heroSelectMode === 'quick_launch'
+            ? '빠른 대전 · 1분 녹아웃'
+            : selectedMode === 'ffa' && isPractice
+              ? '연습장'
+              : modeInfo.label
+        }
+        mapLabel={
+          selectedMode === 'ffa' && !isPractice ? '20종 랜덤 아레나' : activeMapDef.name
+        }
+        isQuickLaunch={heroSelectMode === 'quick_launch'}
+        countdownSec={heroSelectMode === 'quick_launch' ? heroSelectSec : undefined}
+        isLaunching={heroSelectLaunching}
+        onSelectCharacter={(id) => {
+          onPlayUiSound?.('vote');
+          onSelectCharacter(id);
+        }}
+        onConfirm={handleConfirmHeroSelect}
+        onCancel={handleCancelHeroSelect}
+      />
+    );
+  }
 
   return (
     <div
@@ -443,7 +661,6 @@ export function TitleScreen({
           data-mode-id="ffa"
           data-testid="mode-tab-ffa"
           onClick={() => {
-            setShowAll20Maps(false);
             onSetPracticeMode(false);
             onSelectMode('ffa');
           }}
@@ -456,7 +673,7 @@ export function TitleScreen({
           <Gamepad2 className="hidden sm:block w-4 h-4 shrink-0" />
           <span>빠른 대전</span>
           <span className="hidden md:inline text-[11px] font-bold opacity-85">
-            · {isPractice ? '연습장' : '3분 녹아웃'}
+            · {isPractice ? '연습장' : '1분 녹아웃'}
           </span>
         </button>
 
@@ -479,22 +696,8 @@ export function TitleScreen({
           <span>사용자 설정 게임</span>
         </button>
 
-        {/* Right Utility Controls: Row 2 on <1280px (zero collision with 사용자 설정 게임), Col 3 Right on >=1280px */}
-        <div className="col-span-3 row-start-2 xl:col-span-1 xl:col-start-3 xl:row-start-1 xl:justify-self-end flex items-center justify-between xl:justify-end gap-1.5 pt-1.5 xl:pt-0 border-t border-slate-100 xl:border-t-0 min-w-0">
-          <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 sm:py-2 shrink-0">
-            <span className="text-[11px] font-bold text-slate-500 mr-1.5 whitespace-nowrap">닉네임</span>
-            <input
-              type="text"
-              aria-label="플레이어 닉네임"
-              data-testid="player-name-input"
-              maxLength={14}
-              value={multiplayer.playerName}
-              onChange={(e) => onSetPlayerName(e.target.value)}
-              placeholder="Player"
-              className="w-16 2xl:w-20 bg-transparent text-xs font-bold text-slate-900 focus:outline-none placeholder:text-slate-400"
-            />
-          </div>
-
+        {/* Right Utility Controls: Row 2 on <1280px, Col 3 Right on >=1280px */}
+        <div className="col-span-3 row-start-2 xl:col-span-1 xl:col-start-3 xl:row-start-1 xl:justify-self-end flex items-center justify-end gap-1.5 pt-1.5 xl:pt-0 border-t border-slate-100 xl:border-t-0 min-w-0">
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
@@ -554,12 +757,14 @@ export function TitleScreen({
 
       {/* ==================== MAIN STAGE: FULL-HEIGHT BUTTON-FILLED WHITE LEFT PANEL + OPEN 3D CHARACTER + BOTTOM-RIGHT WHITE TIMER ==================== */}
       <div className="relative z-10 flex-1 min-h-0 flex flex-col lg:flex-row items-stretch justify-between px-3 sm:px-5 py-3 gap-4 overflow-y-auto lg:overflow-hidden pointer-events-none">
-        {/* LEFT VERTICAL WHITE PANEL: Mode Header · 11-Fighter Grid · Large White Map/Mode Cards · Bottom Actions */}
+        {/* LEFT VERTICAL WHITE PANEL */}
         <section
-          className={`pointer-events-auto shrink-0 lg:shrink flex flex-col justify-between gap-2.5 bg-white/95 border border-slate-200 rounded-2xl p-3.5 sm:p-4 shadow-xl text-slate-900 lg:h-full lg:overflow-y-auto ${
+          className={`pointer-events-auto shrink-0 lg:shrink flex flex-col justify-between gap-2.5 bg-white/95 border border-slate-200 rounded-2xl p-3.5 sm:p-4 shadow-xl text-slate-900 lg:overflow-y-auto ${
             inCustomLobby
-              ? 'w-full lg:w-[680px] xl:w-[740px]'
-              : 'w-full lg:w-[475px] xl:w-[500px]'
+              ? 'w-full lg:w-[680px] xl:w-[740px] lg:h-full'
+              : selectedMode === 'ffa' && !isPractice
+                ? 'w-full lg:w-[320px] xl:w-[340px] lg:self-start'
+                : 'w-full lg:w-[440px] xl:w-[465px] lg:h-full'
           }`}
         >
           {/* 1. MODE HEADER */}
@@ -568,7 +773,11 @@ export function TitleScreen({
               <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500">
                 <span className="text-rose-600 font-bold">{modeInfo.subtitle}</span>
                 <span aria-hidden="true">·</span>
-                <span className="truncate text-slate-700">현재 전장: {activeMapDef.name}</span>
+                <span className="truncate text-slate-700">
+                  {selectedMode === 'ffa' && !isPractice
+                    ? '20맵 랜덤'
+                    : activeMapDef.name}
+                </span>
               </div>
               <h1
                 data-testid="lobby-mode-title"
@@ -576,228 +785,131 @@ export function TitleScreen({
               >
                 {selectedMode === 'ffa' && isPractice ? '연습장' : modeInfo.label}
               </h1>
-              <p className="text-xs text-slate-600 mt-0.5 leading-snug">
-                {selectedMode === 'ffa' && isPractice
-                  ? '20종 전술 맵과 11명 파이터의 6슬롯 무장을 자유롭게 테스트합니다.'
-                  : modeInfo.description}
-              </p>
             </div>
           </div>
 
-          {/* 2. ZERO-DRAG 11-FIGHTER GRID + SELECTED FIGHTER SUMMARY */}
-          <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 space-y-2 shrink-0">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-black text-slate-800">캐릭터 선택 · 11명 전체</span>
-              <span className="text-[11px] font-semibold text-slate-500">한 번에 1클릭 선택</span>
-            </div>
-
-            {/* 4x3 Grid showing all 11 fighters simultaneously + Random picker (ZERO horizontal drag/scroll!) */}
-            <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5" data-testid="left-character-grid">
-              {CHARACTER_LIST.map((c) => {
-                const active = selectedCharacter === c.id;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    data-char-id={c.id}
-                    data-testid={`char-card-${c.id}`}
-                    onClick={() => onSelectCharacter(c.id)}
-                    className={`min-h-[36px] px-1.5 sm:px-2 py-1.5 rounded-lg border text-[10px] sm:text-[11px] font-bold transition-colors cursor-pointer flex items-center gap-1 sm:gap-1.5 ${
-                      active
-                        ? 'bg-rose-600 border-rose-600 text-white shadow-xs'
-                        : 'bg-white border-slate-200 text-slate-800 hover:bg-slate-100 hover:border-slate-300'
-                    }`}
-                  >
-                    <span
-                      className={`w-2 h-2 rounded-full shrink-0 ${active ? 'ring-1 ring-white/80' : ''}`}
-                      style={{ backgroundColor: c.primaryColor }}
-                    />
-                    <span className="truncate">{c.name}</span>
-                  </button>
-                );
-              })}
-
-              <button
-                type="button"
-                data-testid="random-character-btn"
-                onClick={handlePickRandomCharacter}
-                className="min-h-[36px] px-1.5 sm:px-2 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 hover:border-slate-300 text-[10px] sm:text-[11px] font-bold text-slate-700 cursor-pointer flex items-center justify-center gap-1 transition-colors"
-                title="무작위 캐릭터 선택"
-              >
-                <Shuffle className="w-3 h-3 text-rose-600 shrink-0" />
-                <span>랜덤</span>
-              </button>
-            </div>
-
-            {/* Selected Fighter Details + Inline Tabular Stats + 6-Slot Bar */}
-            <div className="pt-2 border-t border-slate-200 space-y-1.5">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
-                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          {/* 2. COMPACT SELECTED HERO BANNER (Full Overwatch Hero Select opens on Quick Match PLAY or click) */}
+          {(selectedMode !== 'ffa' || isPractice) && (
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-2.5 space-y-2 shrink-0">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: char.primaryColor }}
+                  />
                   <h2
                     data-testid="selected-character-name"
-                    className="font-display text-base font-black text-slate-900 whitespace-nowrap"
+                    className="font-display text-base font-black text-slate-900 truncate"
                   >
                     {char.name}
                   </h2>
-                  <span className="text-[11px] font-bold text-rose-600 whitespace-nowrap">
+                  <span className="text-[11px] font-bold text-rose-600 truncate">
                     {char.titleKr}
                   </span>
                 </div>
-                <div className="font-mono-num text-[11px] font-bold text-slate-600 whitespace-nowrap">
-                  체력 {char.maxHp} · 속도 {Math.round(char.speedMult * 100)}% · 공격{' '}
-                  {Math.round(char.damageMult * 100)}%
-                </div>
-              </div>
-
-              <p className="text-xs text-slate-600 leading-snug" data-testid="selected-character-desc">
-                {char.summary}
-              </p>
-
-              <div className="flex items-center justify-between gap-1.5 pt-0.5">
-                <div className="flex items-center gap-1 flex-1 min-w-0">
-                  {char.loadout.map((item, idx) => (
-                    <div
-                      key={`${char.id}-slot-${item.id}-${idx}`}
-                      title={`${idx + 1}번 ${item.name} (${item.role})`}
-                      className="flex-1 py-1 rounded-md bg-white border border-slate-200 flex items-center justify-center gap-1"
-                    >
-                      <WeaponIcon id={item.id} className="w-3.5 h-3.5 text-slate-700 shrink-0" />
-                      <span className="text-[9px] font-mono-num font-bold text-slate-500">
-                        {idx + 1}
-                      </span>
-                    </div>
-                  ))}
-                </div>
                 <button
                   type="button"
-                  data-testid="toggle-loadout-drawer-btn"
-                  onClick={() => setLoadoutExpanded((v) => !v)}
-                  className="px-2.5 py-1 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-[10px] font-bold text-slate-700 cursor-pointer whitespace-nowrap shrink-0"
+                  data-testid="open-hero-select-btn"
+                  onClick={() => {
+                    onPlayUiSound?.('vote');
+                    setHeroSelectMode('browse');
+                  }}
+                  className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-black cursor-pointer shrink-0 transition-colors"
                 >
-                  {loadoutExpanded ? '무장 접기' : '무장 상세'}
+                  캐릭터 선택
                 </button>
               </div>
 
-              {loadoutExpanded && (
-                <div className="grid grid-cols-2 gap-1.5 pt-1">
-                  {char.loadout.map((item, idx) => (
-                    <div
-                      key={`${char.id}-detail-${item.id}-${idx}`}
-                      className="p-1.5 rounded-lg bg-white border border-slate-200 flex items-center gap-2"
-                    >
-                      <WeaponIcon id={item.id} className="w-3.5 h-3.5 shrink-0 text-amber-600" />
-                      <div className="min-w-0">
-                        <div className="text-[11px] font-bold text-slate-900 truncate">
-                          {idx + 1}. {item.name}
-                        </div>
-                        <div className="text-[9px] text-slate-500 truncate">
-                          쿨 {item.cooldown.toFixed(1)}s · {item.role}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div className="flex items-center gap-1">
+                {char.loadout.map((item, idx) => (
+                  <div
+                    key={`${char.id}-slot-${item.id}-${idx}`}
+                    title={`${idx + 1}번 ${item.name}`}
+                    className="flex-1 py-1 rounded-md bg-white border border-slate-200 flex items-center justify-center gap-1"
+                  >
+                    <WeaponIcon id={item.id} className="w-3.5 h-3.5 text-slate-700 shrink-0" />
+                    <span className="text-[9px] font-mono-num font-bold text-slate-500">
+                      {idx + 1}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* 3. FLEX-1 VERTICALLY FILLED WHITE MAP / SERVER / MODE BUTTONS */}
           <div className="flex-1 min-h-0 flex flex-col">
-            {/* 3A. 빠른 대전 (FFA / 녹아웃 / 연습장): Large White Map Cards Filling Left Panel */}
+            {/* 3A. 빠른 대전 (단일 통합 서버 · 20맵 랜덤 · 오직 1분 녹아웃) / 연습장 */}
             {selectedMode === 'ffa' && (
               <div className="flex-1 min-h-0 flex flex-col gap-2" data-testid="quick-match-map-section">
-                <div className="flex items-center justify-between gap-2 shrink-0">
-                  <span className="text-xs font-black text-slate-800">
-                    {isPractice ? '연습장 맵 선택 · 전체 20종' : '맵 선택 · 현재 4맵 로테이션'}
-                  </span>
-                  {isPractice ? (
-                    <button
-                      type="button"
-                      data-testid="toggle-all-20-maps-btn"
-                      onClick={() => setShowAll20Maps((v) => !v)}
-                      className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-[11px] font-bold text-slate-800 flex items-center gap-1 cursor-pointer"
-                    >
-                      <span>{showAll20Maps ? '4맵 로테이션 보기' : '전체 20맵 선택'}</span>
-                      {showAll20Maps ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-                    </button>
-                  ) : (
-                    <span className="text-[11px] font-semibold text-slate-500">
-                      15분 로테이션 전용
-                    </span>
-                  )}
-                </div>
-
-                {!(isPractice && showAll20Maps) ? (
+                {!isPractice ? (
                   <div
-                    className="grid grid-cols-2 gap-2.5 flex-1 min-h-[168px] auto-rows-fr"
-                    data-testid="main-rotation-grid"
+                    data-testid="quick-match-unified-server-card"
+                    className="flex-1 min-h-[140px] rounded-xl border-2 border-rose-200 bg-rose-50/60 p-4 flex flex-col justify-between gap-3 shadow-xs"
                   >
-                    {rotationMaps.map((mId, idx) => {
-                      const def = MAP_DEFINITIONS[mId] ?? MAP_DEFINITIONS.container_yard;
-                      const active = currentMapId === mId;
-                      return (
-                        <button
-                          key={mId}
-                          type="button"
-                          data-testid={`rotation-map-card-${mId}`}
-                          onClick={() => onSelectPracticeMap(mId)}
-                          className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between min-h-[82px] shadow-xs ${
-                            active
-                              ? 'bg-rose-50 border-rose-500 ring-2 ring-rose-500/20 text-slate-900'
-                              : 'bg-white border-slate-200 hover:border-slate-400 hover:bg-slate-50 text-slate-900'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-1 text-[11px]">
-                            <span className="font-bold text-slate-500">
-                              #{idx + 1} · {def.badge}
-                            </span>
-                            {active && (
-                              <span className="font-black text-rose-600">선택됨</span>
-                            )}
-                          </div>
-                          <div>
-                            <div className="font-display text-sm sm:text-base font-black text-slate-900 truncate">
-                              {def.name}
-                            </div>
-                            <div className="mt-1.5 flex items-center gap-2">
-                              <span
-                                className="h-1 w-8 rounded-full shrink-0"
-                                style={{ backgroundColor: def.accentHex }}
-                              />
-                              <span className="text-[10px] font-semibold text-slate-500 truncate">
-                                {def.worldRadius * 2}m 밀집 전장
-                              </span>
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                        <span className="text-xs font-black text-rose-700">
+                          단일 통합 빠른 대전 서버
+                        </span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-md bg-rose-600 text-white font-mono-num text-[11px] font-black">
+                        1:00 녹아웃
+                      </span>
+                    </div>
+
+                    <div className="font-display text-base sm:text-lg font-black text-slate-900">
+                      20개 맵 랜덤 · 오직 1분 녹아웃
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="bg-white border border-rose-200/80 rounded-lg p-2">
+                        <div className="text-[10px] font-bold text-slate-500">서버</div>
+                        <div className="text-xs font-black text-slate-900 mt-0.5">단일 통합</div>
+                      </div>
+                      <div className="bg-white border border-rose-200/80 rounded-lg p-2">
+                        <div className="text-[10px] font-bold text-slate-500">맵</div>
+                        <div className="text-xs font-black text-rose-600 mt-0.5">20개 랜덤</div>
+                      </div>
+                      <div className="bg-white border border-rose-200/80 rounded-lg p-2">
+                        <div className="text-[10px] font-bold text-slate-500">규칙</div>
+                        <div className="font-mono-num text-xs font-black text-slate-900 mt-0.5">
+                          1:00 녹아웃
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div className="flex-1 min-h-0 flex flex-col gap-2">
-                    <div className="flex flex-wrap items-center gap-1 shrink-0">
-                      {(
-                        [
-                          { id: 'all', label: '전체 20' },
-                          { id: 'industrial', label: '산업·도시' },
-                          { id: 'nature', label: '자연·유적' },
-                          { id: 'citadel', label: '요새·용암' },
-                          { id: 'cosmic', label: '우주·특수' },
-                        ] as Array<{ id: 'all' | MapCategory; label: string }>
-                      ).map((cat) => (
-                        <button
-                          key={cat.id}
-                          type="button"
-                          onClick={() => setPracticeCategoryFilter(cat.id)}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer ${
-                            practiceCategoryFilter === cat.id
-                              ? 'bg-rose-600 text-white'
-                              : 'bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200'
-                          }`}
-                        >
-                          {cat.label}
-                        </button>
-                      ))}
+                    <div className="flex items-center justify-between gap-2 shrink-0">
+                      <span className="text-xs font-black text-slate-800">
+                        연습장 맵 선택 · 전체 20종
+                      </span>
+                      <div className="flex flex-wrap items-center gap-1">
+                        {(
+                          [
+                            { id: 'all', label: '전체 20' },
+                            { id: 'industrial', label: '산업' },
+                            { id: 'nature', label: '자연' },
+                            { id: 'citadel', label: '요새' },
+                            { id: 'cosmic', label: '우주' },
+                          ] as Array<{ id: 'all' | MapCategory; label: string }>
+                        ).map((cat) => (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() => setPracticeCategoryFilter(cat.id)}
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer ${
+                              practiceCategoryFilter === cat.id
+                                ? 'bg-rose-600 text-white'
+                                : 'bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200'
+                            }`}
+                          >
+                            {cat.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 flex-1 min-h-[150px] overflow-y-auto pr-1">
@@ -876,52 +988,45 @@ export function TitleScreen({
                     );
                   })}
                 </div>
-
-                <div className="p-2.5 rounded-xl bg-sky-50 border border-sky-200 text-xs font-medium text-sky-900 flex items-center gap-2 shrink-0">
-                  <Zap className="w-4 h-4 text-sky-600 shrink-0" />
-                  <span>전장 보급 코어 4종 및 돌발 서지 이벤트가 실시간으로 활성화됩니다.</span>
-                </div>
               </div>
             )}
 
             {/* 3C. 랭킹전 (랭크 1대1 대결) */}
             {selectedMode === 'link_duel' && (
               <div className="flex-1 min-h-0 flex flex-col justify-between gap-2.5" data-testid="link-duel-panel">
-                <div className="grid grid-cols-2 gap-2.5 flex-1 min-h-[120px]">
+                <div className="grid grid-cols-2 gap-2.5 flex-1 min-h-[110px]">
                   <button
                     type="button"
                     data-testid="create-link-duel-btn"
                     onClick={() => onCreateLinkDuel(playerCallsign)}
-                    className="p-4 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-400 text-slate-900 text-left cursor-pointer flex flex-col justify-center gap-2 shadow-xs"
+                    className="p-4 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-400 text-slate-900 text-left cursor-pointer flex items-center justify-center gap-2 shadow-xs"
                   >
-                    <div className="flex items-center gap-2 font-display text-sm sm:text-base font-black leading-tight">
-                      <Link2 className="w-4 h-4 text-rose-600 shrink-0" />
-                      <span>방 생성 · 코드</span>
-                    </div>
-                    <div className="text-xs text-slate-500 leading-relaxed">
-                      4자리 초대 코드를 생성해 친구와 1:1 랭크 대결을 시작합니다.
-                    </div>
+                    <Link2 className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span className="font-display text-sm sm:text-base font-black leading-tight">
+                      방 생성 · 코드
+                    </span>
                   </button>
 
                   <button
                     type="button"
                     data-testid="quick-match-link-duel-btn"
                     onClick={() =>
-                      multiplayer.linkQueueing
-                        ? onCancelLinkQueue()
-                        : onQueueLinkDuel(playerCallsign)
+                      queueActiveMode === 'link_duel' || multiplayer.linkQueueing
+                        ? handleCancelMatchmakingQueue()
+                        : handleStartMatchmakingQueue('link_duel')
                     }
-                    className="p-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-left cursor-pointer flex flex-col justify-center gap-2 shadow-sm"
+                    className={`p-4 rounded-xl text-white text-left cursor-pointer flex items-center justify-center gap-2 shadow-sm transition-colors ${
+                      queueActiveMode === 'link_duel' || multiplayer.linkQueueing
+                        ? 'bg-rose-600 hover:bg-rose-500'
+                        : 'bg-sky-600 hover:bg-sky-500'
+                    }`}
                   >
-                    <div className="flex items-center gap-2 font-display text-sm sm:text-base font-black leading-tight">
-                      <Swords className="w-4 h-4 shrink-0" />
-                      <span>{multiplayer.linkQueueing ? '매칭 대기 취소' : '실시간 1:1 매칭'}</span>
-                    </div>
-                    <div className="text-xs text-sky-100 leading-relaxed">
-                      {multiplayer.linkQueueing
-                        ? '동일 ELO 티어 라이벌을 실시간으로 탐색 중입니다.'
-                        : '동일 티어 라이벌과 즉시 3판 2선승 랭크 대결을 매칭합니다.'}
-                    </div>
+                    <Swords className="w-4 h-4 shrink-0" />
+                    <span className="font-display text-sm sm:text-base font-black leading-tight">
+                      {queueActiveMode === 'link_duel' || multiplayer.linkQueueing
+                        ? `매칭 취소 (${formatRotationTimer(queueElapsedSec)})`
+                        : '실시간 1:1 매칭'}
+                    </span>
                   </button>
                 </div>
 
@@ -969,7 +1074,7 @@ export function TitleScreen({
             {/* 3D. 사용자 설정 게임 (상단 [사용자 설정 게임] 버튼 클릭 시) */}
             {selectedMode === 'multiplayer' && !inCustomLobby && (
               <div className="flex-1 min-h-0 flex flex-col justify-between gap-2.5" data-testid="custom-room-entry">
-                <div className="grid grid-cols-2 gap-2.5 flex-1 min-h-[120px]">
+                <div className="grid grid-cols-2 gap-2.5 flex-1 min-h-[110px]">
                   <button
                     type="button"
                     data-testid="create-ffa-room-btn"
@@ -984,15 +1089,12 @@ export function TitleScreen({
                         customBots
                       )
                     }
-                    className="p-4 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-400 text-slate-900 text-left cursor-pointer flex flex-col justify-center gap-2 shadow-xs"
+                    className="p-4 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-400 text-slate-900 text-left cursor-pointer flex items-center justify-center gap-2 shadow-xs"
                   >
-                    <div className="font-display text-sm sm:text-base font-black flex items-center gap-2 leading-tight">
-                      <Flame className="w-4 h-4 text-rose-600 shrink-0" />
-                      <span>개인전(FFA) 방 생성</span>
-                    </div>
-                    <div className="text-xs text-slate-500 leading-relaxed">
-                      커스텀 봇 자유 배치 · 특수 규칙 및 20맵 룰렛 투표 지원
-                    </div>
+                    <Flame className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span className="font-display text-sm sm:text-base font-black leading-tight">
+                      개인전(FFA) 방 생성
+                    </span>
                   </button>
 
                   <button
@@ -1009,15 +1111,12 @@ export function TitleScreen({
                         customBots
                       )
                     }
-                    className="p-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-left cursor-pointer flex flex-col justify-center gap-2 shadow-sm"
+                    className="p-4 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-left cursor-pointer flex items-center justify-center gap-2 shadow-sm"
                   >
-                    <div className="font-display text-sm sm:text-base font-black flex items-center gap-2 leading-tight">
-                      <Users className="w-4 h-4 shrink-0" />
-                      <span>팀전(RED vs BLUE)</span>
-                    </div>
-                    <div className="text-xs text-sky-100 leading-relaxed">
-                      팀킬 방지 · RED / BLUE 진영 외곽선 구분 및 드래그 팀 배정
-                    </div>
+                    <Users className="w-4 h-4 shrink-0" />
+                    <span className="font-display text-sm sm:text-base font-black leading-tight">
+                      팀전(RED vs BLUE)
+                    </span>
                   </button>
                 </div>
 
@@ -1132,9 +1231,9 @@ export function TitleScreen({
                   </div>
 
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-2">
-                    <div className="text-[10px] font-bold text-slate-500 mb-1">AI 봇 난이도</div>
+                    <div className="text-[10px] font-bold text-slate-500 mb-1">대전 강도</div>
                     <select
-                      aria-label="사용자 설정 게임 봇 난이도"
+                      aria-label="사용자 설정 게임 난이도"
                       data-testid="custom-bot-difficulty-select"
                       value={multiplayer.botDifficulty ?? 'medium'}
                       onChange={(e) =>
@@ -1176,7 +1275,7 @@ export function TitleScreen({
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-bold text-slate-900">
-                        커스텀 봇 배치 ({customBots.length}명)
+                        참가자 배치 ({customBots.length}명)
                       </span>
                       <label className="flex items-center gap-1 text-[11px] text-slate-600 cursor-pointer">
                         <input
@@ -1185,7 +1284,7 @@ export function TitleScreen({
                           onChange={(e) => onUpdateLobby({ includeBots: e.target.checked })}
                           className="accent-rose-600"
                         />
-                        <span>빈 슬롯 자동 봇 채우기</span>
+                        <span>빈 자리 자동 채우기</span>
                       </label>
                     </div>
 
@@ -1254,8 +1353,22 @@ export function TitleScreen({
                           },
                         ] as const
                       ).map((zone) => {
-                        const teamBots = customBots.filter((b) => b.team === zone.team);
-                        const teamPeers = multiplayer.peers.filter((p) => p.team === zone.team);
+                        const teamBots = customBots.filter(
+                          (b, idx) =>
+                            (b.team === 'red' || b.team === 'blue'
+                              ? b.team
+                              : idx % 2 === 0
+                                ? 'red'
+                                : 'blue') === zone.team
+                        );
+                        const teamPeers = multiplayer.peers.filter(
+                          (p, idx) =>
+                            (p.team === 'red' || p.team === 'blue'
+                              ? p.team
+                              : idx % 2 === 0
+                                ? 'red'
+                                : 'blue') === zone.team
+                        );
                         const isOver = dragOverZone === zone.team;
                         return (
                           <div
@@ -1300,7 +1413,7 @@ export function TitleScreen({
                                 onClick={() => handleAddBotToTeam(selectedPoolBotChar, zone.team)}
                                 className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-[10px] font-bold text-white flex items-center gap-1 cursor-pointer"
                               >
-                                <Plus className="w-3 h-3" /> 봇 추가
+                                <Plus className="w-3 h-3" /> 추가
                               </button>
                             </div>
 
@@ -1329,7 +1442,7 @@ export function TitleScreen({
                                     type="button"
                                     onClick={() => handleRemoveBot(b.id)}
                                     className="text-slate-400 hover:text-rose-600 cursor-pointer"
-                                    aria-label="봇 제거"
+                                    aria-label="제거"
                                   >
                                     <X className="w-3 h-3" />
                                   </button>
@@ -1368,7 +1481,7 @@ export function TitleScreen({
                           onClick={() => handleAddBotToTeam(selectedPoolBotChar, 'ffa')}
                           className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer"
                         >
-                          <Plus className="w-3 h-3" /> 봇 추가
+                          <Plus className="w-3 h-3" /> 추가
                         </button>
                       </div>
                       <div className="flex flex-wrap gap-1.5">
@@ -1383,7 +1496,7 @@ export function TitleScreen({
                               type="button"
                               onClick={() => handleRemoveBot(b.id)}
                               className="text-slate-400 hover:text-rose-600 cursor-pointer"
-                              aria-label="봇 제거"
+                              aria-label="제거"
                             >
                               <X className="w-3 h-3" />
                             </button>
@@ -1484,52 +1597,75 @@ export function TitleScreen({
           <div className="pt-2.5 border-t border-slate-200 space-y-2.5 shrink-0">
             {selectedMode === 'ffa' && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" data-testid="quick-match-bottom-controls">
-                <div className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5">
-                  <label
-                    htmlFor="quick-mode-options-select"
-                    className="block text-[10px] font-bold text-slate-500 mb-0.5"
-                  >
-                    특수규칙 · 연습장 선택
-                  </label>
-                  <select
-                    id="quick-mode-options-select"
-                    data-testid="quick-mode-options-select"
-                    value={quickDropdownValue}
-                    onChange={(e) => handleQuickRuleSelectChange(e.target.value as QuickRuleSelectValue)}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-900 cursor-pointer focus:outline-none focus:border-rose-500"
-                  >
-                    <option value="knockout">3분 녹아웃 서바이벌 (기본)</option>
-                    <option value="random_arsenal">특수규칙 · 25초 랜덤 무기</option>
-                    <option value="one_shot">특수규칙 · 원샷 스나이퍼</option>
-                    <option value="boss_raid">특수규칙 · 거대 괴수 레이드</option>
-                    <option value="classic">특수규칙 · 클래식 난타전</option>
-                    <option value="practice">연습장 · 전장 및 무장 테스트</option>
-                  </select>
-                </div>
-
                 <div className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 flex flex-col justify-between">
-                  <span className="text-[10px] font-bold text-slate-500">AI 봇 난이도</span>
-                  <div className="grid grid-cols-3 gap-1 mt-0.5" data-testid="practice-bot-difficulty-select">
-                    {BOT_DIFFICULTY_LIST.map((bd) => {
-                      const activeDiff = (multiplayer.botDifficulty ?? 'medium') === bd.id;
-                      return (
-                        <button
-                          key={bd.id}
-                          type="button"
-                          data-testid={`practice-bot-difficulty-${bd.id}`}
-                          onClick={() => onUpdateLobby({ botDifficulty: bd.id })}
-                          className={`py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
-                            activeDiff
-                              ? 'bg-slate-900 text-white'
-                              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
-                          }`}
-                        >
-                          {bd.label}
-                        </button>
-                      );
-                    })}
+                  <span className="text-[10px] font-bold text-slate-500">출전 모드 선택</span>
+                  <div className="grid grid-cols-2 gap-1 mt-0.5" data-testid="quick-mode-options-select">
+                    <button
+                      type="button"
+                      data-testid="quick-mode-knockout-btn"
+                      onClick={() => handleQuickRuleSelectChange('knockout')}
+                      className={`py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                        !isPractice
+                          ? 'bg-rose-600 text-white'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      1분 녹아웃 (통합 서버)
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="quick-mode-practice-btn"
+                      onClick={() => handleQuickRuleSelectChange('practice')}
+                      className={`py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                        isPractice
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      연습장 (자유 훈련)
+                    </button>
                   </div>
                 </div>
+
+                {isPractice ? (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 flex flex-col justify-between">
+                    <span className="text-[10px] font-bold text-slate-500">연습장 난이도</span>
+                    <div className="grid grid-cols-3 gap-1 mt-0.5" data-testid="practice-bot-difficulty-select">
+                      {BOT_DIFFICULTY_LIST.map((bd) => {
+                        const activeDiff = (multiplayer.botDifficulty ?? 'medium') === bd.id;
+                        return (
+                          <button
+                            key={bd.id}
+                            type="button"
+                            data-testid={`practice-bot-difficulty-${bd.id}`}
+                            onClick={() => onUpdateLobby({ botDifficulty: bd.id })}
+                            className={`py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                              activeDiff
+                                ? 'bg-slate-900 text-white'
+                                : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            {bd.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    data-testid="skill-matchmaking-summary"
+                    className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 flex flex-col justify-between"
+                  >
+                    <span className="text-[10px] font-bold text-slate-500">매칭 등급</span>
+                    <div className="text-xs font-mono-num font-black text-rose-600 mt-0.5">
+                      {liveSkillEvaluation.recommendedDifficulty === 'hard'
+                        ? '챌린저 큐'
+                        : liveSkillEvaluation.recommendedDifficulty === 'medium'
+                          ? '표준 큐'
+                          : '루키 큐'}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1541,71 +1677,158 @@ export function TitleScreen({
                 {multiplayer.error}
               </div>
             )}
-
-            <button
-              type="button"
-              data-start="true"
-              data-testid="start-match-btn"
-              disabled={rouletteSpinning}
-              onClick={() => {
-                if (inCustomLobby) {
-                  handleLaunchCustomMatchWithRoulette();
-                } else if (selectedMode === 'multiplayer') {
-                  onCreateRoom(
-                    playerCallsign,
-                    multiplayer.includeBots,
-                    'ffa',
-                    'ffa',
-                    multiplayer.botDifficulty ?? 'medium',
-                    multiplayer.partyMode ?? 'knockout',
-                    customBots
-                  );
-                } else {
-                  onSetPracticeMode(selectedMode === 'ffa' && isPractice);
-                  onStart();
-                }
-              }}
-              className="w-full py-3.5 px-5 rounded-xl bg-rose-600 hover:bg-rose-500 active:scale-[0.99] text-white font-display text-base sm:text-lg font-black tracking-tight shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all whitespace-nowrap"
-            >
-              {selectedMode === 'ffa' && isPractice ? (
-                <Target className="w-5 h-5 shrink-0" />
-              ) : (
-                <Swords className="w-5 h-5 shrink-0" />
-              )}
-              <span>
-                {rouletteSpinning
-                  ? '투표 맵 추첨 중...'
-                  : inCustomLobby
-                    ? `커스텀 매치 시작 (${MAP_DEFINITIONS[multiplayer.selectedMap || currentMapId].name})`
-                    : selectedMode === 'ffa'
-                      ? quickMatchCtaLabel
-                      : selectedMode === 'online_world'
-                        ? `데스매치 오픈월드 입장 (${activeMapDef.name})`
-                        : selectedMode === 'link_duel'
-                          ? '랭킹전 1:1 대결 시작'
-                          : '사용자 설정 게임 방 생성'}
-              </span>
-            </button>
           </div>
         </section>
 
-        {/* CENTER & RIGHT OPEN 3D SHOWCASE + BOTTOM-RIGHT WHITE ROTATION TIMER */}
-        <section className="flex-1 flex flex-col justify-end items-end pointer-events-none min-h-[120px]">
-          <div
-            data-testid="bottom-rotation-timer-card"
-            className="pointer-events-auto bg-white/95 border border-slate-200 rounded-xl px-4 py-3 shadow-lg flex items-center gap-3 text-slate-900"
-          >
-            <Clock className="w-5 h-5 text-amber-600 shrink-0" />
-            <div>
-              <div className="text-[11px] font-bold text-slate-500">맵 로테이션 남은 시간</div>
-              <div className="flex items-baseline gap-2">
-                <span
-                  data-testid="bottom-rotation-timer"
-                  className="font-mono-num text-lg sm:text-xl font-black text-slate-900 leading-tight"
+        {/* CENTER & RIGHT OPEN 3D SHOWCASE + TOP MATCHMAKING TIMER + LOLBEANS-STYLE NICKNAME INPUT UNDER 3D FIGHTER + ROTATION TIMER */}
+        <section className="flex-1 flex flex-col justify-between items-stretch pointer-events-none min-h-[160px]">
+          {/* TOP-CENTER PROMINENT MATCHMAKING ELAPSED TIMER CARD */}
+          <div className="w-full flex justify-center">
+            {(queueActiveMode !== null || multiplayer.linkQueueing || multiplayer.quickQueueing) && (
+              <div
+                data-testid="matchmaking-banner"
+                className={`pointer-events-auto w-full max-w-md rounded-2xl border-2 px-5 py-4 shadow-2xl transition-all ${
+                  matchFoundState
+                    ? 'bg-emerald-600 border-emerald-400 text-white'
+                    : 'bg-white/98 border-rose-500 text-slate-900'
+                }`}
+              >
+                {matchFoundState ? (
+                  <div
+                    data-testid="matchmaking-found-badge"
+                    className="flex flex-col items-center text-center gap-1.5 py-1"
+                  >
+                    <div className="flex items-center gap-2 font-display text-xl sm:text-2xl font-black tracking-tight">
+                      <Zap className="w-6 h-6 text-amber-300 shrink-0" />
+                      <span>매치 성사!</span>
+                    </div>
+                    <p className="text-xs sm:text-sm font-bold text-emerald-100">
+                      {activeMapDef.name} 입장 중...
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping shrink-0" />
+                        <span className="text-xs font-black text-rose-600 uppercase tracking-wider">
+                          {queueActiveMode === 'link_duel'
+                            ? '랭킹전 1:1 매칭'
+                            : '빠른 대전 통합 서버 매칭'}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        data-testid="matchmaking-cancel-btn"
+                        onClick={handleCancelMatchmakingQueue}
+                        className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-bold text-slate-700 cursor-pointer shrink-0"
+                      >
+                        취소
+                      </button>
+                    </div>
+
+                    {/* GIANT HIGHLIGHTED ELAPSED TIMER */}
+                    <div className="bg-rose-50 border border-rose-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+                      <div className="text-xs font-black text-rose-700">매칭 경과</div>
+                      <div className="text-right">
+                        <div
+                          data-testid="matchmaking-elapsed-timer"
+                          className="font-mono-num text-4xl sm:text-5xl font-black text-rose-600 leading-none tracking-tight"
+                        >
+                          {formatRotationTimer(queueElapsedSec)}
+                        </div>
+                        <div className="font-mono-num text-[11px] font-bold text-slate-500 mt-1">
+                          / 00:30
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Progress Bar + Instant Match Lock-In Button */}
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden border border-slate-200">
+                        <div
+                          className="h-full bg-rose-600 transition-all duration-500"
+                          style={{
+                            width: `${Math.min(100, Math.round((queueElapsedSec / 30) * 100))}%`,
+                          }}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        data-testid="matchmaking-instant-lock-btn"
+                        onClick={handleTriggerMatchFoundAndLaunch}
+                        className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-black cursor-pointer shrink-0"
+                      >
+                        즉시 입장
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* BOTTOM ROW OF RIGHT 3D STAGE: PROMINENT LOLBEANS-STYLE NICKNAME INPUT UNDER 3D CHARACTER + ROTATION TIMER */}
+          <div className="w-full flex flex-col sm:flex-row items-center sm:items-end justify-between gap-3 mt-auto pt-4">
+            <div className="hidden sm:block sm:flex-1" />
+
+            {/* STANDOUT LOLBEANS-STYLE NICKNAME + GIANT PLAY ACTION DOCK UNDER 3D CHARACTER */}
+            <div className="pointer-events-auto w-full max-w-[330px] flex flex-col items-center gap-2.5">
+              <div
+                data-testid="nickname-stage-card"
+                className="w-full bg-white/95 border-2 border-slate-900 focus-within:border-rose-600 focus-within:ring-4 focus-within:ring-rose-500/20 rounded-2xl px-4 py-2 shadow-xl transition-all flex items-center gap-2.5"
+              >
+                <label
+                  htmlFor="stage-player-name-input"
+                  className="text-xs font-black tracking-wide text-rose-600 whitespace-nowrap shrink-0"
                 >
-                  {formatRotationTimer(rotationSecondsLeft)}
-                </span>
-                <span className="text-[11px] font-semibold text-slate-500">· 4맵 순환</span>
+                  닉네임
+                </label>
+                <input
+                  id="stage-player-name-input"
+                  type="text"
+                  aria-label="플레이어 닉네임"
+                  data-testid="player-name-input"
+                  maxLength={14}
+                  value={multiplayer.playerName}
+                  onChange={(e) => onSetPlayerName(e.target.value)}
+                  placeholder="Player"
+                  className="flex-1 min-w-0 bg-slate-50 focus:bg-white border border-slate-200 focus:border-rose-500 rounded-xl px-3 py-1.5 text-center font-display text-base sm:text-lg font-black text-slate-900 focus:outline-none placeholder:text-slate-400 transition-colors"
+                />
+              </div>
+
+              <button
+                type="button"
+                data-start="true"
+                data-testid="start-match-btn"
+                disabled={rouletteSpinning}
+                onClick={handlePrimaryLaunch}
+                className="w-full py-4 px-6 rounded-2xl bg-emerald-500 hover:bg-emerald-400 active:translate-y-0.5 text-slate-950 font-display text-xl sm:text-2xl font-black tracking-tight border-2 border-slate-900 border-b-4 shadow-2xl flex items-center justify-center gap-2.5 cursor-pointer transition-all whitespace-nowrap"
+              >
+                <Play className="w-6 h-6 fill-slate-950 text-slate-950 shrink-0" />
+                <span>{primaryPlayLabel}</span>
+              </button>
+            </div>
+
+            <div className="sm:flex-1 flex justify-end w-full sm:w-auto">
+              <div
+                data-testid="bottom-rotation-timer-card"
+                className="pointer-events-auto bg-white/95 border border-slate-200 rounded-xl px-4 py-3 shadow-lg flex items-center gap-3 text-slate-900"
+              >
+                <Clock className="w-5 h-5 text-amber-600 shrink-0" />
+                <div>
+                  <div className="text-[11px] font-bold text-slate-500">맵 로테이션</div>
+                  <div className="flex items-baseline gap-2">
+                    <span
+                      data-testid="bottom-rotation-timer"
+                      className="font-mono-num text-lg sm:text-xl font-black text-slate-900 leading-tight"
+                    >
+                      {formatRotationTimer(rotationSecondsLeft)}
+                    </span>
+                    <span className="text-[11px] font-semibold text-slate-500">· 4맵</span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

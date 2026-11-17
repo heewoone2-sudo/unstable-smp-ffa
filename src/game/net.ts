@@ -134,6 +134,7 @@ export class MultiplayerClient {
       botDifficulty: 'medium',
       partyMode: 'knockout',
       linkQueueing: false,
+      quickQueueing: false,
       selectedMap: rot.activeMaps[0],
       mapVotes: createEmptyMapVotes(),
       activeRotationMaps: rot.activeMaps,
@@ -274,6 +275,7 @@ export class MultiplayerClient {
       if (type === 'room_error') {
         this.state.error = String(msg.message || '연결 오류');
         this.state.linkQueueing = false;
+        this.state.quickQueueing = false;
         if (!this.state.roomCode) {
           this.state.status = 'idle';
         }
@@ -283,6 +285,7 @@ export class MultiplayerClient {
 
       if (type === 'link_queued') {
         this.state.linkQueueing = true;
+        this.state.quickQueueing = false;
         this.state.error = null;
         this.handlers.onRoomChange(this.getState());
         return;
@@ -290,6 +293,20 @@ export class MultiplayerClient {
 
       if (type === 'link_queue_cancelled') {
         this.state.linkQueueing = false;
+        this.handlers.onRoomChange(this.getState());
+        return;
+      }
+
+      if (type === 'quick_queued') {
+        this.state.quickQueueing = true;
+        this.state.linkQueueing = false;
+        this.state.error = null;
+        this.handlers.onRoomChange(this.getState());
+        return;
+      }
+
+      if (type === 'quick_queue_cancelled') {
+        this.state.quickQueueing = false;
         this.handlers.onRoomChange(this.getState());
         return;
       }
@@ -328,6 +345,7 @@ export class MultiplayerClient {
         this.state.mapStartedAt = typeof msg.mapStartedAt === 'number' ? msg.mapStartedAt : undefined;
         this.state.status = msg.status === 'playing' ? 'playing' : 'lobby';
         this.state.linkQueueing = false;
+        this.state.quickQueueing = false;
         this.state.peers = peers;
         this.state.error = null;
         const blocks = Array.isArray(msg.placedBlocks)
@@ -353,6 +371,7 @@ export class MultiplayerClient {
         this.state.roomKind = rk;
         this.state.status = 'playing';
         this.state.linkQueueing = false;
+        this.state.quickQueueing = false;
         if (typeof msg.selectedMap === 'string') {
           this.state.selectedMap = msg.selectedMap as MapId;
         }
@@ -550,6 +569,45 @@ export class MultiplayerClient {
     this.handlers.onRoomChange(this.getState());
   }
 
+  public queueQuickMatch(
+    name: string,
+    characterId: CharacterId,
+    partyMode: CustomPartyMode = 'knockout',
+    mapId?: MapId
+  ): void {
+    this.state.playerName = name.trim() || 'Player';
+    this.state.partyMode = partyMode;
+    this.retryCount = 0;
+    this.send({
+      type: 'queue_quick_match',
+      name: this.state.playerName,
+      characterId,
+      partyMode,
+      mapId,
+    });
+  }
+
+  public cancelQuickQueue(): void {
+    this.state.quickQueueing = false;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'cancel_quick_queue' }));
+    }
+    this.handlers.onRoomChange(this.getState());
+  }
+
+  public joinQuickServer(name: string, characterId: CharacterId, selectedMap?: MapId): void {
+    this.state.playerName = name.trim() || 'Player';
+    this.state.partyMode = 'knockout';
+    this.state.quickQueueing = false;
+    this.retryCount = 0;
+    this.send({
+      type: 'join_quick_server',
+      name: this.state.playerName,
+      characterId,
+      selectedMap,
+    });
+  }
+
   public createRoom(
     name: string,
     characterId: CharacterId,
@@ -597,13 +655,38 @@ export class MultiplayerClient {
     customBots?: CustomBotSlot[];
   }): void {
     if (updates.name !== undefined) {
-      this.state.playerName = updates.name.trim() || 'Player';
+      this.state.playerName = updates.name.slice(0, 14);
     }
     if (updates.includeBots !== undefined) {
       this.state.includeBots = updates.includeBots;
     }
     if (updates.roomMode !== undefined) {
       this.state.roomMode = updates.roomMode;
+      if (updates.roomMode === 'team') {
+        this.state.peers = this.state.peers.map((p, idx) => ({
+          ...p,
+          team:
+            p.team === 'red' || p.team === 'blue'
+              ? p.team
+              : p.id === this.state.selfId
+                ? (updates.team === 'blue' ? 'blue' : 'red')
+                : idx % 2 === 0
+                  ? 'red'
+                  : 'blue',
+        }));
+        this.state.customBots = (this.state.customBots ?? []).map((b, idx) => ({
+          ...b,
+          team: b.team === 'red' || b.team === 'blue' ? b.team : idx % 2 === 0 ? 'red' : 'blue',
+        }));
+      } else {
+        this.state.peers = this.state.peers.map((p) => ({ ...p, team: 'ffa' }));
+        this.state.customBots = (this.state.customBots ?? []).map((b) => ({ ...b, team: 'ffa' }));
+      }
+    }
+    if (updates.team !== undefined) {
+      this.state.peers = this.state.peers.map((p) =>
+        p.id === this.state.selfId ? { ...p, team: updates.team! } : p
+      );
     }
     if (updates.targetKills !== undefined) {
       this.state.targetKills = updates.targetKills;
@@ -618,13 +701,24 @@ export class MultiplayerClient {
       this.state.partyMode = updates.partyMode;
     }
     if (updates.customBots !== undefined) {
-      this.state.customBots = updates.customBots;
+      this.state.customBots =
+        this.state.roomMode === 'team'
+          ? updates.customBots.map((b, idx) => ({
+              ...b,
+              team: b.team === 'red' || b.team === 'blue' ? b.team : idx % 2 === 0 ? 'red' : 'blue',
+            }))
+          : updates.customBots;
     }
+    this.handlers.onRoomChange(this.getState());
     if (!this.state.roomCode) {
-      this.handlers.onRoomChange(this.getState());
       return;
     }
-    this.send({ type: 'update_lobby', ...updates });
+    const wireUpdates = {
+      ...updates,
+      ...(updates.name !== undefined ? { name: updates.name.trim() || 'Player' } : {}),
+      ...(updates.customBots !== undefined ? { customBots: this.state.customBots } : {}),
+    };
+    this.send({ type: 'update_lobby', ...wireUpdates });
   }
 
   public voteMap(mapId: MapId): void {

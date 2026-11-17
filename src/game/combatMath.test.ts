@@ -27,6 +27,12 @@ import {
   getRotationWindow,
   tallyMapVotes,
 } from './maps';
+import {
+  getKnockoutRoundInfo,
+  MAX_KNOCKOUT_ROUNDS,
+  resolveKnockoutFinalShowdown,
+  selectKnockoutRoundEliminations,
+} from './partyModes';
 
 test('computeSwordDamage grants 1.5x critical hit when falling airborne', () => {
   const groundHit = computeSwordDamage(14, 1.0, 0, true);
@@ -258,11 +264,11 @@ test('getKnockoutRoundInfo, computeOneShotDamage, 1+1+1 Random Arsenal, and host
   } = await import('./partyModes');
   const r1 = getKnockoutRoundInfo(1);
   assert.equal(r1.quota, 1);
-  assert.equal(r1.durationSec, 180);
+  assert.equal(r1.durationSec, 60);
 
   const r2 = getKnockoutRoundInfo(2);
   assert.equal(r2.quota, 2);
-  assert.equal(r2.durationSec, 180);
+  assert.equal(r2.durationSec, 60);
 
   assert.equal(computeOneShotDamage(15, false), 15);
   assert.equal(computeOneShotDamage(15, true), 350);
@@ -299,16 +305,16 @@ test('resolveEffectiveRoomMode, computeBuffMultipliers, and computeSurgeModifier
 
   assert.equal(resolveEffectiveRoomMode('ffa', 'team', 'classic'), 'ffa');
   assert.equal(resolveEffectiveRoomMode('online_world', 'team', 'classic'), 'ffa');
-  assert.equal(resolveEffectiveRoomMode('multiplayer', 'team', 'knockout'), 'ffa');
+  assert.equal(resolveEffectiveRoomMode('multiplayer', 'team', 'knockout'), 'team');
   assert.equal(resolveEffectiveRoomMode('multiplayer', 'team', 'classic'), 'team');
   assert.equal(resolveEffectiveRoomMode('multiplayer', 'ffa', 'classic'), 'ffa');
 
-  // In custom FFA or knockout, even if a peer had team 'red', they are hostile
+  // In custom FFA, even if a peer had team 'red', they are hostile
   const effFfa = resolveEffectiveRoomMode('multiplayer', 'ffa', 'classic');
   assert.equal(isHostileTarget(effFfa, 'red', 'red'), true);
 
-  // In custom Team mode, opposing team is hostile and same team is ally
-  const effTeam = resolveEffectiveRoomMode('multiplayer', 'team', 'classic');
+  // In custom Team mode (including knockout), opposing team is hostile and same team is ally
+  const effTeam = resolveEffectiveRoomMode('multiplayer', 'team', 'knockout');
   assert.equal(isHostileTarget(effTeam, 'red', 'blue'), true);
   assert.equal(isHostileTarget(effTeam, 'red', 'red'), false);
 
@@ -443,3 +449,137 @@ test('Quick Match Knockout never terminates early on 15-kill limit and scales mu
   assert.ok(ARENA_EVENT_ORDER.includes('berserk_frenzy'));
   assert.ok(ARENA_SURGE_EVENTS.berserk_frenzy.cooldownRateMult > 1.2);
 });
+
+test('evaluatePlayerSkillForMatchmaking adapts AI difficulty and wait time based on tier, K/D, and streaks, and pickHumanizedChallengerNames avoids BOT tags', async () => {
+  const {
+    evaluatePlayerSkillForMatchmaking,
+    pickHumanizedChallengerNames,
+  } = await import('./partyModes');
+
+  const lowTier = evaluatePlayerSkillForMatchmaking(
+    {
+      elo: 920,
+      wins: 1,
+      losses: 6,
+      kills: 5,
+      deaths: 18,
+      recentKd: 0.4,
+      winStreak: 0,
+      lossStreak: 3,
+    },
+    () => 0.3
+  );
+  assert.equal(lowTier.frequentAiMatch, true);
+  assert.equal(lowTier.recommendedDifficulty, 'easy');
+  assert.ok(lowTier.targetWaitSec >= 7 && lowTier.targetWaitSec <= 13);
+
+  const midTier = evaluatePlayerSkillForMatchmaking(
+    {
+      elo: 1120,
+      wins: 6,
+      losses: 6,
+      kills: 24,
+      deaths: 24,
+      recentKd: 1.0,
+      winStreak: 0,
+      lossStreak: 0,
+    },
+    () => 0.5
+  );
+  assert.equal(midTier.frequentAiMatch, false);
+  assert.equal(midTier.recommendedDifficulty, 'medium');
+  assert.equal(midTier.targetWaitSec, 30);
+
+  const highTier = evaluatePlayerSkillForMatchmaking(
+    {
+      elo: 1450,
+      wins: 24,
+      losses: 5,
+      kills: 150,
+      deaths: 55,
+      recentKd: 2.6,
+      winStreak: 4,
+      lossStreak: 0,
+    },
+    () => 0.5
+  );
+  assert.equal(highTier.frequentAiMatch, false);
+  assert.equal(highTier.recommendedDifficulty, 'hard');
+  assert.equal(highTier.targetWaitSec, 30);
+
+  const names = pickHumanizedChallengerNames(6, '박치기공룡', 3);
+  assert.equal(names.length, 6);
+  assert.equal(new Set(names).size, 6);
+  assert.equal(names.includes('박치기공룡'), false);
+  for (const n of names) {
+    assert.equal(n.toLowerCase().includes('bot'), false);
+    assert.equal(n.includes('봇'), false);
+  }
+});
+
+test('selectKnockoutRoundEliminations keeps multi-round tournament alive past R1 and R2 before strict R3 cutoff', () => {
+  const r1Candidates = [
+    { id: 'bot-1', kills: 0, hp: 180 },
+    { id: 'bot-2', kills: 0, hp: 140 },
+    { id: 'bot-3', kills: 0, hp: 90 },
+    { id: 'bot-4', kills: 0, hp: 40 },
+    { id: 'bot-5', kills: 0, hp: 20 },
+  ];
+  const r1Res = selectKnockoutRoundEliminations(1, 1, r1Candidates);
+  // R1 preserves 3 wildcard survivors when nobody hit quota so R2 actually starts
+  assert.equal(r1Res.survivorIds.size, 3);
+  assert.equal(r1Res.eliminatedIds.size, 2);
+  assert.equal(r1Res.survivorIds.has('bot-1'), true);
+  assert.equal(r1Res.survivorIds.has('bot-2'), true);
+  assert.equal(r1Res.survivorIds.has('bot-3'), true);
+  assert.equal(r1Res.eliminatedIds.has('bot-4'), true);
+  assert.equal(r1Res.eliminatedIds.has('bot-5'), true);
+
+  const r2Candidates = [
+    { id: 'bot-1', kills: 1, hp: 160 },
+    { id: 'bot-2', kills: 0, hp: 150 },
+    { id: 'bot-3', kills: 0, hp: 70 },
+  ];
+  const r2Res = selectKnockoutRoundEliminations(2, 1, r2Candidates);
+  // R2 preserves at least 2 finalists for the R3 final showdown
+  assert.equal(r2Res.survivorIds.size, 2);
+  assert.deepEqual([...r2Res.eliminatedIds], ['bot-3']);
+
+  const r3Res = selectKnockoutRoundEliminations(3, 2, r2Candidates);
+  // R3+ enforces strict quota without wildcard mercy
+  assert.equal(r3Res.survivorIds.size, 0);
+  assert.equal(r3Res.eliminatedIds.size, 3);
+});
+
+test('MAX_KNOCKOUT_ROUNDS and resolveKnockoutFinalShowdown guarantee Round 3 always crowns a single champion', () => {
+  assert.equal(MAX_KNOCKOUT_ROUNDS, 3);
+  assert.equal(getKnockoutRoundInfo(4).round, 3);
+  assert.equal(getKnockoutRoundInfo(4).quota, 3);
+
+  const resLocalWins = resolveKnockoutFinalShowdown([
+    { id: 'bot-1', kills: 5, hp: 180 },
+    { id: 'local', kills: 7, hp: 120, isLocal: true },
+    { id: 'bot-2', kills: 4, hp: 200 },
+  ]);
+  assert.equal(resLocalWins.championId, 'local');
+  assert.equal(resLocalWins.eliminatedIds.has('bot-1'), true);
+  assert.equal(resLocalWins.eliminatedIds.has('bot-2'), true);
+  assert.equal(resLocalWins.eliminatedIds.has('local'), false);
+
+  const resTieBreak = resolveKnockoutFinalShowdown([
+    { id: 'bot-1', kills: 6, hp: 150 },
+    { id: 'local', kills: 6, hp: 150, isLocal: true },
+  ]);
+  assert.equal(resTieBreak.championId, 'local');
+  assert.deepEqual([...resTieBreak.eliminatedIds], ['bot-1']);
+
+  const resBotWins = resolveKnockoutFinalShowdown([
+    { id: 'local', kills: 4, hp: 200, isLocal: true },
+    { id: 'bot-top', kills: 8, hp: 110 },
+  ]);
+  assert.equal(resBotWins.championId, 'bot-top');
+  assert.deepEqual([...resBotWins.eliminatedIds], ['local']);
+});
+
+
+

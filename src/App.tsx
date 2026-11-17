@@ -13,7 +13,40 @@ import {
 import { CHARACTERS, DEFAULT_GAME_SETTINGS } from './game/characters';
 import { UnstableArenaEngine } from './game/engine';
 import { createEmptyMapVotes, getRotationWindow } from './game/maps';
-import type { CharacterId, GameModeId, HudSnapshot } from './game/types';
+import type { BotDifficulty, CharacterId, GameModeId, HudSnapshot } from './game/types';
+
+export interface LocalSkillStats {
+  wins: number;
+  losses: number;
+  kills: number;
+  deaths: number;
+  recentKd: number;
+  winStreak: number;
+  lossStreak: number;
+}
+
+const SKILL_STATS_STORAGE_KEY = 'skybox_clash_skill_stats_v1';
+
+function loadLocalSkillStats(): LocalSkillStats {
+  try {
+    const raw = window.localStorage.getItem(SKILL_STATS_STORAGE_KEY);
+    if (!raw) {
+      return { wins: 0, losses: 0, kills: 0, deaths: 0, recentKd: 1.0, winStreak: 0, lossStreak: 0 };
+    }
+    const parsed = JSON.parse(raw) as Partial<LocalSkillStats>;
+    return {
+      wins: Number(parsed.wins) || 0,
+      losses: Number(parsed.losses) || 0,
+      kills: Number(parsed.kills) || 0,
+      deaths: Number(parsed.deaths) || 0,
+      recentKd: typeof parsed.recentKd === 'number' ? parsed.recentKd : 1.0,
+      winStreak: Number(parsed.winStreak) || 0,
+      lossStreak: Number(parsed.lossStreak) || 0,
+    };
+  } catch {
+    return { wins: 0, losses: 0, kills: 0, deaths: 0, recentKd: 1.0, winStreak: 0, lossStreak: 0 };
+  }
+}
 
 const INITIAL_ROTATION = getRotationWindow();
 
@@ -118,6 +151,7 @@ const INITIAL_HUD: HudSnapshot = {
     botDifficulty: 'medium',
     partyMode: 'knockout',
     linkQueueing: false,
+    quickQueueing: false,
     selectedMap: INITIAL_ROTATION.activeMaps[0],
     mapVotes: createEmptyMapVotes(),
     activeRotationMaps: INITIAL_ROTATION.activeMaps,
@@ -136,6 +170,7 @@ export default function App() {
 
   const [hud, setHud] = useState<HudSnapshot>(INITIAL_HUD);
   const [account, setAccount] = useState<PlayerAccountProfile | null>(null);
+  const [skillStats, setSkillStats] = useState<LocalSkillStats>(() => loadLocalSkillStats());
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalTab, setAuthModalTab] = useState<'auth' | 'leaderboard' | 'friends'>('auth');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -183,6 +218,25 @@ export default function App() {
       setHud(snapshot);
     });
     engine.setOnMatchEnd((res) => {
+      const matchKd = res.kills / Math.max(1, res.deaths);
+      setSkillStats((prev) => {
+        const next: LocalSkillStats = {
+          wins: prev.wins + (res.won ? 1 : 0),
+          losses: prev.losses + (res.won ? 0 : 1),
+          kills: prev.kills + res.kills,
+          deaths: prev.deaths + res.deaths,
+          recentKd: Number((prev.recentKd * 0.45 + matchKd * 0.55).toFixed(2)),
+          winStreak: res.won ? prev.winStreak + 1 : 0,
+          lossStreak: res.won ? 0 : prev.lossStreak + 1,
+        };
+        try {
+          window.localStorage.setItem(SKILL_STATS_STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // ignore storage quota errors
+        }
+        return next;
+      });
+
       const prof = accountRef.current;
       if (!prof) return;
       recordAccountMatchResult({
@@ -231,6 +285,11 @@ export default function App() {
     engineRef.current?.startGame();
   };
 
+  const handleLaunchMatchedGame = (skillDifficulty?: BotDifficulty) => {
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    engineRef.current?.launchMatchedGame(skillDifficulty);
+  };
+
   const activePlayerName = account?.nickname || hud.multiplayer.playerName || 'Player';
 
   return (
@@ -253,6 +312,7 @@ export default function App() {
           settings={hud.settings}
           chatMessages={hud.chatMessages}
           account={account}
+          skillStats={skillStats}
           initialRoomCode={initialRoomCode}
           initialLinkCode={initialLinkCode}
           onSelectCharacter={handleSelectCharacter}
@@ -262,6 +322,7 @@ export default function App() {
           onSelectPracticeMap={(mapId) => engineRef.current?.voteMap(mapId)}
           onPlayUiSound={(kind, step) => engineRef.current?.playUiSound(kind, step)}
           onStart={handleStart}
+          onLaunchMatchedGame={handleLaunchMatchedGame}
           onSetPlayerName={(name) => engineRef.current?.setPlayerName(name)}
           onOpenAuth={(tab) => {
             setAuthModalTab(tab);
@@ -272,6 +333,8 @@ export default function App() {
           onJoinLinkDuel={(code, name) => engineRef.current?.joinLinkDuelRoom(code, name)}
           onQueueLinkDuel={(name) => engineRef.current?.queueLinkDuel(name)}
           onCancelLinkQueue={() => engineRef.current?.cancelLinkQueue()}
+          onQueueQuickMatch={(name) => engineRef.current?.queueQuickMatch(name)}
+          onCancelQuickQueue={() => engineRef.current?.cancelQuickQueue()}
           onCreateRoom={(name, includeBots, roomMode, team, botDifficulty, partyMode, customBots) =>
             engineRef.current?.createMultiplayerRoom(name, includeBots, roomMode, team, botDifficulty, partyMode, customBots)
           }

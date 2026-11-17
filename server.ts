@@ -175,10 +175,13 @@ interface QueueEntry {
   ws: WebSocket;
   name: string;
   characterId: CharacterId;
+  partyMode?: 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot';
+  selectedMap?: MapId;
 }
 
 const rooms = new Map<string, RoomState>();
 const linkQueue: QueueEntry[] = [];
+const quickQueue: QueueEntry[] = [];
 
 function generateRoomCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -217,7 +220,7 @@ function sanitizeCustomBots(raw: unknown): CustomBotSlotRecord[] {
     const charId = CHARACTER_HP[obj.characterId as CharacterId] ? (obj.characterId as CharacterId) : 'wemmbu';
     const team = obj.team === 'red' || obj.team === 'blue' || obj.team === 'ffa' ? obj.team : 'ffa';
     const id = String(obj.id || `bot-${out.length}`).slice(0, 32);
-    const name = String(obj.name || `Bot ${out.length + 1}`).trim().slice(0, 16) || `Bot ${out.length + 1}`;
+    const name = String(obj.name || `참가자 ${out.length + 1}`).trim().slice(0, 16) || `참가자 ${out.length + 1}`;
     out.push({ id, name, characterId: charId, team });
   }
   return out;
@@ -287,6 +290,8 @@ function serializeRoom(room: RoomState) {
 function removeFromQueue(clientId: string): void {
   const idx = linkQueue.findIndex((q) => q.clientId === clientId);
   if (idx !== -1) linkQueue.splice(idx, 1);
+  const qIdx = quickQueue.findIndex((q) => q.clientId === clientId);
+  if (qIdx !== -1) quickQueue.splice(qIdx, 1);
 }
 
 function removePeerFromRoom(peerId: string, roomCode: string | null): void {
@@ -330,6 +335,39 @@ function ensureGlobalRoom(hostId: string, mapId: MapId): RoomState {
     seenEvents: new Set(),
   };
   rooms.set(code, created);
+  return created;
+}
+
+const QUICK_SERVER_CODE = 'QUICK_SERVER';
+
+function pickRandom20MapServer(): MapId {
+  return MAP_ORDER[Math.floor(Math.random() * MAP_ORDER.length)] ?? 'container_yard';
+}
+
+function ensureQuickServerRoom(hostId: string, preferredMap?: MapId): RoomState {
+  const existing = rooms.get(QUICK_SERVER_CODE);
+  if (existing && existing.peers.size < 16) {
+    return existing;
+  }
+  const randomMap = preferredMap && MAP_ORDER.includes(preferredMap) ? preferredMap : pickRandom20MapServer();
+  const created: RoomState = {
+    code: QUICK_SERVER_CODE,
+    kind: 'private',
+    roomMode: 'ffa',
+    hostId,
+    status: 'playing',
+    includeBots: true,
+    botDifficulty: 'medium',
+    partyMode: 'knockout',
+    targetKills: 15,
+    selectedMap: randomMap,
+    mapVotes: new Map(),
+    mapStartedAt: Date.now(),
+    peers: new Map(),
+    placedBlocks: [],
+    seenEvents: new Set(),
+  };
+  rooms.set(QUICK_SERVER_CODE, created);
   return created;
 }
 
@@ -622,6 +660,90 @@ async function startServer() {
         return;
       }
 
+      if (type === 'queue_quick_match' || type === 'join_quick_server') {
+        removeFromQueue(clientId);
+        const charId = (CHARACTER_HP[msg.characterId as CharacterId] ? msg.characterId : 'wemmbu') as CharacterId;
+        const name = String(msg.name || 'Player').trim().slice(0, 16) || 'Player';
+        const existingQuick = rooms.get(QUICK_SERVER_CODE);
+        const hasActiveQuickServer =
+          existingQuick && existingQuick.peers.size > 0 && existingQuick.peers.size < 16;
+
+        const partnerIdx = quickQueue.findIndex(
+          (q) => q.ws.readyState === WebSocket.OPEN && q.clientId !== clientId
+        );
+        const partner = partnerIdx >= 0 ? quickQueue.splice(partnerIdx, 1)[0] : undefined;
+
+        if (type === 'join_quick_server' || hasActiveQuickServer || partner) {
+          removePeerFromRoom(clientId, currentRoomCode);
+          const requestedMap =
+            typeof msg.selectedMap === 'string' && MAP_ORDER.includes(msg.selectedMap as MapId)
+              ? (msg.selectedMap as MapId)
+              : undefined;
+          const room = ensureQuickServerRoom(partner ? partner.clientId : clientId, requestedMap);
+          const alreadyStarted = Boolean(existingQuick && existingQuick.peers.size > 0);
+          if (partner && !room.peers.has(partner.clientId)) {
+            const p1Hp = CHARACTER_HP[partner.characterId];
+            room.peers.set(partner.clientId, {
+              id: partner.clientId,
+              ws: partner.ws,
+              name: partner.name,
+              characterId: partner.characterId,
+              team: 'ffa',
+              kills: 0,
+              deaths: 0,
+              hp: p1Hp,
+              maxHp: p1Hp,
+              absorption: 0,
+              alive: true,
+              respawnTimer: null,
+            });
+          }
+          const p2Hp = CHARACTER_HP[charId];
+          room.peers.set(clientId, {
+            id: clientId,
+            ws,
+            name,
+            characterId: charId,
+            team: 'ffa',
+            kills: 0,
+            deaths: 0,
+            hp: p2Hp,
+            maxHp: p2Hp,
+            absorption: 0,
+            alive: true,
+            respawnTimer: null,
+          });
+          currentRoomCode = room.code;
+          broadcastRoom(room, serializeRoom(room));
+          const startPayload = {
+            type: 'match_started',
+            code: room.code,
+            roomKind: 'private',
+            selectedMap: room.selectedMap,
+            mapStartedAt: room.mapStartedAt,
+            targetKills: room.targetKills,
+            partyMode: 'knockout',
+            botDifficulty: room.botDifficulty,
+          };
+          if (alreadyStarted) {
+            sendJson(ws, startPayload);
+            if (partner) sendJson(partner.ws, startPayload);
+          } else {
+            broadcastRoom(room, startPayload);
+          }
+        } else {
+          quickQueue.push({ clientId, ws, name, characterId: charId, partyMode: 'knockout' });
+          sendJson(ws, { type: 'quick_queued' });
+        }
+        return;
+      }
+
+      if (type === 'cancel_quick_queue') {
+        removeFromQueue(clientId);
+        sendJson(ws, { type: 'quick_queue_cancelled' });
+        return;
+      }
+
       if (type === 'create_room') {
         removeFromQueue(clientId);
         removePeerFromRoom(clientId, currentRoomCode);
@@ -635,6 +757,14 @@ async function startServer() {
         const partyMode = ['classic', 'knockout', 'boss_raid', 'random_arsenal', 'one_shot'].includes(String(msg.partyMode))
           ? (msg.partyMode as 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot')
           : 'classic';
+        const rawCustomBots = sanitizeCustomBots(msg.customBots);
+        const normalizedCustomBots =
+          roomMode === 'team'
+            ? rawCustomBots.map((b, i) => ({
+                ...b,
+                team: b.team === 'red' || b.team === 'blue' ? b.team : ((i % 2 === 0 ? 'red' : 'blue') as 'red' | 'blue' | 'ffa'),
+              }))
+            : rawCustomBots.map((b) => ({ ...b, team: 'ffa' as 'red' | 'blue' | 'ffa' }));
         const room: RoomState = {
           code,
           kind: 'private',
@@ -642,7 +772,7 @@ async function startServer() {
           hostId: clientId,
           status: 'lobby',
           includeBots: Boolean(msg.includeBots),
-          customBots: sanitizeCustomBots(msg.customBots),
+          customBots: normalizedCustomBots,
           botDifficulty,
           partyMode,
           targetKills: 15,
@@ -696,7 +826,7 @@ async function startServer() {
           ws,
           name,
           characterId: charId,
-          team,
+          team: room.roomMode === 'team' && team === 'ffa' ? 'blue' : team,
           kills: 0,
           deaths: 0,
           hp: maxHp,
@@ -773,6 +903,15 @@ async function startServer() {
               }
               idx++;
             }
+            room.customBots = (room.customBots || []).map((b, i) => ({
+              ...b,
+              team: b.team === 'red' || b.team === 'blue' ? b.team : (i % 2 === 0 ? 'red' : 'blue'),
+            }));
+          } else {
+            for (const p of room.peers.values()) {
+              p.team = 'ffa';
+            }
+            room.customBots = (room.customBots || []).map((b) => ({ ...b, team: 'ffa' }));
           }
         }
         if (typeof msg.targetKills === 'number' && room.hostId === clientId) {

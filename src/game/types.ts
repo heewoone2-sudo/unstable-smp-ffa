@@ -172,6 +172,7 @@ export interface MultiplayerHudState {
   botDifficulty?: BotDifficulty;
   partyMode?: CustomPartyMode;
   linkQueueing: boolean;
+  quickQueueing?: boolean;
   selectedMap: MapId;
   mapVotes: Record<MapId, number>;
   activeRotationMaps?: MapId[];

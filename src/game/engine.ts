@@ -22,6 +22,7 @@ import {
   getJumpPadsForMap,
   getRotationWindow,
   MAP_DEFINITIONS,
+  MAP_ORDER,
 } from './maps';
 import {
   createArrowProjectileMesh,
@@ -81,19 +82,25 @@ import {
   computeSurgeModifiers,
   computeWaterBurnHealing,
   ENEMY_OUTLINE_HEX,
+  evaluatePlayerSkillForMatchmaking,
   getBotDifficultyConfig,
   getKnockoutRoundInfo,
   getRandomArsenalLoadout,
   isHostileTarget,
   MAX_ELYTRA_FLIGHT_SEC,
+  MAX_KNOCKOUT_ROUNDS,
   normalizeCustomBots,
   pickArenaSurgeEvent,
   pickBountyLeader,
+  pickHumanizedChallengerNames,
   pickKnockoutEliminationAnim,
   pickKnockoutMutator,
   resolveEffectiveRoomMode,
+  resolveKnockoutFinalShowdown,
+  selectKnockoutRoundEliminations,
   shouldEndMatchOnKillLimit,
   stepElytraFlightLimit,
+  type KnockoutFinalContender,
 } from './partyModes';
 
 const SETTINGS_STORAGE_KEY = 'skybox_clash_settings_v1';
@@ -445,10 +452,11 @@ export class UnstableArenaEngine {
   private jumpPadMeshes: THREE.Group[] = [];
   private playerJumpPadCooldown = 0;
 
-  // Kill Knockout Mode
+  // Kill Knockout Mode (1-Minute 60s Rounds)
   private isPracticeMode = false;
+  private localPreferredTeam: PlayerTeam = 'red';
   private knockoutRound = 1;
-  private knockoutRoundTimer = 180;
+  private knockoutRoundTimer = 60;
   private knockoutQuota = 1;
   private knockoutUrgencyWarned = false;
   private bountySparkleTimer = 0;
@@ -468,7 +476,7 @@ export class UnstableArenaEngine {
   // Boss Raid Mode
   private bossCurrentHp = 650;
   private bossMaxHp = 650;
-  private bossName = '심연의 거신 ManePear';
+  private bossName = '심연의 거신 떡대';
 
   // Random Arsenal Mode
   private arsenalCycle = 0;
@@ -632,8 +640,19 @@ export class UnstableArenaEngine {
       },
       onMatchStart: (roomKind, selectedMap, mapStartedAt, targetKills, partyMode, botDifficulty) => {
         this.isPracticeMode = false;
-        this.mode =
-          roomKind === 'global' ? 'online_world' : roomKind === 'link_duel' ? 'link_duel' : 'multiplayer';
+        const nextMode =
+          roomKind === 'global'
+            ? 'online_world'
+            : roomKind === 'link_duel'
+              ? 'link_duel'
+              : this.mode === 'ffa'
+                ? 'ffa'
+                : 'multiplayer';
+        const alreadyPlayingSameQuickMap =
+          this.screen === 'playing' &&
+          nextMode === 'ffa' &&
+          (!selectedMap || selectedMap === this.currentMapId);
+        this.mode = nextMode;
         if (selectedMap) {
           this.currentMapId = selectedMap;
         }
@@ -646,6 +665,12 @@ export class UnstableArenaEngine {
         }
         if (botDifficulty) {
           this.botDifficulty = botDifficulty;
+        }
+        if (alreadyPlayingSameQuickMap) {
+          this.syncRemotePeers();
+          this.refreshActorTeamVisuals();
+          this.emitHud(true);
+          return;
         }
         this.startGameInternal();
       },
@@ -1564,7 +1589,7 @@ export class UnstableArenaEngine {
     if (this.getEffectiveRoomMode() !== 'team') return 'ffa';
     const selfPeer = this.mpState.peers.find((p) => p.id === this.mpState.selfId);
     if (selfPeer && (selfPeer.team === 'red' || selfPeer.team === 'blue')) return selfPeer.team;
-    return 'red';
+    return this.localPreferredTeam === 'blue' ? 'blue' : 'red';
   }
 
   public voteMap(mapId: MapId): void {
@@ -1654,7 +1679,10 @@ export class UnstableArenaEngine {
 
   private isNetworkedMode(): boolean {
     return (
-      (this.mode === 'online_world' || this.mode === 'multiplayer' || this.mode === 'link_duel') &&
+      (this.mode === 'online_world' ||
+        this.mode === 'multiplayer' ||
+        this.mode === 'link_duel' ||
+        this.mode === 'ffa') &&
       Boolean(this.mpState.roomCode)
     );
   }
@@ -1666,9 +1694,9 @@ export class UnstableArenaEngine {
   }
 
   public setPlayerName(name: string): void {
-    const clean = name.trim().slice(0, 16) || 'Player';
-    this.mpState = { ...this.mpState, playerName: clean };
-    this.net.updateLobby({ name: clean });
+    const raw = name.slice(0, 14);
+    this.mpState = { ...this.mpState, playerName: raw };
+    this.net.updateLobby({ name: raw });
     this.emitHud(true);
   }
 
@@ -1707,29 +1735,70 @@ export class UnstableArenaEngine {
     const chosen = mapId ?? this.selectedOpenWorldMap ?? rot.activeMaps[0];
     const targetMap = rot.activeMaps.includes(chosen) ? chosen : rot.activeMaps[0];
     this.selectedOpenWorldMap = targetMap;
-    this.net.joinGlobal(name || this.mpState.playerName, this.selectedCharId, targetMap);
+    const callsign = (name || this.mpState.playerName).trim() || 'Player';
+    this.net.joinGlobal(callsign, this.selectedCharId, targetMap);
   }
 
   public createLinkDuelRoom(name: string): void {
     this.isPracticeMode = false;
     this.mode = 'link_duel';
-    this.net.createLinkDuel(name || this.mpState.playerName, this.selectedCharId);
+    const callsign = (name || this.mpState.playerName).trim() || 'Player';
+    this.net.createLinkDuel(callsign, this.selectedCharId);
   }
 
   public joinLinkDuelRoom(code: string, name: string): void {
     this.isPracticeMode = false;
     this.mode = 'link_duel';
-    this.net.joinLinkDuel(code, name || this.mpState.playerName, this.selectedCharId);
+    const callsign = (name || this.mpState.playerName).trim() || 'Player';
+    this.net.joinLinkDuel(code, callsign, this.selectedCharId);
   }
 
   public queueLinkDuel(name: string): void {
     this.isPracticeMode = false;
     this.mode = 'link_duel';
-    this.net.queueLinkDuel(name || this.mpState.playerName, this.selectedCharId);
+    const callsign = (name || this.mpState.playerName).trim() || 'Player';
+    this.net.queueLinkDuel(callsign, this.selectedCharId);
   }
 
   public cancelLinkQueue(): void {
     this.net.cancelLinkQueue();
+  }
+
+  public queueQuickMatch(name: string): void {
+    this.isPracticeMode = false;
+    this.mode = 'ffa';
+    this.customPartyMode = 'knockout';
+    const randomMap = MAP_ORDER[Math.floor(Math.random() * MAP_ORDER.length)] ?? 'container_yard';
+    this.applyArenaMap(randomMap, false);
+    const callsign = (name || this.mpState.playerName).trim() || 'Player';
+    this.net.queueQuickMatch(
+      callsign,
+      this.selectedCharId,
+      'knockout',
+      randomMap
+    );
+  }
+
+  public cancelQuickQueue(): void {
+    this.net.cancelQuickQueue();
+  }
+
+  public launchMatchedGame(skillDifficulty?: BotDifficulty): void {
+    this.net.cancelQuickQueue();
+    this.net.cancelLinkQueue();
+    if (skillDifficulty) {
+      this.botDifficulty = skillDifficulty;
+      this.mpState = { ...this.mpState, botDifficulty: skillDifficulty };
+    }
+    if (this.mode === 'ffa' && !this.isPracticeMode) {
+      this.customPartyMode = 'knockout';
+      const randomMap = MAP_ORDER[Math.floor(Math.random() * MAP_ORDER.length)] ?? 'container_yard';
+      this.currentMapId = randomMap;
+      this.mpState = { ...this.mpState, partyMode: 'knockout', selectedMap: randomMap };
+      this.net.joinQuickServer(this.mpState.playerName.trim() || 'Player', this.selectedCharId, randomMap);
+    }
+    this.audio.playRouletteLock();
+    this.startGameInternal();
   }
 
   public sendChatMessage(text: string): void {
@@ -1769,12 +1838,17 @@ export class UnstableArenaEngine {
     this.mode = 'multiplayer';
     this.botDifficulty = botDifficulty;
     this.customPartyMode = partyMode;
+    this.localPreferredTeam = team === 'blue' ? 'blue' : 'red';
+    this.mpState = { ...this.mpState, roomMode };
     this.net.createRoom(name, this.selectedCharId, includeBots, roomMode, team, botDifficulty, partyMode, customBots);
   }
 
   public joinMultiplayerRoom(code: string, name: string, team: 'red' | 'blue' | 'ffa'): void {
     this.isPracticeMode = false;
     this.mode = 'multiplayer';
+    if (team === 'red' || team === 'blue') {
+      this.localPreferredTeam = team;
+    }
     this.net.joinRoom(code, name, this.selectedCharId, team);
   }
 
@@ -1795,7 +1869,39 @@ export class UnstableArenaEngine {
     if (updates.partyMode) {
       this.customPartyMode = updates.partyMode;
     }
+    if (updates.team === 'red' || updates.team === 'blue') {
+      this.localPreferredTeam = updates.team;
+    }
+    if (updates.includeBots !== undefined) {
+      this.mpState = { ...this.mpState, includeBots: updates.includeBots };
+    }
+    if (updates.customBots !== undefined) {
+      this.mpState = { ...this.mpState, customBots: updates.customBots };
+    }
+    if (updates.roomMode) {
+      const normalizedBots =
+        updates.roomMode === 'team'
+          ? (this.mpState.customBots ?? []).map((b, i) => ({
+              ...b,
+              team: b.team === 'red' || b.team === 'blue' ? b.team : ((i % 2 === 0 ? 'red' : 'blue') as PlayerTeam),
+            }))
+          : (this.mpState.customBots ?? []).map((b) => ({ ...b, team: 'ffa' as PlayerTeam }));
+      const normalizedPeers =
+        updates.roomMode === 'team'
+          ? this.mpState.peers.map((p, i) => ({
+              ...p,
+              team: p.team === 'red' || p.team === 'blue' ? p.team : ((i % 2 === 0 ? 'red' : 'blue') as PlayerTeam),
+            }))
+          : this.mpState.peers.map((p) => ({ ...p, team: 'ffa' as PlayerTeam }));
+      this.mpState = {
+        ...this.mpState,
+        roomMode: updates.roomMode,
+        customBots: normalizedBots,
+        peers: normalizedPeers,
+      };
+    }
     this.net.updateLobby(updates);
+    this.refreshActorTeamVisuals();
     this.emitHud(true);
   }
 
@@ -1804,17 +1910,7 @@ export class UnstableArenaEngine {
   }
 
   public exitMatchToLobby(): void {
-    if (this.mode === 'online_world') {
-      this.leaveMultiplayerRoom();
-      return;
-    }
-    document.exitPointerLock?.();
-    this.resetMatch();
-    this.screen = 'title';
-    this.net.exitMatch();
-    this.syncCameraVisibility();
-    this.syncBodyState();
-    this.emitHud(true);
+    this.leaveMultiplayerRoom();
   }
 
   public leaveMultiplayerRoom(): void {
@@ -2090,9 +2186,11 @@ export class UnstableArenaEngine {
     if (this.trophyMesh) this.trophyMesh.visible = false;
     this.customPartyMode = this.isPracticeMode
       ? 'classic'
-      : this.mode === 'multiplayer' || this.mode === 'ffa'
-        ? (this.mpState.partyMode || 'knockout')
-        : 'classic';
+      : this.mode === 'ffa'
+        ? 'knockout'
+        : this.mode === 'multiplayer'
+          ? (this.mpState.partyMode || 'knockout')
+          : 'classic';
     this.botDifficulty =
       this.mode === 'multiplayer' || this.mode === 'ffa'
         ? (this.mpState.botDifficulty || 'medium')
@@ -2120,7 +2218,7 @@ export class UnstableArenaEngine {
     if (this.customPartyMode === 'boss_raid') {
       this.bossMaxHp = 650;
       this.bossCurrentHp = 650;
-      this.bossName = '심연의 거신 ManePear';
+      this.bossName = '심연의 거신 떡대';
     }
 
     this.clearPlacedBlocks();
@@ -2221,7 +2319,7 @@ export class UnstableArenaEngine {
 
     if ((this.mode === 'multiplayer' || this.mode === 'ffa') && this.customPartyMode === 'boss_raid') {
       const bossProf = CHARACTERS.manepear;
-      this.bossName = '심연의 거신 ManePear';
+      this.bossName = '심연의 거신 떡대';
       this.bossMaxHp = 650;
       this.bossCurrentHp = 650;
       const boss = this.createEnemy(
@@ -2234,7 +2332,7 @@ export class UnstableArenaEngine {
       );
       boss.hp = 650;
       boss.maxHp = 650;
-      boss.name = '심연의 거신 ManePear (BOSS)';
+      boss.name = '심연의 거신 떡대 (BOSS)';
       boss.rig.root.scale.setScalar(1.22);
       boss.overhead.updateHp(1);
       this.enemies.push(boss);
@@ -2255,26 +2353,11 @@ export class UnstableArenaEngine {
       return;
     }
 
-    if ((this.mode === 'multiplayer' || this.mode === 'ffa') && this.customPartyMode === 'knockout') {
-      const customList = normalizeCustomBots(this.mpState.customBots ?? [], 'ffa');
-      if (customList.length > 0) {
-        for (let i = 0; i < customList.length; i++) {
-          const cb = customList[i];
-          const prof = CHARACTERS[cb.characterId] ?? rivals[i % rivals.length];
-          const ang = (i / customList.length) * Math.PI * 2;
-          const bot = this.createEnemy(
-            prof,
-            this.policyForCharacter(prof, i),
-            new THREE.Vector3(Math.cos(ang) * 16, 0, Math.sin(ang) * 16 - 4),
-            `ko-custom-${cb.id}`,
-            false,
-            'ffa'
-          );
-          bot.name = cb.name;
-          this.enemies.push(bot);
-        }
-        return;
-      }
+    const humanCallsigns = this.isPracticeMode
+      ? []
+      : pickHumanizedChallengerNames(10, this.mpState.playerName, Date.now());
+
+    if (this.mode === 'ffa' && this.customPartyMode === 'knockout') {
       if (this.mpState.includeBots || this.mpState.peers.length < 2) {
         const koSpawns = [
           new THREE.Vector3(-15, 0, -15),
@@ -2285,8 +2368,14 @@ export class UnstableArenaEngine {
           new THREE.Vector3(-22, 0, 0),
           new THREE.Vector3(22, 0, 0),
         ];
-        for (let i = 0; i < koSpawns.length; i++) {
+        const remotePeerCount = Math.max(0, this.mpState.peers.length - 1);
+        const neededChallengers = Math.max(0, koSpawns.length - remotePeerCount);
+        for (let i = 0; i < neededChallengers; i++) {
           const prof = rivals[i % rivals.length];
+          const callsign =
+            !this.isPracticeMode && this.mode === 'ffa'
+              ? humanCallsigns[i] ?? prof.name
+              : prof.name;
           this.enemies.push(
             this.createEnemy(
               prof,
@@ -2294,7 +2383,8 @@ export class UnstableArenaEngine {
               koSpawns[i],
               `ko-bot-${i}`,
               false,
-              'ffa'
+              'ffa',
+              callsign
             )
           );
         }
@@ -2330,9 +2420,9 @@ export class UnstableArenaEngine {
             spawnVec,
             `mp-custom-${cb.id}`,
             false,
-            cb.team
+            cb.team,
+            cb.name
           );
-          bot.name = cb.name;
           this.enemies.push(bot);
         }
         return;
@@ -2353,6 +2443,7 @@ export class UnstableArenaEngine {
         let idx = 0;
         for (let i = 0; i < redNeed; i++) {
           const prof = rivals[idx % rivals.length];
+          const callsign = humanCallsigns[idx % humanCallsigns.length] ?? prof.name;
           this.enemies.push(
             this.createEnemy(
               prof,
@@ -2360,13 +2451,15 @@ export class UnstableArenaEngine {
               new THREE.Vector3(teamSpawnXs[i % teamSpawnXs.length], 0, 8.5),
               `mp-bot-r-${i}`,
               false,
-              'red'
+              'red',
+              callsign
             )
           );
           idx++;
         }
         for (let i = 0; i < blueNeed; i++) {
           const prof = rivals[idx % rivals.length];
+          const callsign = humanCallsigns[idx % humanCallsigns.length] ?? prof.name;
           this.enemies.push(
             this.createEnemy(
               prof,
@@ -2374,22 +2467,39 @@ export class UnstableArenaEngine {
               new THREE.Vector3(teamSpawnXs[i % teamSpawnXs.length], 0, -8.5),
               `mp-bot-b-${i}`,
               false,
-              'blue'
+              'blue',
+              callsign
             )
           );
           idx++;
         }
       } else {
-        for (let i = 0; i < 3; i++) {
+        const mpSpawns =
+          this.customPartyMode === 'knockout'
+            ? [
+                new THREE.Vector3(-15, 0, -15),
+                new THREE.Vector3(15, 0, -15),
+                new THREE.Vector3(-18, 0, 14),
+                new THREE.Vector3(18, 0, 14),
+                new THREE.Vector3(0, 0, -22),
+              ]
+            : [
+                new THREE.Vector3(-14, 0, -16),
+                new THREE.Vector3(14, 0, -16),
+                new THREE.Vector3(0, 0, -16),
+              ];
+        for (let i = 0; i < mpSpawns.length; i++) {
           const prof = rivals[i % rivals.length];
+          const callsign = humanCallsigns[i % humanCallsigns.length] ?? prof.name;
           this.enemies.push(
             this.createEnemy(
               prof,
               this.policyForCharacter(prof, i),
-              new THREE.Vector3(i === 0 ? -14 : i === 1 ? 14 : 0, 0, -16),
+              mpSpawns[i],
               `mp-bot-${i}`,
               false,
-              'ffa'
+              'ffa',
+              callsign
             )
           );
         }
@@ -2398,12 +2508,21 @@ export class UnstableArenaEngine {
     }
 
     if (this.mode === 'link_duel') {
-      if (this.mpState.roomCode && this.mpState.roomKind === 'link_duel') {
+      if (this.mpState.roomCode && this.mpState.roomKind === 'link_duel' && this.mpState.peers.length >= 2) {
         return;
       }
-      const rival = rivals[0];
+      const rival = rivals[Math.floor(Math.random() * rivals.length)] ?? rivals[0];
+      const duelCallsign = humanCallsigns[0] ?? rival.name;
       this.enemies.push(
-        this.createEnemy(rival, this.policyForCharacter(rival, 0), new THREE.Vector3(0, 0, -24), 'rival-1')
+        this.createEnemy(
+          rival,
+          this.policyForCharacter(rival, 0),
+          new THREE.Vector3(0, 0, -24),
+          'rival-1',
+          false,
+          'ffa',
+          duelCallsign
+        )
       );
       return;
     }
@@ -2427,12 +2546,19 @@ export class UnstableArenaEngine {
             new THREE.Vector3(34, 0, 0),
           ];
 
+    const remoteHumans = Math.max(0, this.mpState.peers.length - 1);
+    const totalToSpawn =
+      this.mode === 'online_world'
+        ? Math.max(0, spawns.length - remoteHumans)
+        : spawns.length;
+
     // Ensure at least one ranged character (Kestrel/Vexor) spawns in FFA/Open World
     const rangedChars = rivals.filter((c) => c.id === 'kestrel' || c.id === 'vexor');
-    for (let i = 0; i < spawns.length; i++) {
-      const prof = i === spawns.length - 1 && rangedChars.length > 0 ? rangedChars[0] : rivals[i % rivals.length];
+    for (let i = 0; i < totalToSpawn; i++) {
+      const prof = i === totalToSpawn - 1 && rangedChars.length > 0 ? rangedChars[0] : rivals[i % rivals.length];
+      const callsign = this.isPracticeMode ? prof.name : humanCallsigns[i] ?? prof.name;
       this.enemies.push(
-        this.createEnemy(prof, this.policyForCharacter(prof, i), spawns[i], `world-${i}`, false, 'ffa')
+        this.createEnemy(prof, this.policyForCharacter(prof, i), spawns[i], `world-${i}`, false, 'ffa', callsign)
       );
     }
   }
@@ -2457,25 +2583,42 @@ export class UnstableArenaEngine {
       };
     }
     const isAlly = !hostile;
-    const barColor = targetTeam === 'red' ? '#ef4444' : '#3b82f6';
+    const barColor = isAlly ? '#22c55e' : '#ef4444';
     const relationBadge = isAlly
       ? { label: '아군', bgColor: '#16a34a' }
       : { label: '적군', bgColor: '#e11d48' };
     return {
       barColor,
-      outlineHex: hostile ? ENEMY_OUTLINE_HEX : null,
+      outlineHex: isAlly ? null : ENEMY_OUTLINE_HEX,
       relationBadge,
     };
   }
 
   private refreshActorTeamVisuals(): void {
+    const isTeamMode = this.getEffectiveRoomMode() === 'team';
     for (const e of this.enemies) {
       const rel = this.getRelationVisuals(e.team);
       e.rig.setTeamOutline(e.stealthTimer > 0 ? null : rel.outlineHex);
+      if (!e.isBoss) {
+        const barColor =
+          isTeamMode && (e.team === 'red' || e.team === 'blue') ? rel.barColor : e.profile.trimColor;
+        e.rig.root.remove(e.overhead.group);
+        e.overhead = createEnemyOverheadBar(e.name, barColor, rel.relationBadge);
+        e.overhead.updateHp(e.hp / e.maxHp);
+        e.rig.root.add(e.overhead.group);
+      }
     }
     for (const peer of this.remotePeers.values()) {
       const rel = this.getRelationVisuals(peer.team);
       peer.rig.setTeamOutline(peer.isStealthed ? null : rel.outlineHex);
+      const barColor =
+        isTeamMode && (peer.team === 'red' || peer.team === 'blue')
+          ? rel.barColor
+          : CHARACTERS[peer.characterId]?.trimColor ?? '#94a3b8';
+      peer.rig.root.remove(peer.overhead.group);
+      peer.overhead = createEnemyOverheadBar(peer.name, barColor, rel.relationBadge);
+      peer.overhead.updateHp(peer.hp / peer.maxHp);
+      peer.rig.root.add(peer.overhead.group);
     }
   }
 
@@ -2583,7 +2726,8 @@ export class UnstableArenaEngine {
     pos: THREE.Vector3,
     id: string,
     isBoss = false,
-    team: PlayerTeam = 'ffa'
+    team: PlayerTeam = 'ffa',
+    customName?: string
   ): AiFighter {
     const resolvedPos = resolveHorizontalCollision(
       pos.x,
@@ -2605,12 +2749,13 @@ export class UnstableArenaEngine {
     }
     rig.root.position.copy(safePos);
 
+    const displayName = isBoss ? '심연의 거신 떡대' : (customName?.trim() || profile.name);
     const rel = this.getRelationVisuals(team);
     rig.setTeamOutline(rel.outlineHex);
     const barColor =
       this.mpState.roomMode === 'team' && (team === 'red' || team === 'blue') ? rel.barColor : profile.trimColor;
     const overhead = createEnemyOverheadBar(
-      isBoss ? '심연의 거신 ManePear' : profile.name,
+      displayName,
       isBoss ? '#dc2626' : barColor,
       rel.relationBadge
     );
@@ -2622,7 +2767,7 @@ export class UnstableArenaEngine {
 
     return {
       id,
-      name: profile.name,
+      name: displayName,
       team,
       profile,
       policy,
@@ -4240,7 +4385,7 @@ export class UnstableArenaEngine {
           this.playerVel.z += ((this.playerPos.z - pos.z) / pDist) * 14.0 * falloff;
         }
         this.playerOnGround = false;
-      } else if (canDamageTarget(this.mpState.roomMode, ownerTeam, localTeam)) {
+      } else if (canDamageTarget(this.getEffectiveRoomMode(), ownerTeam, localTeam)) {
         const dirX = pDist > 0.1 ? (this.playerPos.x - pos.x) / pDist : 0;
         const dirZ = pDist > 0.1 ? (this.playerPos.z - pos.z) / pDist : 1;
         const dmg = Math.round(62 + falloff * 58);
@@ -4251,7 +4396,7 @@ export class UnstableArenaEngine {
     if (isLocalOwner) {
       for (const enemy of this.enemies) {
         if (!enemy.alive || enemy.koTimer > 0) continue;
-        if (!canDamageTarget(this.mpState.roomMode, ownerTeam, enemy.team)) continue;
+        if (!canDamageTarget(this.getEffectiveRoomMode(), ownerTeam, enemy.team)) continue;
         const d = Math.hypot(enemy.pos.x - pos.x, enemy.pos.z - pos.z);
         if (d < blastRadius && Math.abs(enemy.pos.y - pos.y) < 5.5) {
           const falloff = 1 - d / blastRadius;
@@ -4263,7 +4408,7 @@ export class UnstableArenaEngine {
       }
       for (const peer of this.remotePeers.values()) {
         if (!peer.alive) continue;
-        if (!canDamageTarget(this.mpState.roomMode, ownerTeam, peer.team)) continue;
+        if (!canDamageTarget(this.getEffectiveRoomMode(), ownerTeam, peer.team)) continue;
         const d = Math.hypot(peer.pos.x - pos.x, peer.pos.z - pos.z);
         if (d < blastRadius && Math.abs(peer.pos.y - pos.y) < 5.5) {
           const falloff = 1 - d / blastRadius;
@@ -4283,7 +4428,7 @@ export class UnstableArenaEngine {
     } else if (ownerBot) {
       for (const enemy of this.enemies) {
         if (!enemy.alive || enemy.koTimer > 0 || enemy.id === ownerId) continue;
-        if (!canDamageTarget(this.mpState.roomMode, ownerTeam, enemy.team)) continue;
+        if (!canDamageTarget(this.getEffectiveRoomMode(), ownerTeam, enemy.team)) continue;
         const d = Math.hypot(enemy.pos.x - pos.x, enemy.pos.z - pos.z);
         if (d < blastRadius && Math.abs(enemy.pos.y - pos.y) < 5.5) {
           const falloff = 1 - d / blastRadius;
@@ -4899,80 +5044,31 @@ export class UnstableArenaEngine {
           this.pushCallout(`⏰ 마감 20초! ${this.knockoutQuota}킬을 채워 생존하세요!`, '#fb7185');
         }
         if (this.knockoutRoundTimer <= 0) {
+          const activeBotCandidates = this.enemies
+            .filter((e) => !e.eliminated)
+            .map((e) => ({ id: e.id, kills: e.kills, hp: e.hp }));
+          const remoteAliveCount = Array.from(this.remotePeers.values()).filter((p) => p.alive).length;
+          const { eliminatedIds } = selectKnockoutRoundEliminations(
+            this.knockoutRound,
+            this.knockoutQuota,
+            activeBotCandidates
+          );
           for (const e of this.enemies) {
-            if (!e.eliminated && e.kills < this.knockoutQuota) {
-              const spec = pickKnockoutEliminationAnim();
-              const angle = Math.atan2(e.pos.z, e.pos.x);
-              e.eliminated = true;
-              e.alive = true;
-              e.koTimer = 0;
-              e.telegraphTimer = 0;
-              e.rig.telegraphRing.visible = false;
-              e.rig.root.visible = true;
-              e.overhead.group.visible = false;
-              e.elimAnim = {
-                kind: spec.kind,
-                timer: 0,
-                duration: spec.durationSec,
-                startPos: e.pos.clone(),
-                flingDirX: Math.cos(angle),
-                flingDirZ: Math.sin(angle),
-                prop: this.createElimProp(spec.kind, e.pos),
-              };
-              if (spec.isJackpot) {
-                this.addKillFeed(`🎰 JACKPOT! ${e.name} — ${spec.label}`, spec.feedColor);
-                this.pushCallout(`🎰 ${e.name}: ${spec.label}`, spec.feedColor);
-                this.spawnParticles(e.pos.x, e.pos.y + 1.4, e.pos.z, 32, 0xfde047, 11);
-                this.spawnParticles(e.pos.x, e.pos.y + 1.0, e.pos.z, 22, 0x22d3ee, 9);
-                this.spawnShockwave(e.pos.x, e.pos.y + 0.08, e.pos.z, 5.2, 0xfacc15);
-                this.audio.playJackpotElimination();
-              } else {
-                this.addKillFeed(`${e.name} ${spec.label} 탈락 (할당 ${this.knockoutQuota}킬 미달)`, spec.feedColor);
-                this.spawnParticles(e.pos.x, e.pos.y + 1.0, e.pos.z, 18, 0xf97316, 8);
-                this.spawnShockwave(e.pos.x, e.pos.y + 0.08, e.pos.z, 3.6, 0xf97316);
-                this.audio.playWindCharge();
-              }
+            if (
+              !e.eliminated &&
+              (eliminatedIds.has(e.id) ||
+                (remoteAliveCount > 0 && this.knockoutRound >= MAX_KNOCKOUT_ROUNDS && e.kills < this.knockoutQuota))
+            ) {
+              this.triggerBotKnockoutElimination(e, `할당 ${this.knockoutQuota}킬 미달`);
             }
           }
           if (!this.isSpectating && !this.localEliminationAnim && this.kills < this.knockoutQuota) {
-            const spec = pickKnockoutEliminationAnim();
-            const angle = Math.atan2(this.playerPos.z, this.playerPos.x);
-            this.isBlocking = false;
-            this.isGliding = false;
-            this.localEliminationAnim = {
-              kind: spec.kind,
-              timer: 0,
-              duration: spec.durationSec,
-              startPos: this.playerPos.clone(),
-              flingDirX: Math.cos(angle),
-              flingDirZ: Math.sin(angle),
-              prop: this.createElimProp(spec.kind, this.playerPos),
-            };
-            this.syncCameraVisibility();
-            this.pushCallout(
-              spec.isJackpot
-                ? `🎰 ${spec.label} 관전 전환 중...`
-                : `${spec.label}! 목표 ${this.knockoutQuota}킬 미달 탈락!`,
-              spec.isJackpot ? spec.feedColor : '#ef4444'
-            );
-            this.addKillFeed(
-              spec.isJackpot
-                ? `🎰 JACKPOT! ${this.mpState.playerName || 'Player'} — ${spec.label}`
-                : `${this.mpState.playerName || 'Player'} ${spec.label} 탈락`,
-              spec.isJackpot ? spec.feedColor : '#ef4444'
-            );
-            if (spec.isJackpot) {
-              this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.4, this.playerPos.z, 36, 0xfde047, 12);
-              this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.08, this.playerPos.z, 5.5, 0xfacc15);
-              this.audio.playJackpotElimination();
-            } else {
-              this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.0, this.playerPos.z, 20, 0xef4444, 8);
-              this.audio.playExplosion();
-            }
+            this.triggerLocalKnockoutElimination(`목표 ${this.knockoutQuota}킬 미달 탈락!`);
           }
-          const aliveBots = this.enemies.filter((e) => !e.eliminated).length;
+
+          let aliveBots = this.enemies.filter((e) => !e.eliminated).length;
           const alivePeers = Array.from(this.remotePeers.values()).filter((p) => p.alive).length;
-          const playerSurvives = !this.isSpectating && !this.localEliminationAnim;
+          let playerSurvives = !this.isSpectating && !this.localEliminationAnim;
           const totalSurvivors = (playerSurvives ? 1 : 0) + aliveBots + alivePeers;
 
           if (playerSurvives && aliveBots === 0 && alivePeers === 0) {
@@ -4985,13 +5081,71 @@ export class UnstableArenaEngine {
             }
             return;
           }
-          if (!playerSurvives && totalSurvivors <= 1) {
+          if (!playerSurvives && (alivePeers === 0 || totalSurvivors <= 1)) {
             const hasElimAnims = Boolean(this.localEliminationAnim) || this.enemies.some((e) => Boolean(e.elimAnim));
             if (hasElimAnims) {
               this.pendingKnockoutOutcome = 'defeat';
               this.knockoutOutcomeDelay = 2.3;
             } else {
               this.triggerEndGame('defeat');
+            }
+            return;
+          }
+
+          // Final Round (R3) ALWAYS resolves a single Champion/winning team so Knockout never loops into R4+
+          if (this.knockoutRound >= MAX_KNOCKOUT_ROUNDS) {
+            let finalOutcome: 'victory' | 'defeat' = playerSurvives ? 'victory' : 'defeat';
+            if (this.mode === 'multiplayer' && this.mpState.roomMode === 'team') {
+              const board = this.buildScoreboard();
+              const redKills = board.filter((s) => s.team === 'red').reduce((acc, s) => acc + s.kills, 0);
+              const blueKills = board.filter((s) => s.team === 'blue').reduce((acc, s) => acc + s.kills, 0);
+              const localTeam = this.getLocalPlayerTeam();
+              const winTeam =
+                redKills > blueKills ? 'red' : blueKills > redKills ? 'blue' : localTeam;
+              for (const e of this.enemies) {
+                if (!e.eliminated && e.team !== winTeam) {
+                  this.triggerBotKnockoutElimination(e, '결승 팀 점수 탈락');
+                }
+              }
+              if (playerSurvives && localTeam !== winTeam) {
+                this.triggerLocalKnockoutElimination('결승 팀 점수 패배!');
+                playerSurvives = false;
+              }
+              finalOutcome = localTeam === winTeam ? 'victory' : 'defeat';
+            } else {
+              const contenders: KnockoutFinalContender[] = [];
+              if (playerSurvives) {
+                contenders.push({ id: 'local', kills: this.kills, hp: this.playerHp, isLocal: true });
+              }
+              for (const e of this.enemies) {
+                if (!e.eliminated) {
+                  contenders.push({ id: e.id, kills: e.kills, hp: e.hp });
+                }
+              }
+              for (const p of this.remotePeers.values()) {
+                if (p.alive) {
+                  contenders.push({ id: `peer:${p.id}`, kills: p.kills, hp: p.hp });
+                }
+              }
+              const { championId, eliminatedIds: finalElims } = resolveKnockoutFinalShowdown(contenders);
+              for (const e of this.enemies) {
+                if (!e.eliminated && finalElims.has(e.id)) {
+                  this.triggerBotKnockoutElimination(e, '결승 순위 컷 탈락');
+                }
+              }
+              if (playerSurvives && championId !== 'local') {
+                this.triggerLocalKnockoutElimination('결승 순위 탈락!');
+                playerSurvives = false;
+              }
+              finalOutcome = championId === 'local' ? 'victory' : 'defeat';
+            }
+
+            const hasElimAnims = Boolean(this.localEliminationAnim) || this.enemies.some((e) => Boolean(e.elimAnim));
+            if (hasElimAnims) {
+              this.pendingKnockoutOutcome = finalOutcome;
+              this.knockoutOutcomeDelay = 2.3;
+            } else {
+              this.triggerEndGame(finalOutcome);
             }
             return;
           }
@@ -5241,7 +5395,7 @@ export class UnstableArenaEngine {
           e.alive &&
           e.koTimer <= 0 &&
           e.id !== t.ownerId &&
-          canDamageTarget(this.mpState.roomMode, t.ownerTeam, e.team) &&
+          canDamageTarget(this.getEffectiveRoomMode(), t.ownerTeam, e.team) &&
           Math.hypot(t.pos.x - e.pos.x, t.pos.z - e.pos.z) < 1.35 &&
           Math.abs(t.pos.y - (e.pos.y + 1)) < 1.35
         ) {
@@ -5252,7 +5406,7 @@ export class UnstableArenaEngine {
       if (
         !directHit &&
         t.ownerId !== (this.mpState.selfId ?? 'player') &&
-        canDamageTarget(this.mpState.roomMode, t.ownerTeam, this.getLocalPlayerTeam()) &&
+        canDamageTarget(this.getEffectiveRoomMode(), t.ownerTeam, this.getLocalPlayerTeam()) &&
         Math.hypot(t.pos.x - this.playerPos.x, t.pos.z - this.playerPos.z) < 1.35 &&
         Math.abs(t.pos.y - (this.playerPos.y + 1)) < 1.35
       ) {
@@ -5349,7 +5503,7 @@ export class UnstableArenaEngine {
     const hostilePools = activePools.filter(
       (h) =>
         h.kind !== 'lava' ||
-        (h.ownerId !== selfOwnerId && canDamageTarget(this.mpState.roomMode, h.ownerTeam, localTeam))
+        (h.ownerId !== selfOwnerId && canDamageTarget(this.getEffectiveRoomMode(), h.ownerTeam, localTeam))
     );
     const inLava = isInsideHazardPool(this.playerPos.x, this.playerPos.y, this.playerPos.z, hostilePools, 'lava');
     const inWater = isInsideHazardPool(this.playerPos.x, this.playerPos.y, this.playerPos.z, activePools, 'water');
@@ -5732,8 +5886,8 @@ export class UnstableArenaEngine {
 
       for (const e of this.enemies) {
         if (!e.alive || e.koTimer > 0 || e.id === p.ownerId) continue;
-        if (p.ownerId !== localSelfId && !canDamageTarget(this.mpState.roomMode, p.ownerTeam, e.team)) continue;
-        if (p.ownerId === localSelfId && !canDamageTarget(this.mpState.roomMode, localTeam, e.team)) continue;
+        if (p.ownerId !== localSelfId && !canDamageTarget(this.getEffectiveRoomMode(), p.ownerTeam, e.team)) continue;
+        if (p.ownerId === localSelfId && !canDamageTarget(this.getEffectiveRoomMode(), localTeam, e.team)) continue;
         if (
           Math.hypot(p.pos.x - e.pos.x, p.pos.z - e.pos.z) < 1.25 &&
           p.pos.y >= e.pos.y &&
@@ -5747,7 +5901,7 @@ export class UnstableArenaEngine {
       if (!hitEnemy && p.ownerId === localSelfId) {
         for (const peer of this.remotePeers.values()) {
           if (!peer.alive) continue;
-          if (!canDamageTarget(this.mpState.roomMode, localTeam, peer.team)) continue;
+          if (!canDamageTarget(this.getEffectiveRoomMode(), localTeam, peer.team)) continue;
           if (
             Math.hypot(p.pos.x - peer.pos.x, p.pos.z - peer.pos.z) < 1.25 &&
             p.pos.y >= peer.pos.y &&
@@ -5764,7 +5918,7 @@ export class UnstableArenaEngine {
         !hitPeer &&
         p.ownerId !== localSelfId &&
         this.localRespawnTimer <= 0 &&
-        canDamageTarget(this.mpState.roomMode, p.ownerTeam, localTeam) &&
+        canDamageTarget(this.getEffectiveRoomMode(), p.ownerTeam, localTeam) &&
         Math.hypot(p.pos.x - this.playerPos.x, p.pos.z - this.playerPos.z) < 1.2 &&
         p.pos.y >= this.playerPos.y &&
         p.pos.y <= this.playerPos.y + 2.1
@@ -5958,7 +6112,7 @@ export class UnstableArenaEngine {
       const enemyHostilePools = activePools.filter(
         (h) =>
           h.kind !== 'lava' ||
-          (h.ownerId !== e.id && canDamageTarget(this.mpState.roomMode, h.ownerTeam, e.team))
+          (h.ownerId !== e.id && canDamageTarget(this.getEffectiveRoomMode(), h.ownerTeam, e.team))
       );
       const enemyInLava = isInsideHazardPool(e.pos.x, e.pos.y, e.pos.z, enemyHostilePools, 'lava');
       const enemyInWater = isInsideHazardPool(e.pos.x, e.pos.y, e.pos.z, activePools, 'water');
@@ -6287,6 +6441,42 @@ export class UnstableArenaEngine {
         }
       }
 
+      // Human-like weapon hotbar switching, strafe-jumping (bunny-hopping), and jump-pad routing
+      if (!e.isBoss && e.policy !== 'ranged_kite') {
+        if (!e.onGround && e.fallStartY - e.pos.y > 1.8 && hasWeapon('mace')) {
+          e.rig.setActiveWeapon('mace');
+        } else if (e.healCd > 9.6 && hasWeapon('gapple')) {
+          e.rig.setActiveWeapon('gapple');
+        } else {
+          e.rig.setActiveWeapon(e.profile.loadout[0].id);
+        }
+      }
+
+      if (
+        !this.isPracticeMode &&
+        e.onGround &&
+        !enemyWebbed &&
+        dist > 3.0 &&
+        dist < 22 &&
+        Math.random() < (this.botDifficulty === 'hard' ? 0.065 : 0.038)
+      ) {
+        e.vel.y = 9.8 + Math.random() * 1.4;
+        e.onGround = false;
+      }
+
+      if (!e.isBoss && e.jumpPadCooldown <= 0 && e.onGround && dist > 9) {
+        for (const pad of this.jumpPads) {
+          const pdx = pad.x - e.pos.x;
+          const pdz = pad.z - e.pos.z;
+          const pDist = Math.hypot(pdx, pdz);
+          if (pDist < 4.5 && pDist > 0.2) {
+            moveX += (pdx / pDist) * 0.85;
+            moveZ += (pdz / pDist) * 0.85;
+            break;
+          }
+        }
+      }
+
       // Steer away from active lava pools so bots avoid self-immolation
       for (const pool of activePools) {
         if (pool.kind !== 'lava') continue;
@@ -6581,6 +6771,7 @@ export class UnstableArenaEngine {
     if (targetKind === 'enemy' && targetEnemy && targetEnemy.alive && targetEnemy.koTimer <= 0) {
       if (!canDamageTarget(effMode, e.team, targetEnemy.team)) return;
       if (Math.abs(targetEnemy.pos.y - e.pos.y) > 2.8) return;
+      const aiVsAiDmg = computeOneShotDamage(Math.round(rawDmg * 1.85), this.customPartyMode === 'one_shot');
       const res = applyCombatDamage(
         {
           hp: targetEnemy.hp,
@@ -6588,7 +6779,7 @@ export class UnstableArenaEngine {
           absorption: targetEnemy.absorption,
           isBlocking: targetEnemy.isBlocking,
         },
-        rawDmg,
+        aiVsAiDmg,
         isSmash
       );
       targetEnemy.lastDamagedBy = {
@@ -6863,7 +7054,7 @@ export class UnstableArenaEngine {
         hp: Math.round(e.hp),
         maxHp: e.maxHp,
         isLocal: false,
-        isBot: true,
+        isBot: false,
       });
     }
 
@@ -7399,6 +7590,75 @@ export class UnstableArenaEngine {
     }
 
     return anim.timer >= anim.duration;
+  }
+
+  private triggerBotKnockoutElimination(e: AiFighter, reason: string): void {
+    const spec = pickKnockoutEliminationAnim();
+    const angle = Math.atan2(e.pos.z, e.pos.x);
+    e.eliminated = true;
+    e.alive = true;
+    e.koTimer = 0;
+    e.telegraphTimer = 0;
+    e.rig.telegraphRing.visible = false;
+    e.rig.root.visible = true;
+    e.overhead.group.visible = false;
+    e.elimAnim = {
+      kind: spec.kind,
+      timer: 0,
+      duration: spec.durationSec,
+      startPos: e.pos.clone(),
+      flingDirX: Math.cos(angle),
+      flingDirZ: Math.sin(angle),
+      prop: this.createElimProp(spec.kind, e.pos),
+    };
+    if (spec.isJackpot) {
+      this.addKillFeed(`🎰 JACKPOT! ${e.name} — ${spec.label}`, spec.feedColor);
+      this.pushCallout(`🎰 ${e.name}: ${spec.label}`, spec.feedColor);
+      this.spawnParticles(e.pos.x, e.pos.y + 1.4, e.pos.z, 32, 0xfde047, 11);
+      this.spawnParticles(e.pos.x, e.pos.y + 1.0, e.pos.z, 22, 0x22d3ee, 9);
+      this.spawnShockwave(e.pos.x, e.pos.y + 0.08, e.pos.z, 5.2, 0xfacc15);
+      this.audio.playJackpotElimination();
+    } else {
+      this.addKillFeed(`${e.name} ${spec.label} 탈락 (${reason})`, spec.feedColor);
+      this.spawnParticles(e.pos.x, e.pos.y + 1.0, e.pos.z, 18, 0xf97316, 8);
+      this.spawnShockwave(e.pos.x, e.pos.y + 0.08, e.pos.z, 3.6, 0xf97316);
+      this.audio.playWindCharge();
+    }
+  }
+
+  private triggerLocalKnockoutElimination(reasonCallout: string): void {
+    const spec = pickKnockoutEliminationAnim();
+    const angle = Math.atan2(this.playerPos.z, this.playerPos.x);
+    this.isBlocking = false;
+    this.isGliding = false;
+    this.localEliminationAnim = {
+      kind: spec.kind,
+      timer: 0,
+      duration: spec.durationSec,
+      startPos: this.playerPos.clone(),
+      flingDirX: Math.cos(angle),
+      flingDirZ: Math.sin(angle),
+      prop: this.createElimProp(spec.kind, this.playerPos),
+    };
+    this.syncCameraVisibility();
+    this.pushCallout(
+      spec.isJackpot ? `🎰 ${spec.label} 탈락!` : `${spec.label}! ${reasonCallout}`,
+      spec.isJackpot ? spec.feedColor : '#ef4444'
+    );
+    this.addKillFeed(
+      spec.isJackpot
+        ? `🎰 JACKPOT! ${this.mpState.playerName || 'Player'} — ${spec.label}`
+        : `${this.mpState.playerName || 'Player'} ${spec.label} 탈락`,
+      spec.isJackpot ? spec.feedColor : '#ef4444'
+    );
+    if (spec.isJackpot) {
+      this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.4, this.playerPos.z, 36, 0xfde047, 12);
+      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.08, this.playerPos.z, 5.5, 0xfacc15);
+      this.audio.playJackpotElimination();
+    } else {
+      this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.0, this.playerPos.z, 20, 0xef4444, 8);
+      this.audio.playExplosion();
+    }
   }
 
   private updateEliminationAnims(dt: number): void {
