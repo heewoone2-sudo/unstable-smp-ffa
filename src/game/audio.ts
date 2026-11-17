@@ -606,4 +606,26 @@ export class GameAudio {
       osc.stop(t + 0.36);
     }
   }
+
+  public playJackpotElimination(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    // Celebratory 777 slot-machine fanfare + coin cascade
+    const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5, 1567.98];
+    for (let i = 0; i < notes.length; i++) {
+      const t = now + i * 0.048;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = i % 2 === 0 ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(notes[i], t);
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.25, t + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
+      osc.connect(g).connect(this.masterGain ?? ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.34);
+    }
+    this.triggerDullThud(ctx, now + 0.12, 620, 150, 38, 0.38, 0.18);
+  }
 }

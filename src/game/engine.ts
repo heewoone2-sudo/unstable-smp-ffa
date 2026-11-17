@@ -4919,15 +4919,19 @@ export class UnstableArenaEngine {
                 flingDirZ: Math.sin(angle),
                 prop: this.createElimProp(spec.kind, e.pos),
               };
-              if (spec.isRare) {
-                this.addKillFeed(`${e.name} — ${spec.label}`, spec.feedColor);
-                this.pushCallout(`${e.name}: ${spec.label}`, spec.feedColor);
+              if (spec.isJackpot) {
+                this.addKillFeed(`🎰 JACKPOT! ${e.name} — ${spec.label}`, spec.feedColor);
+                this.pushCallout(`🎰 ${e.name}: ${spec.label}`, spec.feedColor);
+                this.spawnParticles(e.pos.x, e.pos.y + 1.4, e.pos.z, 32, 0xfde047, 11);
+                this.spawnParticles(e.pos.x, e.pos.y + 1.0, e.pos.z, 22, 0x22d3ee, 9);
+                this.spawnShockwave(e.pos.x, e.pos.y + 0.08, e.pos.z, 5.2, 0xfacc15);
+                this.audio.playJackpotElimination();
               } else {
                 this.addKillFeed(`${e.name} ${spec.label} 탈락 (할당 ${this.knockoutQuota}킬 미달)`, spec.feedColor);
+                this.spawnParticles(e.pos.x, e.pos.y + 1.0, e.pos.z, 18, 0xf97316, 8);
+                this.spawnShockwave(e.pos.x, e.pos.y + 0.08, e.pos.z, 3.6, 0xf97316);
+                this.audio.playWindCharge();
               }
-              this.spawnParticles(e.pos.x, e.pos.y + 1.0, e.pos.z, 18, spec.isRare ? 0x22d3ee : 0xf97316, 8);
-              this.spawnShockwave(e.pos.x, e.pos.y + 0.08, e.pos.z, 3.6, spec.isRare ? 0x22d3ee : 0xf97316);
-              this.audio.playWindCharge();
             }
           }
           if (!this.isSpectating && !this.localEliminationAnim && this.kills < this.knockoutQuota) {
@@ -4946,19 +4950,25 @@ export class UnstableArenaEngine {
             };
             this.syncCameraVisibility();
             this.pushCallout(
-              spec.isRare
-                ? `${spec.label} 관전 전환 중...`
+              spec.isJackpot
+                ? `🎰 ${spec.label} 관전 전환 중...`
                 : `${spec.label}! 목표 ${this.knockoutQuota}킬 미달 탈락!`,
-              spec.isRare ? spec.feedColor : '#ef4444'
+              spec.isJackpot ? spec.feedColor : '#ef4444'
             );
             this.addKillFeed(
-              spec.isRare
-                ? `${this.mpState.playerName || 'Player'} — ${spec.label}`
+              spec.isJackpot
+                ? `🎰 JACKPOT! ${this.mpState.playerName || 'Player'} — ${spec.label}`
                 : `${this.mpState.playerName || 'Player'} ${spec.label} 탈락`,
-              spec.isRare ? spec.feedColor : '#ef4444'
+              spec.isJackpot ? spec.feedColor : '#ef4444'
             );
-            this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.0, this.playerPos.z, 20, spec.isRare ? 0x22d3ee : 0xef4444, 8);
-            this.audio.playExplosion();
+            if (spec.isJackpot) {
+              this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.4, this.playerPos.z, 36, 0xfde047, 12);
+              this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.08, this.playerPos.z, 5.5, 0xfacc15);
+              this.audio.playJackpotElimination();
+            } else {
+              this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.0, this.playerPos.z, 20, 0xef4444, 8);
+              this.audio.playExplosion();
+            }
           }
           const aliveBots = this.enemies.filter((e) => !e.eliminated).length;
           const alivePeers = Array.from(this.remotePeers.values()).filter((p) => p.alive).length;
@@ -7044,6 +7054,106 @@ export class UnstableArenaEngine {
       this.scene.add(g);
       return g;
     }
+    if (kind === 'giant_slime_bounce') {
+      const g = new THREE.Group();
+      const base = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.65, 1.85, 0.35, 24),
+        new THREE.MeshStandardMaterial({ color: 0x065f46, metalness: 0.4, roughness: 0.3 })
+      );
+      const pad = new THREE.Mesh(
+        new THREE.BoxGeometry(2.3, 0.75, 2.3),
+        new THREE.MeshStandardMaterial({
+          color: 0x34d399,
+          emissive: 0x10b981,
+          emissiveIntensity: 0.65,
+          transparent: true,
+          opacity: 0.85,
+        })
+      );
+      pad.name = 'slimePad';
+      pad.position.y = 0.45;
+      g.add(base, pad);
+      g.position.set(pos.x, pos.y + 0.05, pos.z);
+      this.scene.add(g);
+      return g;
+    }
+    if (kind === 'void_whirlpool_suck') {
+      const g = new THREE.Group();
+      const core = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.75, 0.4, 0.18, 28),
+        new THREE.MeshBasicMaterial({ color: 0x1e1b4b })
+      );
+      const ringOuter = new THREE.Mesh(
+        new THREE.TorusGeometry(1.75, 0.13, 10, 28),
+        new THREE.MeshStandardMaterial({ color: 0xa855f7, emissive: 0x9333ea, emissiveIntensity: 1.1 })
+      );
+      ringOuter.rotation.x = Math.PI / 2;
+      ringOuter.position.y = 0.08;
+      const ringInner = new THREE.Mesh(
+        new THREE.TorusGeometry(1.05, 0.1, 10, 24),
+        new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x06b6d4, emissiveIntensity: 1.1 })
+      );
+      ringInner.rotation.x = Math.PI / 2;
+      ringInner.position.y = 0.14;
+      g.add(core, ringOuter, ringInner);
+      g.position.set(pos.x, pos.y + 0.05, pos.z);
+      this.scene.add(g);
+      return g;
+    }
+    if (kind === 'jackpot_slot_cannon') {
+      const g = new THREE.Group();
+      const goldMat = new THREE.MeshStandardMaterial({
+        color: 0xfacc15,
+        emissive: 0xca8a04,
+        emissiveIntensity: 0.55,
+        metalness: 0.85,
+        roughness: 0.2,
+      });
+      const cab = new THREE.Mesh(new THREE.BoxGeometry(2.1, 2.5, 1.1), goldMat);
+      cab.position.set(0, 1.25, -1.1);
+      const screen = new THREE.Mesh(
+        new THREE.BoxGeometry(1.7, 0.85, 0.16),
+        new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xdc2626, emissiveIntensity: 0.9 })
+      );
+      screen.position.set(0, 1.55, -0.5);
+      const barrel = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.68, 0.88, 2.2, 20),
+        new THREE.MeshStandardMaterial({ color: 0xfde047, emissive: 0xeab308, emissiveIntensity: 0.5, metalness: 0.9, roughness: 0.15 })
+      );
+      barrel.name = 'jackpotBarrel';
+      barrel.rotation.x = Math.PI * 0.22;
+      barrel.position.set(0, 1.0, 0.2);
+      g.add(cab, screen, barrel);
+      g.position.set(pos.x, pos.y, pos.z);
+      this.scene.add(g);
+      return g;
+    }
+    if (kind === 'kraken_tentacle_drag') {
+      const g = new THREE.Group();
+      const pool = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.9, 1.9, 0.16, 28),
+        new THREE.MeshStandardMaterial({ color: 0x0f172a, emissive: 0x3b0764, emissiveIntensity: 0.8 })
+      );
+      g.add(pool);
+      const tentMat = new THREE.MeshStandardMaterial({
+        color: 0x9333ea,
+        emissive: 0x2dd4bf,
+        emissiveIntensity: 0.55,
+        roughness: 0.35,
+      });
+      for (let i = 0; i < 4; i++) {
+        const t = new THREE.Mesh(new THREE.ConeGeometry(0.32, 3.2, 10), tentMat);
+        const a = (i * Math.PI) / 2;
+        t.position.set(Math.cos(a) * 1.05, 1.1, Math.sin(a) * 1.05);
+        t.rotation.z = Math.cos(a) * 0.35;
+        t.rotation.x = -Math.sin(a) * 0.35;
+        t.name = `tentacle${i}`;
+        g.add(t);
+      }
+      g.position.set(pos.x, pos.y + 0.04, pos.z);
+      this.scene.add(g);
+      return g;
+    }
     return undefined;
   }
 
@@ -7113,6 +7223,55 @@ export class UnstableArenaEngine {
       if (Math.random() < 0.5) {
         this.spawnParticles(rig.root.position.x, rig.root.position.y + 0.8, rig.root.position.z, 2, 0xf97316, 4.5);
       }
+    } else if (anim.kind === 'giant_slime_bounce') {
+      const slime = anim.prop;
+      if (p < 0.28) {
+        const sq = p / 0.28;
+        if (slime) {
+          slime.scale.set(1 + sq * 0.35, Math.max(0.35, 1 - sq * 0.55), 1 + sq * 0.35);
+        }
+        rig.root.position.set(sx, sy + 0.2, sz);
+        rig.root.scale.set(1 + sq * 0.25, 1 - sq * 0.35, 1 + sq * 0.25);
+      } else {
+        if (!anim.impacted) {
+          anim.impacted = true;
+          this.spawnParticles(sx, sy + 0.6, sz, 22, 0x34d399, 9);
+          this.spawnShockwave(sx, sy + 0.08, sz, 4.0, 0x10b981);
+        }
+        const flyP = (p - 0.28) / 0.72;
+        if (slime) {
+          const bounceBack = Math.max(0, 1 - flyP * 2.2);
+          slime.scale.set(1 - bounceBack * 0.2, 1 + bounceBack * 0.8, 1 - bounceBack * 0.2);
+        }
+        rig.root.scale.set(1, 1, 1);
+        const arcH = Math.sin(flyP * Math.PI * 0.82) * 20 - (flyP > 0.6 ? Math.pow((flyP - 0.6) / 0.4, 2) * 24 : 0);
+        rig.root.position.set(
+          sx + anim.flingDirX * flyP * 30,
+          sy + arcH,
+          sz + anim.flingDirZ * flyP * 30
+        );
+        rig.root.rotation.x += dt * 15;
+        rig.root.rotation.y += dt * 11;
+      }
+    } else if (anim.kind === 'void_whirlpool_suck') {
+      const vortex = anim.prop;
+      if (vortex) {
+        vortex.rotation.y += dt * 9.5;
+        vortex.scale.setScalar(1 + Math.sin(anim.timer * 12) * 0.12);
+      }
+      const spiralAngle = anim.timer * 14;
+      const radius = (1 - p) * 1.45;
+      const sinkY = p < 0.45 ? sy + Math.sin(p * Math.PI * 2) * 0.4 : sy - Math.pow((p - 0.45) / 0.55, 2) * 22;
+      rig.root.position.set(
+        sx + Math.cos(spiralAngle) * radius,
+        sinkY,
+        sz + Math.sin(spiralAngle) * radius
+      );
+      rig.root.rotation.y += dt * 18;
+      rig.root.scale.setScalar(Math.max(0.15, 1 - p * 0.82));
+      if (Math.random() < 0.45) {
+        this.spawnParticles(rig.root.position.x, rig.root.position.y + 0.6, rig.root.position.z, 2, 0xc084fc, 5);
+      }
     } else if (anim.kind === 'ufo_abduction_drop') {
       const ufo = anim.prop;
       if (p < 0.55) {
@@ -7138,6 +7297,75 @@ export class UnstableArenaEngine {
         if (ufo) ufo.position.x += dt * 40;
         rig.root.position.set(sx, sy + 7.6 - dropP * dropP * 24, sz);
         rig.root.rotation.x += dt * 14;
+      }
+    } else if (anim.kind === 'jackpot_slot_cannon') {
+      const slotProp = anim.prop;
+      if (p < 0.38) {
+        const spinP = p / 0.38;
+        if (slotProp) {
+          slotProp.scale.setScalar(1 + Math.sin(spinP * Math.PI * 6) * 0.12);
+        }
+        rig.root.position.set(sx, sy + 0.5 + Math.sin(spinP * Math.PI * 8) * 0.25, sz);
+        rig.root.rotation.y += dt * 20;
+        if (Math.random() < 0.65) {
+          this.spawnParticles(sx, sy + 1.8, sz, 3, 0xfde047, 7);
+        }
+      } else {
+        if (!anim.impacted) {
+          anim.impacted = true;
+          this.spawnParticles(sx, sy + 1.4, sz, 36, 0xfacc15, 13);
+          this.spawnShockwave(sx, sy + 0.1, sz, 5.4, 0xfde047);
+          this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.4);
+          this.audio.playExplosion();
+        }
+        const blastP = (p - 0.38) / 0.62;
+        const arcH = Math.sin(blastP * Math.PI * 0.76) * 26 - (blastP > 0.62 ? Math.pow((blastP - 0.62) / 0.38, 2) * 32 : 0);
+        rig.root.position.set(
+          sx + anim.flingDirX * blastP * 36,
+          sy + arcH,
+          sz + anim.flingDirZ * blastP * 36
+        );
+        rig.root.rotation.x += dt * 18;
+        rig.root.rotation.z += dt * 14;
+        if (Math.random() < 0.7) {
+          this.spawnParticles(rig.root.position.x, rig.root.position.y + 0.6, rig.root.position.z, 3, 0xfde047, 6);
+        }
+      }
+    } else if (anim.kind === 'kraken_tentacle_drag') {
+      const kraken = anim.prop;
+      if (kraken) {
+        kraken.rotation.y += dt * 3.8;
+        for (let i = 0; i < 4; i++) {
+          const t = kraken.getObjectByName(`tentacle${i}`);
+          if (t) {
+            t.rotation.x = Math.sin(anim.timer * 10 + i) * 0.55;
+            t.rotation.z = Math.cos(anim.timer * 10 + i) * 0.55;
+          }
+        }
+      }
+      if (p < 0.42) {
+        const grabP = p / 0.42;
+        rig.root.position.set(
+          sx + Math.sin(anim.timer * 32) * 0.22,
+          sy + Math.sin(grabP * Math.PI) * 1.6,
+          sz + Math.cos(anim.timer * 32) * 0.22
+        );
+        rig.leftArmPivot.rotation.x = -2.9;
+        rig.rightArmPivot.rotation.x = -2.9;
+        rig.root.rotation.y += dt * 12;
+      } else {
+        if (!anim.impacted) {
+          anim.impacted = true;
+          this.spawnParticles(sx, sy + 0.5, sz, 26, 0x2dd4bf, 9);
+          this.spawnShockwave(sx, sy + 0.08, sz, 4.5, 0x9333ea);
+        }
+        const dragP = (p - 0.42) / 0.58;
+        if (kraken) {
+          kraken.position.y = sy - dragP * dragP * 14;
+        }
+        rig.root.position.set(sx, sy - dragP * dragP * 24, sz);
+        rig.root.rotation.y += dt * 16;
+        rig.root.scale.setScalar(Math.max(0.2, 1 - dragP * 0.75));
       }
     } else if (anim.kind === 'anvil_yeet_pancake') {
       const anvil = anim.prop;

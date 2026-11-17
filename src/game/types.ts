@@ -223,7 +223,11 @@ export type EliminationAnimKind =
   | 'trapdoor_abyss'
   | 'sky_launch_plunge'
   | 'meteor_knockback'
+  | 'giant_slime_bounce'
+  | 'void_whirlpool_suck'
   | 'ufo_abduction_drop'
+  | 'jackpot_slot_cannon'
+  | 'kraken_tentacle_drag'
   | 'anvil_yeet_pancake';
 
 export interface HudSnapshot {

@@ -387,12 +387,12 @@ export function TitleScreen({
       data-testid="title-screen"
       className="fixed inset-0 z-30 flex flex-col justify-between pointer-events-none select-none overflow-hidden text-slate-900"
     >
-      {/* ==================== FULL-WIDTH WHITE 3-ZONE TOP BAR: [랭킹전 · 데스매치] --- [빠른 대전 (정중앙) · 사설] --- [유틸] ==================== */}
-      <header className="relative z-10 w-full bg-white/95 border-b border-slate-200 shadow-sm pointer-events-auto px-3 lg:px-5 py-2 flex flex-wrap items-center justify-between gap-2 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:items-stretch lg:gap-3">
-        {/* Zone 1 (Left 1fr): SC Emblem + Large 랭킹전 & 데스매치 filling the left section */}
-        <div className="order-1 flex items-stretch gap-1.5 sm:gap-2 min-w-0">
+      {/* ==================== FULL-WIDTH WHITE TOP BAR: [랭킹전 · 데스매치] --- [빠른 대전 (정중앙 50%)] --- [사용자 설정 게임 ... 유틸] ==================== */}
+      <header className="relative z-10 w-full bg-white/95 border-b border-slate-200 shadow-sm pointer-events-auto px-2.5 sm:px-4 lg:px-5 py-2 grid grid-cols-[1fr_auto_1fr] items-center gap-1.5 sm:gap-2.5">
+        {/* Col 1 (Left 1fr): SC Emblem + Large 랭킹전 & 데스매치 filling the left section */}
+        <div className="col-start-1 row-start-1 flex items-stretch gap-1 sm:gap-2 min-w-0">
           <div
-            className="hidden xl:flex w-10 rounded-xl bg-rose-600 text-white items-center justify-center font-display font-black text-sm shrink-0 shadow-xs"
+            className="hidden 2xl:flex w-10 rounded-xl bg-rose-600 text-white items-center justify-center font-display font-black text-sm shrink-0 shadow-xs"
             title="SKYBOX CLASH"
           >
             SC
@@ -406,15 +406,15 @@ export function TitleScreen({
               onSetPracticeMode(false);
               onSelectMode('link_duel');
             }}
-            className={`flex-1 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl border transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 sm:gap-2 ${
+            className={`flex-1 px-2 sm:px-3.5 py-2 sm:py-2.5 rounded-xl border transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1 sm:gap-2 min-w-0 ${
               selectedMode === 'link_duel'
                 ? 'bg-rose-600 border-rose-600 text-white shadow-sm'
                 : 'bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100 hover:border-slate-300'
             }`}
           >
-            <Swords className="w-4 h-4 shrink-0" />
-            <span className="font-display text-xs sm:text-sm lg:text-base font-black">랭킹전</span>
-            <span className="hidden xl:inline text-[11px] font-semibold opacity-85">· 1:1 대결</span>
+            <Swords className="hidden sm:block w-4 h-4 shrink-0" />
+            <span className="font-display text-xs sm:text-sm lg:text-base font-black truncate">랭킹전</span>
+            <span className="hidden 2xl:inline text-[11px] font-semibold opacity-85">· 1:1 대결</span>
           </button>
 
           <button
@@ -425,64 +425,63 @@ export function TitleScreen({
               onSetPracticeMode(false);
               onSelectMode('online_world');
             }}
-            className={`flex-1 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl border transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 sm:gap-2 ${
+            className={`flex-1 px-2 sm:px-3.5 py-2 sm:py-2.5 rounded-xl border transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1 sm:gap-2 min-w-0 ${
               selectedMode === 'online_world'
                 ? 'bg-rose-600 border-rose-600 text-white shadow-sm'
                 : 'bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100 hover:border-slate-300'
             }`}
           >
-            <Sparkles className="w-4 h-4 shrink-0" />
-            <span className="font-display text-xs sm:text-sm lg:text-base font-black">데스매치</span>
-            <span className="hidden xl:inline text-[11px] font-semibold opacity-85">· 오픈월드</span>
+            <Sparkles className="hidden sm:block w-4 h-4 shrink-0" />
+            <span className="font-display text-xs sm:text-sm lg:text-base font-black truncate">데스매치</span>
+            <span className="hidden 2xl:inline text-[11px] font-semibold opacity-85">· 오픈월드</span>
           </button>
         </div>
 
-        {/* Zone 2 (Dead-Center): 빠른 대전 (중앙 강조) + 사설 (인접 배치) */}
-        <div className="order-3 w-full lg:order-2 lg:w-auto lg:justify-self-center flex items-stretch gap-2">
-          <button
-            type="button"
-            data-mode-id="ffa"
-            data-testid="mode-tab-ffa"
-            onClick={() => {
-              setShowAll20Maps(false);
-              onSetPracticeMode(false);
-              onSelectMode('ffa');
-            }}
-            className={`flex-1 lg:flex-initial px-5 sm:px-8 py-2 sm:py-2.5 rounded-xl border transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-2 font-display text-sm sm:text-base font-black tracking-tight shadow-sm ${
-              selectedMode === 'ffa'
-                ? 'bg-rose-600 border-rose-600 text-white'
-                : 'bg-slate-100 border-slate-300 text-slate-900 hover:bg-slate-200'
-            }`}
-          >
-            <Gamepad2 className="w-4 h-4 shrink-0" />
-            <span>빠른 대전</span>
-            <span className="text-[11px] font-bold opacity-85">
-              · {isPractice ? '연습장' : '3분 녹아웃'}
-            </span>
-          </button>
+        {/* Col 2 (Exact Mathematical Center 50%): 빠른 대전 단독 배치 */}
+        <button
+          type="button"
+          data-mode-id="ffa"
+          data-testid="mode-tab-ffa"
+          onClick={() => {
+            setShowAll20Maps(false);
+            onSetPracticeMode(false);
+            onSelectMode('ffa');
+          }}
+          className={`col-start-2 row-start-1 justify-self-center shrink-0 px-3 sm:px-6 lg:px-7 py-2 sm:py-2.5 rounded-xl border transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 sm:gap-2 font-display text-xs sm:text-base font-black tracking-tight shadow-sm ${
+            selectedMode === 'ffa'
+              ? 'bg-rose-600 border-rose-600 text-white'
+              : 'bg-slate-100 border-slate-300 text-slate-900 hover:bg-slate-200'
+          }`}
+        >
+          <Gamepad2 className="hidden sm:block w-4 h-4 shrink-0" />
+          <span>빠른 대전</span>
+          <span className="hidden md:inline text-[11px] font-bold opacity-85">
+            · {isPractice ? '연습장' : '3분 녹아웃'}
+          </span>
+        </button>
 
-          <button
-            type="button"
-            data-mode-id="multiplayer"
-            data-testid="mode-tab-multiplayer"
-            onClick={() => {
-              onSetPracticeMode(false);
-              onSelectMode('multiplayer');
-            }}
-            className={`px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl border transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 font-display text-sm sm:text-base font-black ${
-              selectedMode === 'multiplayer'
-                ? 'bg-rose-600 border-rose-600 text-white shadow-sm'
-                : 'bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100 hover:border-slate-300'
-            }`}
-          >
-            <Users className="w-4 h-4 shrink-0" />
-            <span>사설</span>
-          </button>
-        </div>
+        {/* Col 3 Left (Immediately Right of 빠른 대전): 사용자 설정 게임 */}
+        <button
+          type="button"
+          data-mode-id="multiplayer"
+          data-testid="mode-tab-multiplayer"
+          onClick={() => {
+            onSetPracticeMode(false);
+            onSelectMode('multiplayer');
+          }}
+          className={`col-start-3 row-start-1 justify-self-start shrink-0 px-2.5 sm:px-4 py-2 sm:py-2.5 rounded-xl border transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 font-display text-xs sm:text-sm lg:text-base font-black ${
+            selectedMode === 'multiplayer'
+              ? 'bg-rose-600 border-rose-600 text-white shadow-sm'
+              : 'bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100 hover:border-slate-300'
+          }`}
+        >
+          <Users className="hidden sm:block w-4 h-4 shrink-0" />
+          <span>사용자 설정 게임</span>
+        </button>
 
-        {/* Zone 3 (Right 1fr): 닉네임, 프로필, 랭킹, 친구, 패치노트, 환경 설정 */}
-        <div className="order-2 lg:order-3 flex items-center justify-end gap-1.5 min-w-0">
-          <div className="hidden md:flex items-center bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2">
+        {/* Right Utility Controls: Row 2 on <1280px (zero collision with 사용자 설정 게임), Col 3 Right on >=1280px */}
+        <div className="col-span-3 row-start-2 xl:col-span-1 xl:col-start-3 xl:row-start-1 xl:justify-self-end flex items-center justify-between xl:justify-end gap-1.5 pt-1.5 xl:pt-0 border-t border-slate-100 xl:border-t-0 min-w-0">
+          <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 sm:py-2 shrink-0">
             <span className="text-[11px] font-bold text-slate-500 mr-1.5 whitespace-nowrap">닉네임</span>
             <input
               type="text"
@@ -492,62 +491,64 @@ export function TitleScreen({
               value={multiplayer.playerName}
               onChange={(e) => onSetPlayerName(e.target.value)}
               placeholder="Player"
-              className="w-20 bg-transparent text-xs font-bold text-slate-900 focus:outline-none placeholder:text-slate-400"
+              className="w-16 2xl:w-20 bg-transparent text-xs font-bold text-slate-900 focus:outline-none placeholder:text-slate-400"
             />
           </div>
 
-          <button
-            type="button"
-            onClick={() => onOpenAuth('auth')}
-            className="h-9 sm:h-10 px-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-            title="프로필 및 계정 연동"
-          >
-            <Shield className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-            <span className="truncate max-w-14 sm:max-w-24">
-              {account ? `${account.nickname} (${account.elo})` : '프로필'}
-            </span>
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => onOpenAuth('auth')}
+              className="h-8 sm:h-9 lg:h-10 px-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              title="프로필 및 계정 연동"
+            >
+              <Shield className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span className="truncate max-w-16 2xl:max-w-24">
+                {account ? `${account.nickname} (${account.elo})` : '프로필'}
+              </span>
+            </button>
 
-          <button
-            type="button"
-            data-testid="open-leaderboard-btn"
-            onClick={() => onOpenAuth('leaderboard')}
-            className="h-9 sm:h-10 px-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 flex items-center gap-1 cursor-pointer whitespace-nowrap"
-            title="랭킹"
-          >
-            <Trophy className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-            <span className="hidden sm:inline">랭킹</span>
-          </button>
+            <button
+              type="button"
+              data-testid="open-leaderboard-btn"
+              onClick={() => onOpenAuth('leaderboard')}
+              className="h-8 sm:h-9 lg:h-10 px-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 flex items-center gap-1 cursor-pointer whitespace-nowrap"
+              title="랭킹"
+            >
+              <Trophy className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span className="hidden 2xl:inline">랭킹</span>
+            </button>
 
-          <button
-            type="button"
-            data-testid="open-friends-btn"
-            onClick={() => onOpenAuth('friends')}
-            className="h-9 sm:h-10 px-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 flex items-center gap-1 cursor-pointer whitespace-nowrap"
-            title="친구"
-          >
-            <UserPlus className="w-3.5 h-3.5 text-sky-600 shrink-0" />
-            <span className="hidden sm:inline">친구</span>
-          </button>
+            <button
+              type="button"
+              data-testid="open-friends-btn"
+              onClick={() => onOpenAuth('friends')}
+              className="h-8 sm:h-9 lg:h-10 px-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-800 flex items-center gap-1 cursor-pointer whitespace-nowrap"
+              title="친구"
+            >
+              <UserPlus className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+              <span className="hidden 2xl:inline">친구</span>
+            </button>
 
-          <button
-            type="button"
-            data-testid="open-updates-btn"
-            onClick={() => setUpdatesOpen(true)}
-            className="h-9 sm:h-10 px-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 hidden xl:flex items-center cursor-pointer whitespace-nowrap"
-          >
-            패치노트
-          </button>
+            <button
+              type="button"
+              data-testid="open-updates-btn"
+              onClick={() => setUpdatesOpen(true)}
+              className="h-8 sm:h-9 lg:h-10 px-2.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-xs font-bold text-slate-700 hidden 2xl:flex items-center cursor-pointer whitespace-nowrap"
+            >
+              패치노트
+            </button>
 
-          <button
-            type="button"
-            data-testid="open-settings-btn"
-            onClick={onOpenSettings}
-            aria-label="환경 설정"
-            className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 hover:text-slate-900 cursor-pointer shrink-0"
-          >
-            {settings.muted ? <VolumeX className="w-4 h-4 text-rose-600" /> : <Settings className="w-4 h-4" />}
-          </button>
+            <button
+              type="button"
+              data-testid="open-settings-btn"
+              onClick={onOpenSettings}
+              aria-label="환경 설정"
+              className="w-8 h-8 sm:w-9 sm:h-9 lg:w-10 lg:h-10 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 hover:text-slate-900 cursor-pointer shrink-0"
+            >
+              {settings.muted ? <VolumeX className="w-4 h-4 text-rose-600" /> : <Settings className="w-4 h-4" />}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -965,7 +966,7 @@ export function TitleScreen({
               </div>
             )}
 
-            {/* 3D. 사설 커스텀 방 (상단 [사설] 버튼 클릭 시) */}
+            {/* 3D. 사용자 설정 게임 (상단 [사용자 설정 게임] 버튼 클릭 시) */}
             {selectedMode === 'multiplayer' && !inCustomLobby && (
               <div className="flex-1 min-h-0 flex flex-col justify-between gap-2.5" data-testid="custom-room-entry">
                 <div className="grid grid-cols-2 gap-2.5 flex-1 min-h-[120px]">
@@ -1027,7 +1028,7 @@ export function TitleScreen({
                     maxLength={4}
                     value={joinCodeInput}
                     onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
-                    placeholder="사설방 4자리 코드 입력"
+                    placeholder="사용자 설정 방 4자리 코드 입력"
                     className="flex-1 bg-transparent px-2 text-xs sm:text-sm font-mono-num font-bold text-slate-900 uppercase focus:outline-none placeholder:text-slate-400"
                   />
                   <button
@@ -1114,7 +1115,7 @@ export function TitleScreen({
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-2">
                     <div className="text-[10px] font-bold text-slate-500 mb-1">아레나 전투 규칙</div>
                     <select
-                      aria-label="사설방 전투 규칙"
+                      aria-label="사용자 설정 게임 전투 규칙"
                       data-testid="custom-party-mode-select"
                       value={multiplayer.partyMode ?? 'knockout'}
                       onChange={(e) =>
@@ -1133,7 +1134,7 @@ export function TitleScreen({
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-2">
                     <div className="text-[10px] font-bold text-slate-500 mb-1">AI 봇 난이도</div>
                     <select
-                      aria-label="사설방 봇 난이도"
+                      aria-label="사용자 설정 게임 봇 난이도"
                       data-testid="custom-bot-difficulty-select"
                       value={multiplayer.botDifficulty ?? 'medium'}
                       onChange={(e) =>
@@ -1582,7 +1583,7 @@ export function TitleScreen({
                         ? `데스매치 오픈월드 입장 (${activeMapDef.name})`
                         : selectedMode === 'link_duel'
                           ? '랭킹전 1:1 대결 시작'
-                          : '사설 커스텀 방 즉시 생성'}
+                          : '사용자 설정 게임 방 생성'}
               </span>
             </button>
           </div>

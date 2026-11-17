@@ -469,7 +469,7 @@ export const GAME_MODES: GameModeConfig[] = [
   },
   {
     id: 'multiplayer',
-    label: '사설 커스텀 방',
+    label: '사용자 설정 게임',
     subtitle: '드래그 봇 배치 · 맵 투표',
     description: '팀전·개인전 커스텀 규칙, 드래그 봇 배치, 20종 맵 투표를 자유롭게 구성합니다.',
     targetKills: 15,

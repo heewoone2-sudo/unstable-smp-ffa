@@ -205,15 +205,17 @@ export function pickBountyLeader(candidates: ReadonlyArray<BountyCandidate>): {
 export interface KnockoutEliminationSpec {
   kind: EliminationAnimKind;
   isRare: boolean;
+  isJackpot: boolean;
   label: string;
   feedColor: string;
   durationSec: number;
 }
 
-const NORMAL_ELIM_POOL: KnockoutEliminationSpec[] = [
+export const NORMAL_ELIM_POOL: KnockoutEliminationSpec[] = [
   {
     kind: 'trapdoor_abyss',
     isRare: false,
+    isJackpot: false,
     label: '심연 트랩도어 추락',
     feedColor: '#f97316',
     durationSec: 2.0,
@@ -221,6 +223,7 @@ const NORMAL_ELIM_POOL: KnockoutEliminationSpec[] = [
   {
     kind: 'sky_launch_plunge',
     isRare: false,
+    isJackpot: false,
     label: '초고공 덤블링 사출',
     feedColor: '#fb7185',
     durationSec: 2.1,
@@ -228,32 +231,67 @@ const NORMAL_ELIM_POOL: KnockoutEliminationSpec[] = [
   {
     kind: 'meteor_knockback',
     isRare: false,
+    isJackpot: false,
     label: '메테오 장외 방출',
     feedColor: '#f59e0b',
     durationSec: 2.0,
   },
+  {
+    kind: 'giant_slime_bounce',
+    isRare: false,
+    isJackpot: false,
+    label: '거대 슬라임 피스톤 장외 튕김',
+    feedColor: '#10b981',
+    durationSec: 2.05,
+  },
+  {
+    kind: 'void_whirlpool_suck',
+    isRare: false,
+    isJackpot: false,
+    label: '공허 소용돌이 블랙홀 직행',
+    feedColor: '#a855f7',
+    durationSec: 2.1,
+  },
 ];
 
-const RARE_ELIM_POOL: KnockoutEliminationSpec[] = [
+export const RARE_ELIM_POOL: KnockoutEliminationSpec[] = [
   {
     kind: 'ufo_abduction_drop',
     isRare: true,
-    label: '[희귀 연출] 외계 UFO 납치 후 낙하!',
+    isJackpot: true,
+    label: '[🎰 JACKPOT 희귀 연출] 외계 UFO 납치 후 대기권 낙하!',
     feedColor: '#22d3ee',
-    durationSec: 2.4,
+    durationSec: 2.45,
+  },
+  {
+    kind: 'jackpot_slot_cannon',
+    isRare: true,
+    isJackpot: true,
+    label: '[🎰 JACKPOT 777 대박 연출] 황금 슬롯머신 축포 장외 발사!',
+    feedColor: '#fde047',
+    durationSec: 2.5,
+  },
+  {
+    kind: 'kraken_tentacle_drag',
+    isRare: true,
+    isJackpot: true,
+    label: '[🎰 JACKPOT 희귀 연출] 심연의 크라켄 촉수 포획 수장!',
+    feedColor: '#c084fc',
+    durationSec: 2.45,
   },
   {
     kind: 'anvil_yeet_pancake',
     isRare: true,
-    label: '[희귀 연출] 대모루 압착 팬케이크 발사!',
+    isJackpot: true,
+    label: '[🎰 JACKPOT 희귀 연출] 100톤 황금 대모루 팬케이크 홈런!',
     feedColor: '#facc15',
-    durationSec: 2.35,
+    durationSec: 2.4,
   },
 ];
 
 export function pickKnockoutEliminationAnim(rng: () => number = Math.random): KnockoutEliminationSpec {
   const roll = rng();
-  if (roll < 0.12) {
+  if (roll < 0.22) {
     const idx = Math.floor(rng() * RARE_ELIM_POOL.length) % RARE_ELIM_POOL.length;
     return RARE_ELIM_POOL[idx];
   }

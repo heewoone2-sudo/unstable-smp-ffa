@@ -334,22 +334,45 @@ test('resolveEffectiveRoomMode, computeBuffMultipliers, and computeSurgeModifier
   assert.equal(idleMods.cooldownRateMult, 1.0);
 });
 
-test('pickKnockoutEliminationAnim returns normal animations and rare funny variants', async () => {
-  const { pickKnockoutEliminationAnim } = await import('./partyModes');
+test('pickKnockoutEliminationAnim returns 5 normal animations and 4 rare Jackpot variants', async () => {
+  const { pickKnockoutEliminationAnim, NORMAL_ELIM_POOL, RARE_ELIM_POOL } = await import('./partyModes');
+  assert.equal(NORMAL_ELIM_POOL.length, 5);
+  assert.equal(RARE_ELIM_POOL.length, 4);
+  assert.ok(RARE_ELIM_POOL.every((r) => r.isRare && r.isJackpot));
+
   const norm = pickKnockoutEliminationAnim(() => 0.5);
   assert.equal(norm.isRare, false);
-  assert.ok(['trapdoor_abyss', 'sky_launch_plunge', 'meteor_knockback'].includes(norm.kind));
+  assert.equal(norm.isJackpot, false);
+  assert.ok(
+    [
+      'trapdoor_abyss',
+      'sky_launch_plunge',
+      'meteor_knockback',
+      'giant_slime_bounce',
+      'void_whirlpool_suck',
+    ].includes(norm.kind)
+  );
 
   const seq = (vals: number[]) => {
     let i = 0;
     return () => vals[i++ % vals.length];
   };
-  const rareUfo = pickKnockoutEliminationAnim(seq([0.04, 0.2]));
+  const rareUfo = pickKnockoutEliminationAnim(seq([0.04, 0.1]));
   assert.equal(rareUfo.isRare, true);
+  assert.equal(rareUfo.isJackpot, true);
   assert.equal(rareUfo.kind, 'ufo_abduction_drop');
 
-  const rareAnvil = pickKnockoutEliminationAnim(seq([0.04, 0.8]));
+  const rareSlot = pickKnockoutEliminationAnim(seq([0.04, 0.35]));
+  assert.equal(rareSlot.isJackpot, true);
+  assert.equal(rareSlot.kind, 'jackpot_slot_cannon');
+
+  const rareKraken = pickKnockoutEliminationAnim(seq([0.04, 0.6]));
+  assert.equal(rareKraken.isJackpot, true);
+  assert.equal(rareKraken.kind, 'kraken_tentacle_drag');
+
+  const rareAnvil = pickKnockoutEliminationAnim(seq([0.04, 0.9]));
   assert.equal(rareAnvil.isRare, true);
+  assert.equal(rareAnvil.isJackpot, true);
   assert.equal(rareAnvil.kind, 'anvil_yeet_pancake');
 });
 
