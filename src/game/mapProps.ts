@@ -71,6 +71,9 @@ export function buildMapSignatureProps(
     })
   );
 
+  const hScale = arenaRadius / 48;
+  group.scale.set(hScale, 1, hScale);
+  arenaRadius = 48;
   const outerR = arenaRadius + 6.5;
 
   // Helper: cardinal / radial glowing beacon banners

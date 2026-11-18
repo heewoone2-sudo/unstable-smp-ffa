@@ -161,7 +161,7 @@ interface RoomState {
   includeBots: boolean;
   customBots?: CustomBotSlotRecord[];
   botDifficulty?: 'easy' | 'medium' | 'hard';
-  partyMode?: 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot';
+  partyMode?: 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot' | 'spike_defuse';
   targetKills: number;
   selectedMap: MapId;
   mapVotes: Map<string, MapId>;
@@ -183,7 +183,7 @@ interface QueueEntry {
   ws: WebSocket;
   name: string;
   characterId: CharacterId;
-  partyMode?: 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot';
+  partyMode?: 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot' | 'spike_defuse';
   selectedMap?: MapId;
 }
 
@@ -804,9 +804,10 @@ async function startServer() {
         const roomMode = msg.roomMode === 'team' ? 'team' : 'ffa';
         const team = (msg.team === 'red' || msg.team === 'blue' || msg.team === 'ffa') ? msg.team : (roomMode === 'team' ? 'red' : 'ffa');
         const botDifficulty = msg.botDifficulty === 'easy' || msg.botDifficulty === 'hard' ? msg.botDifficulty : 'medium';
-        const partyMode = ['classic', 'knockout', 'boss_raid', 'random_arsenal', 'one_shot'].includes(String(msg.partyMode))
-          ? (msg.partyMode as 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot')
+        const partyMode = ['classic', 'knockout', 'boss_raid', 'random_arsenal', 'one_shot', 'spike_defuse'].includes(String(msg.partyMode))
+          ? (msg.partyMode as 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot' | 'spike_defuse')
           : 'classic';
+        const effectiveRoomMode = partyMode === 'spike_defuse' ? 'team' : roomMode;
         const rawCustomBots = sanitizeCustomBots(msg.customBots);
         const normalizedCustomBots =
           roomMode === 'team'
@@ -818,7 +819,7 @@ async function startServer() {
         const room: RoomState = {
           code,
           kind: 'private',
-          roomMode,
+          roomMode: effectiveRoomMode,
           hostId: clientId,
           status: 'lobby',
           includeBots: false,
@@ -976,8 +977,11 @@ async function startServer() {
         if (typeof msg.botDifficulty === 'string' && (msg.botDifficulty === 'easy' || msg.botDifficulty === 'medium' || msg.botDifficulty === 'hard') && room.hostId === clientId) {
           room.botDifficulty = msg.botDifficulty;
         }
-        if (typeof msg.partyMode === 'string' && ['classic', 'knockout', 'boss_raid', 'random_arsenal', 'one_shot'].includes(msg.partyMode) && room.hostId === clientId) {
-          room.partyMode = msg.partyMode as 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot';
+        if (typeof msg.partyMode === 'string' && ['classic', 'knockout', 'boss_raid', 'random_arsenal', 'one_shot', 'spike_defuse'].includes(msg.partyMode) && room.hostId === clientId) {
+          room.partyMode = msg.partyMode as 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot' | 'spike_defuse';
+          if (room.partyMode === 'spike_defuse') {
+            room.roomMode = 'team';
+          }
         }
         if (typeof msg.selectedMap === 'string' && MAP_ORDER.includes(msg.selectedMap as MapId) && room.hostId === clientId) {
           room.selectedMap = msg.selectedMap as MapId;

@@ -20,9 +20,12 @@ import {
   computeJumpVelocity,
   computeMaceDamage,
   computeRangedAimAssist,
+  computeSupernovaPullVelocity,
   computeSwordDamage,
   consumeSlotUse,
   DASH_COOLDOWN_SEC,
+  DASH_DURATION_SEC,
+  DASH_SPEED,
   getSupportHeightAt,
   isInsideCobweb,
   isInsideHazardPool,
@@ -31,7 +34,10 @@ import {
   resolveHorizontalCollision,
   resolveUltimatePreset,
   stepPlayerJump,
+  SUPERNOVA_DURATION_SEC,
+  SUPERNOVA_PULL_RADIUS,
   tickSlotRecharge,
+  ULTIMATE_CHARGE_MULT,
   type AimAssistTarget,
 } from './combatMath';
 import {
@@ -100,13 +106,16 @@ import {
   ARENA_SURGE_EVENTS,
   computeBuffMultipliers,
   computeOneShotDamage,
+  computeSpikeBeepInterval,
   computeSurgeModifiers,
   computeWaterBurnHealing,
+  detectSpikeSiteAtPosition,
   ENEMY_OUTLINE_HEX,
   evaluatePlayerSkillForMatchmaking,
   getBotDifficultyConfig,
   getKnockoutRoundInfo,
   getRandomArsenalLoadout,
+  getSpikeSites,
   isHostileTarget,
   MAX_ELYTRA_FLIGHT_SEC,
   MAX_KNOCKOUT_ROUNDS,
@@ -120,7 +129,14 @@ import {
   resolveKnockoutFinalShowdown,
   selectKnockoutRoundEliminations,
   shouldEndMatchOnKillLimit,
+  SPIKE_DEFUSE_RADIUS,
+  SPIKE_DETONATION_SEC,
+  SPIKE_ROUND_PREPLANT_SEC,
+  SPIKE_SITE_RADIUS,
+  SPIKE_TARGET_ROUNDS,
   stepElytraFlightLimit,
+  stepSpikeDefuseProgress,
+  stepSpikePlantProgress,
   type KnockoutFinalContender,
 } from './partyModes';
 
@@ -401,7 +417,15 @@ export class UnstableArenaEngine {
   private blockHeldTimer = 0;
   private parryFlashTimer = 0;
   private dashCooldown = 0;
+  private dashActiveTimer = 0;
+  private dashDirX = 0;
+  private dashDirZ = 0;
+  private dashTrailTimer = 0;
   private ultimateCharge = 0;
+  private ultPassiveAccum = 0;
+  private novaVortexTimer = 0;
+  private novaVortexOrigin = new THREE.Vector3();
+  private novaVortexRingTimer = 0;
   private stealthTimer = 0;
   private playerInCobweb = false;
   private cobwebBreakProgress = 0;
@@ -465,6 +489,23 @@ export class UnstableArenaEngine {
   // Custom Party Mode & Difficulty
   private customPartyMode: CustomPartyMode = 'knockout';
   private botDifficulty: BotDifficulty = 'medium';
+
+  // Valorant-style Spike Defuse Mode State
+  private spikePhase: 'pre_plant' | 'planted' | 'defused' | 'detonated' = 'pre_plant';
+  private spikePlantedSite: 'A' | 'B' | null = null;
+  private spikePos = new THREE.Vector3();
+  private spikeRound = 1;
+  private spikeRedRounds = 0;
+  private spikeBlueRounds = 0;
+  private spikeTimerSec = SPIKE_ROUND_PREPLANT_SEC;
+  private spikePlantProgress = 0;
+  private spikeDefuseProgress = 0;
+  private spikeHalfDefuseReached = false;
+  private spikeBeepTimer = 0;
+  private spikeRoundResetTimer = 0;
+  private mobileSpikeHold = false;
+  private spikeVisualGroup: THREE.Group | null = null;
+  private spikeDeviceMesh: THREE.Group | null = null;
 
   // Spectator System
   private isSpectating = false;
@@ -1077,7 +1118,7 @@ export class UnstableArenaEngine {
     this.mapSignatureMaterials.push(ringMat);
 
     if (mapDef.ringStyle === 'double') {
-      const ringGeo = new THREE.RingGeometry(13.85, 14.25, 64);
+      const ringGeo = new THREE.RingGeometry(19.8, 20.4, 64);
       const centerRing = new THREE.Mesh(ringGeo, ringMat);
       centerRing.rotation.x = -Math.PI / 2;
       centerRing.position.y = 0.025;
@@ -1085,7 +1126,7 @@ export class UnstableArenaEngine {
     }
 
     if (mapDef.ringStyle === 'double' || mapDef.ringStyle === 'outer_only') {
-      const outerRingGeo = new THREE.RingGeometry(31.6, 32.2, 72);
+      const outerRingGeo = new THREE.RingGeometry(45.5, 46.3, 72);
       const outerRingMat = new THREE.MeshPhysicalMaterial({
         color: mapDef.ringPrimary,
         emissive: mapDef.ringEmissive,
@@ -1101,6 +1142,76 @@ export class UnstableArenaEngine {
       outerRing.position.y = 0.02;
       this.mapGroup.add(outerRing);
     }
+
+    // Build Valorant-style A & B Spike Plant Site Beacons + 3D Planted Spike Device
+    const spikeGroup = new THREE.Group();
+    spikeGroup.visible = this.customPartyMode === 'spike_defuse';
+    const sites = getSpikeSites();
+    for (const site of [sites.A, sites.B]) {
+      const siteColor = site.id === 'A' ? 0xf97316 : 0x38bdf8;
+      const siteRingMat = new THREE.MeshBasicMaterial({
+        color: siteColor,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.78,
+      });
+      this.mapSignatureMaterials.push(siteRingMat);
+      const siteRing = new THREE.Mesh(
+        new THREE.RingGeometry(site.radius - 0.38, site.radius, 48),
+        siteRingMat
+      );
+      siteRing.rotation.x = -Math.PI / 2;
+      siteRing.position.set(site.x, 0.05, site.z);
+      spikeGroup.add(siteRing);
+
+      const innerSiteRing = new THREE.Mesh(
+        new THREE.RingGeometry(1.4, 1.75, 32),
+        siteRingMat
+      );
+      innerSiteRing.rotation.x = -Math.PI / 2;
+      innerSiteRing.position.set(site.x, 0.06, site.z);
+      spikeGroup.add(innerSiteRing);
+
+      const beaconMat = new THREE.MeshBasicMaterial({
+        color: siteColor,
+        transparent: true,
+        opacity: 0.22,
+      });
+      this.mapSignatureMaterials.push(beaconMat);
+      const beaconPillar = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.45, 0.45, 14, 16),
+        beaconMat
+      );
+      beaconPillar.position.set(site.x, 7.0, site.z);
+      spikeGroup.add(beaconPillar);
+    }
+
+    const deviceGroup = new THREE.Group();
+    deviceGroup.visible = false;
+    const spikeShellMat = new THREE.MeshStandardMaterial({
+      color: 0x0f172a,
+      roughness: 0.25,
+      metalness: 0.85,
+    });
+    const spikeCoreMat = new THREE.MeshStandardMaterial({
+      color: 0xef4444,
+      emissive: 0xf97316,
+      emissiveIntensity: 1.4,
+      roughness: 0.15,
+    });
+    this.mapSignatureMaterials.push(spikeShellMat, spikeCoreMat);
+    const baseDisc = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.75, 0.22, 16), spikeShellMat);
+    baseDisc.position.y = 0.11;
+    const coreCyl = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 1.25, 16), spikeCoreMat);
+    coreCyl.position.y = 0.72;
+    const topCap = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.38, 6), spikeShellMat);
+    topCap.position.y = 1.42;
+    deviceGroup.add(baseDisc, coreCyl, topCap);
+    spikeGroup.add(deviceGroup);
+
+    this.spikeVisualGroup = spikeGroup;
+    this.spikeDeviceMesh = deviceGroup;
+    this.mapGroup.add(spikeGroup);
 
     // Sculpted beveled architectural blocks & caps
     for (const b of this.blocks) {
@@ -1673,7 +1784,7 @@ export class UnstableArenaEngine {
     if (partial.masterVolume !== undefined) {
       this.audio.setMasterVolume(this.settings.masterVolume / 100);
     }
-    if (partial.graphicsQuality !== undefined) {
+    if (partial.graphicsQuality !== undefined || partial.shaderPreset !== undefined) {
       this.applyGraphicsQuality();
     }
     this.emitHud(true);
@@ -1686,9 +1797,38 @@ export class UnstableArenaEngine {
   private applyGraphicsQuality(): void {
     if (!this.renderer) return;
     const q = this.settings.graphicsQuality;
-    const dpr = this.isSoftwareGl || q === 'low' ? 1 : q === 'medium' ? Math.min(window.devicePixelRatio || 1, 1.35) : Math.min(window.devicePixelRatio || 1, 2);
+    const shader = this.settings.shaderPreset ?? 'valorant';
+    const dpr =
+      this.isSoftwareGl || q === 'low'
+        ? 1
+        : q === 'medium'
+          ? Math.min(window.devicePixelRatio || 1, 1.35)
+          : Math.min(window.devicePixelRatio || 1, 2);
     this.renderer.setPixelRatio(dpr);
     this.renderer.shadowMap.enabled = !this.isSoftwareGl && q !== 'low';
+
+    if (shader === 'clean') {
+      this.renderer.toneMapping = THREE.NeutralToneMapping;
+      this.renderer.toneMappingExposure = 1.02;
+      if (this.hemiLight) this.hemiLight.intensity = 1.15;
+      if (this.sunLight) this.sunLight.intensity = 2.1;
+    } else if (shader === 'cinematic') {
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = 1.24;
+      if (this.hemiLight) this.hemiLight.intensity = 1.05;
+      if (this.sunLight) this.sunLight.intensity = 2.65;
+    } else if (shader === 'cyber_neon') {
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = 1.32;
+      if (this.hemiLight) this.hemiLight.intensity = 1.28;
+      if (this.sunLight) this.sunLight.intensity = 2.35;
+    } else {
+      // 'valorant' tactical high-clarity shader
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = 1.16;
+      if (this.hemiLight) this.hemiLight.intensity = 1.24;
+      if (this.sunLight) this.sunLight.intensity = 2.42;
+    }
   }
 
   public getEffectiveRoomMode(): 'ffa' | 'team' {
@@ -2259,8 +2399,8 @@ export class UnstableArenaEngine {
   private resetMatch(): void {
     const profile = CHARACTERS[this.selectedCharId];
     const team = this.getLocalPlayerTeam();
-    const isTeamPrivate = this.mode === 'multiplayer' && this.mpState.roomMode === 'team';
-    const rawSpawnZ = isTeamPrivate ? (team === 'blue' ? -9.5 : 9.5) : 9.0;
+    const isTeamPrivate = this.mode === 'multiplayer' && this.getEffectiveRoomMode() === 'team';
+    const rawSpawnZ = isTeamPrivate ? (team === 'blue' ? -24.0 : 24.0) : 13.5;
     const spawnYaw = isTeamPrivate && team === 'blue' ? Math.PI : 0;
 
     this.matchTargetKills =
@@ -2308,7 +2448,14 @@ export class UnstableArenaEngine {
     this.setBlockingState(false);
     this.parryFlashTimer = 0;
     this.dashCooldown = 0;
-    this.ultimateCharge = 0;
+    this.dashActiveTimer = 0;
+    this.dashDirX = 0;
+    this.dashDirZ = 0;
+    this.dashTrailTimer = 0;
+    this.ultimateCharge = this.isPracticeMode ? 100 : 0;
+    this.ultPassiveAccum = 0;
+    this.novaVortexTimer = 0;
+    this.novaVortexRingTimer = 0;
     this.stealthTimer = 0;
     this.playerInCobweb = false;
     this.cobwebBreakProgress = 0;
@@ -2394,6 +2541,24 @@ export class UnstableArenaEngine {
       this.bossMaxHp = 650;
       this.bossCurrentHp = 650;
       this.bossName = '심연의 거신 떡대';
+    }
+    this.spikePhase = 'pre_plant';
+    this.spikePlantedSite = null;
+    this.spikeRound = 1;
+    this.spikeRedRounds = 0;
+    this.spikeBlueRounds = 0;
+    this.spikeTimerSec = SPIKE_ROUND_PREPLANT_SEC;
+    this.spikePlantProgress = 0;
+    this.spikeDefuseProgress = 0;
+    this.spikeHalfDefuseReached = false;
+    this.spikeBeepTimer = 0;
+    this.spikeRoundResetTimer = 0;
+    this.mobileSpikeHold = false;
+    if (this.spikeVisualGroup) {
+      this.spikeVisualGroup.visible = this.customPartyMode === 'spike_defuse';
+    }
+    if (this.spikeDeviceMesh) {
+      this.spikeDeviceMesh.visible = false;
     }
 
     this.clearPlacedBlocks();
@@ -2609,12 +2774,12 @@ export class UnstableArenaEngine {
     }
 
     if (this.mode === 'multiplayer' && this.mpState.includeBots) {
-      if (this.mpState.roomMode === 'team') {
+      if (this.getEffectiveRoomMode() === 'team') {
         const redCount = this.mpState.peers.filter((p) => p.team === 'red').length;
         const blueCount = this.mpState.peers.filter((p) => p.team === 'blue').length;
         const redNeed = Math.max(0, 3 - redCount);
         const blueNeed = Math.max(1, 3 - blueCount);
-        const teamSpawnXs = [-6.0, 6.0, -9.5];
+        const teamSpawnXs = [-9.0, 9.0, -14.0];
         let idx = 0;
         for (let i = 0; i < redNeed; i++) {
           const prof = rivals[idx % rivals.length];
@@ -2623,7 +2788,7 @@ export class UnstableArenaEngine {
             this.createEnemy(
               prof,
               this.policyForCharacter(prof, idx),
-              new THREE.Vector3(teamSpawnXs[i % teamSpawnXs.length], 0, 8.5),
+              new THREE.Vector3(teamSpawnXs[i % teamSpawnXs.length], 0, 22.0),
               `mp-bot-r-${i}`,
               false,
               'red',
@@ -2639,7 +2804,7 @@ export class UnstableArenaEngine {
             this.createEnemy(
               prof,
               this.policyForCharacter(prof, idx),
-              new THREE.Vector3(teamSpawnXs[i % teamSpawnXs.length], 0, -8.5),
+              new THREE.Vector3(teamSpawnXs[i % teamSpawnXs.length], 0, -22.0),
               `mp-bot-b-${i}`,
               false,
               'blue',
@@ -4036,7 +4201,11 @@ export class UnstableArenaEngine {
     weaponId?: WeaponSlotId
   ): void {
     this.damageDealt += damage;
-    this.ultimateCharge = addUltimateCharge(this.ultimateCharge, Math.max(2, Math.round(damage * 0.4)));
+    this.ultimateCharge = addUltimateCharge(
+      this.ultimateCharge,
+      Math.max(2, Math.round(damage * 0.4)),
+      ULTIMATE_CHARGE_MULT
+    );
     this.hitmarkerTimer = 0.2;
     this.hitmarkerCrit = isCrit || isSmash;
     this.lastHitText = isSmash ? `${damage} SMASH!` : isCrit ? `${damage} CRIT!` : `${damage}`;
@@ -4135,7 +4304,8 @@ export class UnstableArenaEngine {
     this.damageDealt += res.finalDamage;
     this.ultimateCharge = addUltimateCharge(
       this.ultimateCharge,
-      Math.max(2, Math.round(res.finalDamage * 0.4))
+      Math.max(2, Math.round(res.finalDamage * 0.4)),
+      ULTIMATE_CHARGE_MULT
     );
     this.hitmarkerTimer = 0.2;
     this.hitmarkerCrit = isCrit || isMaceSmash;
@@ -4200,7 +4370,11 @@ export class UnstableArenaEngine {
     this.multiKillStreak = this.multiKillWindowTimer > 0 ? this.multiKillStreak + 1 : 1;
     this.multiKillWindowTimer = 5.5;
     this.maxComboStreak = Math.max(this.maxComboStreak, this.comboStreak);
-    this.ultimateCharge = addUltimateCharge(this.ultimateCharge, isBountyKill ? 35 : 25);
+    this.ultimateCharge = addUltimateCharge(
+      this.ultimateCharge,
+      isBountyKill ? 35 : 25,
+      ULTIMATE_CHARGE_MULT
+    );
 
     // Adrenaline Kill Bonus + Surge Event Bounty Rush + Bounty King Reward
     const surgeMods = computeSurgeModifiers(this.activeArenaEvent);
@@ -5238,17 +5412,19 @@ export class UnstableArenaEngine {
     const scopeState = this.getScopeState();
     const desiredFov = scopeState.isScoped
       ? scopeState.targetFov
-      : this.fireworkBoostTimer > 0
-        ? Math.min(110, baseFov + 8)
-        : this.isGliding
-          ? Math.min(106, baseFov + 4)
-          : this.stealthTimer > 0
-            ? Math.max(58, baseFov - 2)
-            : baseFov;
+      : this.dashActiveTimer > 0
+        ? Math.min(114, baseFov + 11)
+        : this.fireworkBoostTimer > 0
+          ? Math.min(110, baseFov + 8)
+          : this.isGliding
+            ? Math.min(106, baseFov + 4)
+            : this.stealthTimer > 0
+              ? Math.max(58, baseFov - 2)
+              : baseFov;
     this.fovCurrent = THREE.MathUtils.damp(
       this.fovCurrent,
       desiredFov,
-      scopeState.isScoped ? 13 : 10,
+      this.dashActiveTimer > 0 ? 22 : scopeState.isScoped ? 13 : 10,
       dt
     );
     if (Math.abs(this.camera.fov - this.fovCurrent) > 0.05) {
@@ -5565,6 +5741,67 @@ export class UnstableArenaEngine {
           this.arsenalTimer = 25;
           this.cycleRandomArsenal();
         }
+      } else if (this.customPartyMode === 'spike_defuse') {
+        this.updateSpikeDefuseMode(dt, timeSec);
+      }
+    }
+
+    // Practice Mode instant 100% Ultimate Charge & 2x passive Ultimate Charge in combat
+    if (this.isPracticeMode) {
+      this.ultimateCharge = 100;
+    } else if (this.ultimateCharge < 100 && !this.isSpectating && this.localRespawnTimer <= 0) {
+      this.ultPassiveAccum += dt * 1.6 * ULTIMATE_CHARGE_MULT;
+      if (this.ultPassiveAccum >= 1) {
+        const gain = Math.floor(this.ultPassiveAccum);
+        this.ultPassiveAccum -= gain;
+        this.ultimateCharge = addUltimateCharge(this.ultimateCharge, gain, 1);
+      }
+    }
+
+    // Gravitational Supernova Phase 1: 15m Black-Hole Vortex Pull -> Phase 2 Detonation
+    if (this.novaVortexTimer > 0) {
+      this.novaVortexTimer = Math.max(0, this.novaVortexTimer - dt);
+      this.novaVortexRingTimer -= dt;
+      if (this.novaVortexRingTimer <= 0) {
+        this.novaVortexRingTimer = 0.11;
+        this.spawnShockwave(
+          this.novaVortexOrigin.x,
+          this.novaVortexOrigin.y + 0.25,
+          this.novaVortexOrigin.z,
+          SUPERNOVA_PULL_RADIUS * (0.45 + (this.novaVortexTimer / SUPERNOVA_DURATION_SEC) * 0.55),
+          0xa855f7
+        );
+        this.spawnParticles(
+          this.novaVortexOrigin.x,
+          this.novaVortexOrigin.y + 1.1,
+          this.novaVortexOrigin.z,
+          14,
+          0xc084fc,
+          7.5
+        );
+      }
+      const effMode = this.getEffectiveRoomMode();
+      const localTeam = this.getLocalPlayerTeam();
+      for (const e of this.enemies) {
+        if (!e.alive || e.koTimer > 0 || e.stealthTimer > 0) continue;
+        if (!canDamageTarget(effMode, localTeam, e.team)) continue;
+        const pull = computeSupernovaPullVelocity(
+          e.pos.x,
+          e.pos.z,
+          this.novaVortexOrigin.x,
+          this.novaVortexOrigin.z,
+          SUPERNOVA_PULL_RADIUS,
+          26
+        );
+        if (pull.inRange) {
+          e.vel.x = THREE.MathUtils.damp(e.vel.x, pull.vx, 16, dt);
+          e.vel.z = THREE.MathUtils.damp(e.vel.z, pull.vz, 16, dt);
+          e.vel.y = Math.max(e.vel.y, 1.8);
+          e.onGround = false;
+        }
+      }
+      if (this.novaVortexTimer <= 0) {
+        this.detonateSupernova();
       }
     }
 
@@ -6030,9 +6267,27 @@ export class UnstableArenaEngine {
     }
 
     if (!this.isGliding) {
-      const accel = this.playerOnGround ? 28 : 11;
-      this.playerVel.x = THREE.MathUtils.damp(this.playerVel.x, _v1.x * baseSpeed, accel, dt);
-      this.playerVel.z = THREE.MathUtils.damp(this.playerVel.z, _v1.z * baseSpeed, accel, dt);
+      if (this.dashActiveTimer > 0) {
+        this.dashActiveTimer = Math.max(0, this.dashActiveTimer - dt);
+        this.playerVel.x = THREE.MathUtils.damp(this.playerVel.x, this.dashDirX * DASH_SPEED, 22, dt);
+        this.playerVel.z = THREE.MathUtils.damp(this.playerVel.z, this.dashDirZ * DASH_SPEED, 22, dt);
+        this.dashTrailTimer -= dt;
+        if (this.dashTrailTimer <= 0) {
+          this.dashTrailTimer = 0.035;
+          this.spawnParticles(
+            this.playerPos.x - this.dashDirX * 0.6,
+            this.playerPos.y + 0.9,
+            this.playerPos.z - this.dashDirZ * 0.6,
+            5,
+            0x38bdf8,
+            5.5
+          );
+        }
+      } else {
+        const accel = this.playerOnGround ? 28 : 11;
+        this.playerVel.x = THREE.MathUtils.damp(this.playerVel.x, _v1.x * baseSpeed, accel, dt);
+        this.playerVel.z = THREE.MathUtils.damp(this.playerVel.z, _v1.z * baseSpeed, accel, dt);
+      }
     } else {
       const flightStep = stepElytraFlightLimit(this.isGliding, this.elytraFlightRemaining, dt);
       this.elytraFlightRemaining = flightStep.nextRemainingSec;
@@ -7188,7 +7443,7 @@ export class UnstableArenaEngine {
     ) {
       this.parryCount += 1;
       this.parryFlashTimer = 0.45;
-      this.ultimateCharge = addUltimateCharge(this.ultimateCharge, 20);
+      this.ultimateCharge = addUltimateCharge(this.ultimateCharge, 20, ULTIMATE_CHARGE_MULT);
       this.audio.playParry();
       this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.3, this.playerPos.z, 3.8, 0x22d3ee);
       this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.25, this.playerPos.z, 18, 0x67e8f9, 8.5);
@@ -7801,6 +8056,42 @@ export class UnstableArenaEngine {
       multiplayer: this.mpState,
       isPractice: this.isPracticeMode,
       partyMode: this.customPartyMode,
+      spikeState:
+        this.customPartyMode === 'spike_defuse'
+          ? {
+              phase: this.spikePhase,
+              plantedSite: this.spikePlantedSite,
+              round: this.spikeRound,
+              redRounds: this.spikeRedRounds,
+              blueRounds: this.spikeBlueRounds,
+              targetRounds: SPIKE_TARGET_ROUNDS,
+              timerSec: Math.max(0, Math.ceil(this.spikeTimerSec)),
+              canPlantSite:
+                this.spikePhase === 'pre_plant' &&
+                this.getLocalPlayerTeam() === 'red' &&
+                this.localRespawnTimer <= 0 &&
+                !this.isSpectating
+                  ? detectSpikeSiteAtPosition(this.playerPos.x, this.playerPos.z)
+                  : null,
+              canDefuse:
+                this.spikePhase === 'planted' &&
+                this.getLocalPlayerTeam() === 'blue' &&
+                this.localRespawnTimer <= 0 &&
+                !this.isSpectating &&
+                Math.hypot(this.playerPos.x - this.spikePos.x, this.playerPos.z - this.spikePos.z) <=
+                  SPIKE_DEFUSE_RADIUS,
+              channelKind:
+                this.spikePhase === 'pre_plant' && this.spikePlantProgress > 0.01
+                  ? 'plant'
+                  : this.spikePhase === 'planted' &&
+                      this.spikeDefuseProgress > (this.spikeHalfDefuseReached ? 0.505 : 0.01)
+                    ? 'defuse'
+                    : null,
+              channelProgress:
+                this.spikePhase === 'pre_plant' ? this.spikePlantProgress : this.spikeDefuseProgress,
+              halfDefuseReached: this.spikeHalfDefuseReached,
+            }
+          : null,
       botDifficulty: this.botDifficulty,
       isSpectating: this.isSpectating,
       spectatorViewMode: this.spectatorMode,
@@ -8558,6 +8849,10 @@ export class UnstableArenaEngine {
     }
   }
 
+  public setSpikeHold(active: boolean): void {
+    this.mobileSpikeHold = active;
+  }
+
   private triggerDash(): void {
     if (
       this.screen !== 'playing' ||
@@ -8575,17 +8870,316 @@ export class UnstableArenaEngine {
     if (this.keys.has('KeyD')) moveRight += 1;
     if (this.keys.has('KeyA')) moveRight -= 1;
 
-    const { vx, vz } = computeDashVelocity(moveForward, moveRight, this.playerYaw, 24);
+    const { vx, vz, dirX, dirZ } = computeDashVelocity(moveForward, moveRight, this.playerYaw, DASH_SPEED);
+    this.dashDirX = dirX;
+    this.dashDirZ = dirZ;
+    this.dashActiveTimer = DASH_DURATION_SEC;
+    this.dashTrailTimer = 0;
     this.playerVel.x = vx;
     this.playerVel.z = vz;
     if (!this.playerOnGround && !this.isGliding) {
-      this.playerVel.y = Math.max(this.playerVel.y, 3.2);
+      this.playerVel.y = Math.max(this.playerVel.y, 4.4);
+    } else if (this.playerOnGround) {
+      this.playerVel.y = Math.max(this.playerVel.y, 2.2);
     }
     this.dashCooldown = DASH_COOLDOWN_SEC;
-    this.squashY = 0.84;
+    this.squashY = 0.8;
     this.audio.playDash();
-    this.spawnParticles(this.playerPos.x, this.playerPos.y + 0.85, this.playerPos.z, 16, 0x38bdf8, 6.5);
+    this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.18, this.playerPos.z, 3.8, 0x38bdf8);
+    this.spawnParticles(this.playerPos.x, this.playerPos.y + 0.85, this.playerPos.z, 24, 0x38bdf8, 8.5);
     this.emitHud(true);
+  }
+
+  private detonateSupernova(): void {
+    const prof = CHARACTERS[this.selectedCharId];
+    const preset = resolveUltimatePreset(prof.archetype);
+    const radius = SUPERNOVA_PULL_RADIUS + 0.8;
+    const novaDmg = Math.round(55 * prof.damageMult);
+    const effMode = this.getEffectiveRoomMode();
+    const localTeam = this.getLocalPlayerTeam();
+    const cx = this.novaVortexOrigin.x;
+    const cy = this.novaVortexOrigin.y;
+    const cz = this.novaVortexOrigin.z;
+
+    this.audio.playUltimate();
+    this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.82);
+    this.spawnShockwave(cx, cy + 0.15, cz, 7.5, 0xfbbf24);
+    this.spawnShockwave(cx, cy + 0.35, cz, 12.5, 0xf97316);
+    this.spawnShockwave(cx, cy + 0.55, cz, 16.0, 0xa855f7);
+    this.spawnParticles(cx, cy + 1.1, cz, 56, 0xf97316, 15.5);
+    this.spawnParticles(cx, cy + 1.4, cz, 36, 0xc084fc, 13.0);
+
+    for (const e of this.enemies) {
+      if (!e.alive || e.koTimer > 0 || e.stealthTimer > 0) continue;
+      if (!canDamageTarget(effMode, localTeam, e.team)) continue;
+      const dx = e.pos.x - cx;
+      const dz = e.pos.z - cz;
+      const dist = Math.hypot(dx, dz);
+      if (dist <= radius && Math.abs(e.pos.y - cy) <= 6.5) {
+        const nx = dist > 0.05 ? dx / dist : Math.random() - 0.5;
+        const nz = dist > 0.05 ? dz / dist : -1;
+        e.burnTimer = 4.0;
+        e.burnTickTimer = 0.45;
+        this.applyHitToEnemy(e, novaDmg, true, true, true, nx, nz, 24.0, preset.label, 'fire_sword');
+        e.vel.y = Math.max(e.vel.y, 16.5);
+        e.onGround = false;
+      }
+    }
+    for (const peer of this.remotePeers.values()) {
+      if (!peer.alive || peer.isStealthed) continue;
+      if (!canDamageTarget(effMode, localTeam, peer.team)) continue;
+      const dx = peer.pos.x - cx;
+      const dz = peer.pos.z - cz;
+      const dist = Math.hypot(dx, dz);
+      if (dist <= radius && Math.abs(peer.pos.y - cy) <= 6.5) {
+        const nx = dist > 0.05 ? dx / dist : 0;
+        const nz = dist > 0.05 ? dz / dist : -1;
+        this.applyHitToRemotePeer(peer, novaDmg, true, true, nx, nz, 24.0, true, 'fire_sword');
+      }
+    }
+    this.pushCallout('💥 초신성 코어 대폭발! 광역 에어본 & 화염 점화!', '#f97316');
+    this.emitHud(true);
+  }
+
+  private resolveSpikeRoundWin(winningTeam: 'red' | 'blue', announcement: string): void {
+    if (this.spikeRoundResetTimer > 0) return;
+    if (winningTeam === 'red') {
+      this.spikeRedRounds += 1;
+    } else {
+      this.spikeBlueRounds += 1;
+    }
+    const localTeam = this.getLocalPlayerTeam();
+    this.pushCallout(
+      `${announcement} (RED ${this.spikeRedRounds} : ${this.spikeBlueRounds} BLUE)`,
+      winningTeam === 'red' ? '#ef4444' : '#38bdf8'
+    );
+    this.audio.playRoundAdvance();
+
+    if (
+      this.spikeRedRounds >= SPIKE_TARGET_ROUNDS ||
+      this.spikeBlueRounds >= SPIKE_TARGET_ROUNDS
+    ) {
+      const won = localTeam === winningTeam;
+      this.triggerEndGame(won ? 'victory' : 'defeat');
+      return;
+    }
+    this.spikeRoundResetTimer = 3.2;
+    this.emitHud(true);
+  }
+
+  private startNextSpikeRound(): void {
+    this.spikeRound += 1;
+    this.spikePhase = 'pre_plant';
+    this.spikePlantedSite = null;
+    this.spikeTimerSec = SPIKE_ROUND_PREPLANT_SEC;
+    this.spikePlantProgress = 0;
+    this.spikeDefuseProgress = 0;
+    this.spikeHalfDefuseReached = false;
+    this.spikeBeepTimer = 0;
+    this.spikeRoundResetTimer = 0;
+    if (this.spikeDeviceMesh) {
+      this.spikeDeviceMesh.visible = false;
+    }
+
+    const team = this.getLocalPlayerTeam();
+    const rawSpawnZ = team === 'blue' ? -24.0 : 24.0;
+    const safeSpawn = resolveHorizontalCollision(
+      0,
+      0,
+      rawSpawnZ,
+      PLAYER_RADIUS,
+      PLAYER_HEIGHT,
+      this.blocks,
+      this.currentArenaRadius
+    );
+    const supY = getSupportHeightAt(safeSpawn.x, safeSpawn.z, 10, PLAYER_RADIUS, this.blocks);
+    this.playerPos.set(safeSpawn.x, supY, safeSpawn.z);
+    this.playerVel.set(0, 0, 0);
+    this.playerHp = this.playerMaxHp;
+    this.playerAbsorption = 15;
+    this.localRespawnTimer = 0;
+
+    const teamSpawnXs = [-9.0, 9.0, -14.0, 14.0];
+    this.enemies.forEach((e, idx) => {
+      e.alive = true;
+      e.eliminated = false;
+      e.hp = e.maxHp;
+      e.absorption = 0;
+      e.koTimer = 0;
+      e.respawnTimer = 0;
+      const sx = teamSpawnXs[idx % teamSpawnXs.length];
+      const sz = e.team === 'blue' ? -22.0 : 22.0;
+      const sp = resolveHorizontalCollision(
+        sx,
+        0,
+        sz,
+        PLAYER_RADIUS,
+        PLAYER_HEIGHT,
+        this.blocks,
+        this.currentArenaRadius
+      );
+      const sy = getSupportHeightAt(sp.x, sp.z, 10, PLAYER_RADIUS, this.blocks);
+      e.pos.set(sp.x, sy, sp.z);
+      e.vel.set(0, 0, 0);
+      e.rig.root.visible = true;
+      e.overhead.updateHp(1);
+    });
+
+    this.pushCallout(
+      `🔥 ROUND ${this.spikeRound} 시작! [공격 RED: A/B 사이트 스파이크 설치 vs 수비 BLUE: 해체]`,
+      '#fbbf24'
+    );
+    this.emitHud(true);
+  }
+
+  private updateSpikeDefuseMode(dt: number, timeSec: number): void {
+    if (this.spikeVisualGroup) {
+      this.spikeVisualGroup.visible = true;
+    }
+    if (this.spikeRoundResetTimer > 0) {
+      this.spikeRoundResetTimer -= dt;
+      if (this.spikeRoundResetTimer <= 0) {
+        this.startNextSpikeRound();
+      }
+      return;
+    }
+
+    const localTeam = this.getLocalPlayerTeam();
+    const holdingInteract =
+      this.keys.has('KeyG') || this.keys.has('KeyE') || this.mobileSpikeHold;
+
+    if (this.spikePhase === 'pre_plant') {
+      this.spikeTimerSec = Math.max(0, this.spikeTimerSec - dt);
+      const playerSite =
+        localTeam === 'red' && !this.isSpectating && this.localRespawnTimer <= 0
+          ? detectSpikeSiteAtPosition(this.playerPos.x, this.playerPos.z)
+          : null;
+
+      let botPlantSite: 'A' | 'B' | null = null;
+      let botPlanterPos: THREE.Vector3 | null = null;
+      for (const e of this.enemies) {
+        if (!e.alive || e.team !== 'red') continue;
+        const s = detectSpikeSiteAtPosition(e.pos.x, e.pos.z);
+        if (s) {
+          botPlantSite = s;
+          botPlanterPos = e.pos;
+          break;
+        }
+      }
+
+      const activeSite = (holdingInteract && playerSite) ? playerSite : botPlantSite;
+      const isChanneling = Boolean((holdingInteract && playerSite) || botPlantSite);
+      const step = stepSpikePlantProgress(this.spikePlantProgress, dt, isChanneling);
+      this.spikePlantProgress = step.progress;
+
+      if (step.completed && activeSite) {
+        const sites = getSpikeSites();
+        const targetSite = activeSite === 'A' ? sites.A : sites.B;
+        const px = holdingInteract && playerSite ? this.playerPos.x : (botPlanterPos?.x ?? targetSite.x);
+        const pz = holdingInteract && playerSite ? this.playerPos.z : (botPlanterPos?.z ?? targetSite.z);
+        const py = getSupportHeightAt(px, pz, 8, 0.4, this.blocks);
+
+        this.spikePhase = 'planted';
+        this.spikePlantedSite = activeSite;
+        this.spikePos.set(px, py, pz);
+        this.spikeTimerSec = SPIKE_DETONATION_SEC;
+        this.spikePlantProgress = 0;
+        this.spikeDefuseProgress = 0;
+        this.spikeHalfDefuseReached = false;
+        this.spikeBeepTimer = 0.15;
+        if (this.spikeDeviceMesh) {
+          this.spikeDeviceMesh.visible = true;
+          this.spikeDeviceMesh.position.copy(this.spikePos);
+        }
+        this.audio.playSpikePlanted();
+        this.spawnShockwave(px, py + 0.15, pz, SPIKE_SITE_RADIUS, 0xef4444);
+        this.pushCallout(
+          `⚠️ 스파이크가 ${activeSite} 사이트에 설치되었습니다! (45초 후 폭발)`,
+          '#ef4444'
+        );
+        this.emitHud(true);
+        return;
+      }
+
+      if (this.spikeTimerSec <= 0) {
+        this.resolveSpikeRoundWin('blue', '🛡️ 설치 시간 초과! 수비팀(BLUE) 라운드 승리!');
+        return;
+      }
+    } else if (this.spikePhase === 'planted') {
+      this.spikeTimerSec = Math.max(0, this.spikeTimerSec - dt);
+      if (this.spikeDeviceMesh) {
+        this.spikeDeviceMesh.visible = true;
+        this.spikeDeviceMesh.position.copy(this.spikePos);
+        this.spikeDeviceMesh.rotation.y = timeSec * 2.4;
+      }
+
+      this.spikeBeepTimer -= dt;
+      if (this.spikeBeepTimer <= 0) {
+        this.spikeBeepTimer = computeSpikeBeepInterval(this.spikeTimerSec);
+        this.audio.playSpikeBeep(this.spikeTimerSec);
+        this.spawnShockwave(
+          this.spikePos.x,
+          this.spikePos.y + 0.12,
+          this.spikePos.z,
+          this.spikeTimerSec <= 10 ? 5.2 : 3.2,
+          0xef4444
+        );
+      }
+
+      const playerCanDefuse =
+        localTeam === 'blue' &&
+        !this.isSpectating &&
+        this.localRespawnTimer <= 0 &&
+        Math.hypot(this.playerPos.x - this.spikePos.x, this.playerPos.z - this.spikePos.z) <=
+          SPIKE_DEFUSE_RADIUS;
+
+      let botDefusing = false;
+      for (const e of this.enemies) {
+        if (!e.alive || e.team !== 'blue') continue;
+        const d = Math.hypot(e.pos.x - this.spikePos.x, e.pos.z - this.spikePos.z);
+        if (d <= SPIKE_DEFUSE_RADIUS) {
+          botDefusing = true;
+          break;
+        }
+      }
+
+      const isDefusing = (holdingInteract && playerCanDefuse) || botDefusing;
+      const prevHalf = this.spikeHalfDefuseReached;
+      const defStep = stepSpikeDefuseProgress(
+        this.spikeDefuseProgress,
+        dt,
+        isDefusing,
+        this.spikeHalfDefuseReached
+      );
+      this.spikeDefuseProgress = defStep.progress;
+      this.spikeHalfDefuseReached = defStep.halfReached;
+
+      if (!prevHalf && this.spikeHalfDefuseReached) {
+        this.pushCallout('🔒 스파이크 50% 하프 해체 체크포인트 도달!', '#38bdf8');
+      }
+
+      if (defStep.completed) {
+        this.spikePhase = 'defused';
+        if (this.spikeDeviceMesh) this.spikeDeviceMesh.visible = false;
+        this.audio.playSpikeDefused();
+        this.spawnShockwave(this.spikePos.x, this.spikePos.y + 0.2, this.spikePos.z, 8.5, 0x38bdf8);
+        this.spawnParticles(this.spikePos.x, this.spikePos.y + 1.0, this.spikePos.z, 40, 0x38bdf8, 10);
+        this.resolveSpikeRoundWin('blue', '🛡️ 스파이크 해체 성공! 수비팀(BLUE) 라운드 승리!');
+        return;
+      }
+
+      if (this.spikeTimerSec <= 0) {
+        this.spikePhase = 'detonated';
+        if (this.spikeDeviceMesh) this.spikeDeviceMesh.visible = false;
+        this.shakeTrauma = 1.0;
+        this.audio.playUltimate();
+        this.spawnShockwave(this.spikePos.x, this.spikePos.y + 0.2, this.spikePos.z, 14.0, 0xef4444);
+        this.spawnShockwave(this.spikePos.x, this.spikePos.y + 0.5, this.spikePos.z, 24.0, 0xf97316);
+        this.spawnParticles(this.spikePos.x, this.spikePos.y + 1.5, this.spikePos.z, 80, 0xef4444, 18);
+        this.resolveSpikeRoundWin('red', '💥 스파이크 대폭발! 공격팀(RED) 라운드 승리!');
+        return;
+      }
+    }
   }
 
   private triggerUltimate(): void {
@@ -8593,25 +9187,25 @@ export class UnstableArenaEngine {
       this.screen !== 'playing' ||
       this.isSpectating ||
       this.localRespawnTimer > 0 ||
-      this.ultimateCharge < 100
+      (!this.isPracticeMode && this.ultimateCharge < 100)
     ) {
       return;
     }
     const prof = CHARACTERS[this.selectedCharId];
     const preset = resolveUltimatePreset(prof.archetype);
-    this.ultimateCharge = 0;
+    this.ultimateCharge = this.isPracticeMode ? 100 : 0;
     this.audio.playUltimate();
-    this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.45);
+    this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.48);
     const hexColor = Number(preset.accent.replace('#', '0x')) || 0xf59e0b;
 
     if (preset.kind === 'sky_meteor') {
       this.isGliding = false;
-      this.playerVel.y = 22.5;
+      this.playerVel.y = 24.0;
       this.playerOnGround = false;
-      this.playerFallStartY = Math.max(this.playerFallStartY, this.playerPos.y + 1.5);
-      this.playerAbsorption = Math.min(40, this.playerAbsorption + 15);
-      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.12, this.playerPos.z, 5.2, hexColor);
-      this.spawnParticles(this.playerPos.x, this.playerPos.y + 0.9, this.playerPos.z, 26, hexColor, 10);
+      this.playerFallStartY = Math.max(this.playerFallStartY, this.playerPos.y + 2.0);
+      this.playerAbsorption = Math.min(40, this.playerAbsorption + 18);
+      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.12, this.playerPos.z, 6.2, hexColor);
+      this.spawnParticles(this.playerPos.x, this.playerPos.y + 0.9, this.playerPos.z, 32, hexColor, 11);
     } else if (preset.kind === 'arrow_barrage') {
       const isCrossbow = this.getCurrentLoadout().some((s) => s?.id === 'crossbow');
       const kind = isCrossbow ? 'bolt' : 'arrow';
@@ -8642,48 +9236,24 @@ export class UnstableArenaEngine {
           ownerTeam: this.getLocalPlayerTeam(),
           origin: _v1,
           dir: _aimDir,
-          damage: Math.round((isCrossbow ? 18 : 24) * prof.damageMult),
+          damage: Math.round((isCrossbow ? 20 : 26) * prof.damageMult),
         });
       }
-      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.2, this.playerPos.z, 3.8, hexColor);
+      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.2, this.playerPos.z, 4.6, hexColor);
     } else if (preset.kind === 'inferno_nova') {
-      const radius = 6.8;
-      const novaDmg = Math.round(32 * prof.damageMult);
-      const ignite = prof.archetype === 'pyromancer';
-      const effMode = this.getEffectiveRoomMode();
-      const localTeam = this.getLocalPlayerTeam();
-      this.playerAbsorption = Math.min(40, this.playerAbsorption + 20);
-      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.15, this.playerPos.z, radius, hexColor);
-      this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.0, this.playerPos.z, 32, hexColor, 11);
-
-      for (const e of this.enemies) {
-        if (!e.alive || e.koTimer > 0 || e.stealthTimer > 0) continue;
-        if (!canDamageTarget(effMode, localTeam, e.team)) continue;
-        const dx = e.pos.x - this.playerPos.x;
-        const dz = e.pos.z - this.playerPos.z;
-        const dist = Math.hypot(dx, dz);
-        if (dist <= radius && Math.abs(e.pos.y - this.playerPos.y) <= 3.0) {
-          const nx = dist > 0.05 ? dx / dist : 0;
-          const nz = dist > 0.05 ? dz / dist : -1;
-          if (ignite) {
-            e.burnTimer = 3.0;
-            e.burnTickTimer = 0.5;
-          }
-          this.applyHitToEnemy(e, novaDmg, true, false, true, nx, nz, 14.5, preset.label, 'fire_sword');
-        }
+      // Phase 1: Start 0.42s Gravitational Vortex Pull (15m radius) before Supernova Detonation!
+      this.playerAbsorption = Math.min(40, this.playerAbsorption + 25);
+      this.novaVortexOrigin.copy(this.playerPos);
+      this.novaVortexTimer = SUPERNOVA_DURATION_SEC;
+      this.novaVortexRingTimer = 0;
+      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.2, this.playerPos.z, SUPERNOVA_PULL_RADIUS, 0xa855f7);
+      this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.0, this.playerPos.z, 36, 0xa855f7, 10);
+      this.pushCallout('🌌 중력장 초신성 발동 — 반경 15m 적 흡입 중!', '#c084fc');
+      if (this.isNetworkedMode()) {
+        this.net.send({ type: 'heal_sync', hp: this.playerHp, absorption: this.playerAbsorption });
       }
-      for (const peer of this.remotePeers.values()) {
-        if (!peer.alive || peer.isStealthed) continue;
-        if (!canDamageTarget(effMode, localTeam, peer.team)) continue;
-        const dx = peer.pos.x - this.playerPos.x;
-        const dz = peer.pos.z - this.playerPos.z;
-        const dist = Math.hypot(dx, dz);
-        if (dist <= radius && Math.abs(peer.pos.y - this.playerPos.y) <= 3.0) {
-          const nx = dist > 0.05 ? dx / dist : 0;
-          const nz = dist > 0.05 ? dz / dist : -1;
-          this.applyHitToRemotePeer(peer, novaDmg, true, false, nx, nz, 14.5, ignite, 'fire_sword');
-        }
-      }
+      this.emitHud(true);
+      return;
     } else {
       // chrono_surge: instant cooldown reset + dash/elytra refresh + HP heal
       for (let i = 0; i < 6; i++) {
@@ -8695,10 +9265,10 @@ export class UnstableArenaEngine {
       }
       this.elytraCooldown = 0;
       this.dashCooldown = 0;
-      this.playerHp = Math.min(this.playerMaxHp, this.playerHp + 30);
-      this.playerAbsorption = Math.min(40, this.playerAbsorption + 10);
-      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.15, this.playerPos.z, 4.6, hexColor);
-      this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.1, this.playerPos.z, 24, hexColor, 9);
+      this.playerHp = Math.min(this.playerMaxHp, this.playerHp + 35);
+      this.playerAbsorption = Math.min(40, this.playerAbsorption + 15);
+      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.15, this.playerPos.z, 5.2, hexColor);
+      this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.1, this.playerPos.z, 28, hexColor, 9);
     }
 
     if (this.isNetworkedMode()) {

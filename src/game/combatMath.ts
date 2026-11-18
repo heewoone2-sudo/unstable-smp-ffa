@@ -647,6 +647,11 @@ export function computeBowScopeState(params: {
 
 export const PARRY_WINDOW_SEC = 0.24;
 export const DASH_COOLDOWN_SEC = 2.8;
+export const DASH_SPEED = 48;
+export const DASH_DURATION_SEC = 0.26;
+export const ULTIMATE_CHARGE_MULT = 2.0;
+export const SUPERNOVA_PULL_RADIUS = 15.0;
+export const SUPERNOVA_DURATION_SEC = 0.42;
 
 /**
  * Returns true when shield block was raised within the 0.24s Perfect Parry window.
@@ -674,8 +679,8 @@ export function computeDashVelocity(
   moveForward: number,
   moveRight: number,
   yaw: number,
-  dashSpeed = 24
-): { vx: number; vz: number } {
+  dashSpeed = DASH_SPEED
+): { vx: number; vz: number; dirX: number; dirZ: number } {
   const fx = -Math.sin(yaw);
   const fz = -Math.cos(yaw);
   const rx = Math.cos(yaw);
@@ -694,14 +699,46 @@ export function computeDashVelocity(
   return {
     vx: dx * dashSpeed,
     vz: dz * dashSpeed,
+    dirX: dx,
+    dirZ: dz,
+  };
+}
+
+/**
+ * Computes inward gravitational vortex pull velocity toward the Supernova singularity center.
+ */
+export function computeSupernovaPullVelocity(
+  targetX: number,
+  targetZ: number,
+  centerX: number,
+  centerZ: number,
+  pullRadius = SUPERNOVA_PULL_RADIUS,
+  pullSpeed = 24
+): { inRange: boolean; vx: number; vz: number; dist: number } {
+  const dx = centerX - targetX;
+  const dz = centerZ - targetZ;
+  const dist = Math.hypot(dx, dz);
+  if (dist > pullRadius) {
+    return { inRange: false, vx: 0, vz: 0, dist };
+  }
+  if (dist < 0.65) {
+    return { inRange: true, vx: 0, vz: 0, dist };
+  }
+  const strength = 0.55 + 0.45 * (1 - dist / pullRadius);
+  return {
+    inRange: true,
+    vx: (dx / dist) * pullSpeed * strength,
+    vz: (dz / dist) * pullSpeed * strength,
+    dist,
   };
 }
 
 /**
  * Accumulates and clamps Overdrive Ultimate gauge in [0, 100].
  */
-export function addUltimateCharge(currentCharge: number, delta: number): number {
-  return Math.max(0, Math.min(100, Math.round(currentCharge + delta)));
+export function addUltimateCharge(currentCharge: number, delta: number, mult = 1): number {
+  const scaledDelta = delta > 0 ? delta * mult : delta;
+  return Math.max(0, Math.min(100, Math.round(currentCharge + scaledDelta)));
 }
 
 export type UltimateKind = 'sky_meteor' | 'arrow_barrage' | 'inferno_nova' | 'chrono_surge';
@@ -742,10 +779,10 @@ export function resolveUltimatePreset(archetype: CharacterProfile['archetype']):
     case 'assassin':
       return {
         kind: 'inferno_nova',
-        label: '키네틱 노바',
-        shortLabel: '노바 폭발',
+        label: '중력장 초신성',
+        shortLabel: '초신성 폭발',
         accent: '#f97316',
-        description: '반경 6.8m 광역 충격파 폭발 + 보호막 20',
+        description: '반경 15m 중력장 흡입 후 초신성 공중 대폭발 + 보호막 25',
       };
     default:
       return {

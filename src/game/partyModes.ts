@@ -113,7 +113,7 @@ export function getKnockoutRoundInfo(round: number): KnockoutRoundInfo {
 
 export function shouldEndMatchOnKillLimit(partyMode: CustomPartyMode, mode: GameModeId): boolean {
   if (mode === 'online_world' || mode === 'link_duel') return false;
-  if (partyMode === 'knockout' || partyMode === 'boss_raid') return false;
+  if (partyMode === 'knockout' || partyMode === 'boss_raid' || partyMode === 'spike_defuse') return false;
   return true;
 }
 
@@ -453,10 +453,91 @@ export function getRandomArsenalLoadout(cycleIdx: number): {
 export function resolveEffectiveRoomMode(
   mode: GameModeId,
   roomMode: RoomMode,
-  _partyMode: CustomPartyMode = 'classic'
+  partyMode: CustomPartyMode = 'classic'
 ): RoomMode {
   if (mode !== 'multiplayer') return 'ffa';
+  if (partyMode === 'spike_defuse') return 'team';
   return roomMode === 'team' ? 'team' : 'ffa';
+}
+
+export const SPIKE_PLANT_TIME_SEC = 3.2;
+export const SPIKE_DEFUSE_TIME_SEC = 5.0;
+export const SPIKE_DETONATION_SEC = 45;
+export const SPIKE_ROUND_PREPLANT_SEC = 100;
+export const SPIKE_SITE_RADIUS = 9.5;
+export const SPIKE_DEFUSE_RADIUS = 4.6;
+export const SPIKE_TARGET_ROUNDS = 5;
+
+export interface SpikeSiteZone {
+  id: 'A' | 'B';
+  label: string;
+  x: number;
+  z: number;
+  radius: number;
+}
+
+export function getSpikeSites(): { A: SpikeSiteZone; B: SpikeSiteZone } {
+  return {
+    A: { id: 'A', label: 'A SITE', x: -34, z: 0, radius: SPIKE_SITE_RADIUS },
+    B: { id: 'B', label: 'B SITE', x: 34, z: 0, radius: SPIKE_SITE_RADIUS },
+  };
+}
+
+export function detectSpikeSiteAtPosition(x: number, z: number): 'A' | 'B' | null {
+  const sites = getSpikeSites();
+  if (Math.hypot(x - sites.A.x, z - sites.A.z) <= sites.A.radius) return 'A';
+  if (Math.hypot(x - sites.B.x, z - sites.B.z) <= sites.B.radius) return 'B';
+  return null;
+}
+
+export function stepSpikePlantProgress(
+  currentProgress: number,
+  dt: number,
+  isChanneling: boolean
+): { progress: number; completed: boolean } {
+  if (!isChanneling) {
+    return { progress: 0, completed: false };
+  }
+  const next = Math.min(1, Math.max(0, currentProgress) + Math.max(0, dt) / SPIKE_PLANT_TIME_SEC);
+  return {
+    progress: next,
+    completed: next >= 1,
+  };
+}
+
+/**
+ * Valorant-style Spike Defuse with 50% Half-Defuse Checkpoint:
+ * Once progress reaches 0.5 (2.5s), releasing the defuse key locks progress at 0.5 instead of 0.
+ */
+export function stepSpikeDefuseProgress(
+  currentProgress: number,
+  dt: number,
+  isChanneling: boolean,
+  halfReached: boolean
+): { progress: number; halfReached: boolean; completed: boolean } {
+  const floorProgress = halfReached ? 0.5 : 0;
+  if (!isChanneling) {
+    return {
+      progress: floorProgress,
+      halfReached,
+      completed: false,
+    };
+  }
+  const start = Math.max(floorProgress, currentProgress);
+  const next = Math.min(1, start + Math.max(0, dt) / SPIKE_DEFUSE_TIME_SEC);
+  const nextHalfReached = halfReached || next >= 0.5;
+  return {
+    progress: next,
+    halfReached: nextHalfReached,
+    completed: next >= 1,
+  };
+}
+
+export function computeSpikeBeepInterval(remainingSec: number): number {
+  if (remainingSec > 20) return 1.0;
+  if (remainingSec > 10) return 0.5;
+  if (remainingSec > 5) return 0.25;
+  return 0.12;
 }
 
 /**

@@ -39,13 +39,15 @@ export type MapCategory = 'industrial' | 'nature' | 'citadel' | 'cosmic';
 export type CameraMode = 'firstperson' | 'shiftlock' | 'free';
 export type CameraViewMode = CameraMode;
 export type GraphicsQuality = 'low' | 'medium' | 'high';
+export type ShaderPreset = 'clean' | 'valorant' | 'cinematic' | 'cyber_neon';
 export type BotDifficulty = 'easy' | 'medium' | 'hard';
 export type CustomPartyMode =
   | 'classic'
   | 'knockout'
   | 'boss_raid'
   | 'random_arsenal'
-  | 'one_shot';
+  | 'one_shot'
+  | 'spike_defuse';
 export type AiPolicy =
   | 'wind_diver'
   | 'sword_duelist'
@@ -141,6 +143,7 @@ export interface GameSettings {
   masterVolume: number;
   muted: boolean;
   graphicsQuality: GraphicsQuality;
+  shaderPreset?: ShaderPreset;
   particlesEnabled: boolean;
   showFps: boolean;
   mobileAutoSprint: boolean;
@@ -247,10 +250,26 @@ export interface FloatingDamageItem {
   opacity: number;
 }
 
+export interface SpikeHudState {
+  phase: 'pre_plant' | 'planted' | 'defused' | 'detonated';
+  plantedSite: 'A' | 'B' | null;
+  round: number;
+  redRounds: number;
+  blueRounds: number;
+  targetRounds: number;
+  timerSec: number;
+  canPlantSite: 'A' | 'B' | null;
+  canDefuse: boolean;
+  channelKind: 'plant' | 'defuse' | null;
+  channelProgress: number;
+  halfDefuseReached: boolean;
+}
+
 export interface HudSnapshot {
   screen: ScreenState;
   mode: GameModeId;
   partyMode: CustomPartyMode;
+  spikeState?: SpikeHudState | null;
   botDifficulty: BotDifficulty;
   isPractice?: boolean;
   isSpectating: boolean;

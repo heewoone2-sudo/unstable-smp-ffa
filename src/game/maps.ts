@@ -323,7 +323,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffffff,
     ambientSky: 0xe0f2fe,
     ambientGround: 0x64748b,
-    worldRadius: 48,
+    worldRadius: 70,
   },
   ancient_temple: {
     id: 'ancient_temple',
@@ -354,7 +354,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfffbeb,
     ambientSky: 0xfef3c7,
     ambientGround: 0x78350f,
-    worldRadius: 48,
+    worldRadius: 70,
   },
   orbital_reactor: {
     id: 'orbital_reactor',
@@ -416,7 +416,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffedd5,
     ambientSky: 0xfdba74,
     ambientGround: 0x292524,
-    worldRadius: 48,
+    worldRadius: 70,
   },
   bamboo_sanctuary: {
     id: 'bamboo_sanctuary',
@@ -447,7 +447,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfefce8,
     ambientSky: 0xecfccb,
     ambientGround: 0x365314,
-    worldRadius: 48,
+    worldRadius: 70,
   },
   neon_downtown: {
     id: 'neon_downtown',
@@ -509,7 +509,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xf0fdfa,
     ambientSky: 0x99f6e4,
     ambientGround: 0x134e4a,
-    worldRadius: 48,
+    worldRadius: 70,
   },
   clockwork_tower: {
     id: 'clockwork_tower',
@@ -633,7 +633,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfff1f2,
     ambientSky: 0xfbcfe8,
     ambientGround: 0x831843,
-    worldRadius: 48,
+    worldRadius: 70,
   },
   obsidian_keep: {
     id: 'obsidian_keep',
@@ -664,7 +664,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xe0e7ff,
     ambientSky: 0xa5b4fc,
     ambientGround: 0x1e1b4b,
-    worldRadius: 48,
+    worldRadius: 70,
   },
   solar_observatory: {
     id: 'solar_observatory',
@@ -695,7 +695,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffffff,
     ambientSky: 0xfef3c7,
     ambientGround: 0x64748b,
-    worldRadius: 48,
+    worldRadius: 70,
   },
   toxic_refinery: {
     id: 'toxic_refinery',
@@ -1855,7 +1855,9 @@ function buildAetherSpireBlocks(): ArenaBlock[] {
   return blocks;
 }
 
-export function getJumpPadsForMap(mapId: MapId): JumpPadZone[] {
+export const ARENA_HORIZONTAL_SCALE = 1.45;
+
+function getRawJumpPadsForMap(mapId: MapId): JumpPadZone[] {
   switch (mapId) {
     case 'container_yard':
       return [
@@ -2009,11 +2011,21 @@ export function getJumpPadsForMap(mapId: MapId): JumpPadZone[] {
   }
 }
 
+export function getJumpPadsForMap(mapId: MapId): JumpPadZone[] {
+  return getRawJumpPadsForMap(mapId).map((pad) => ({
+    ...pad,
+    x: Number((pad.x * ARENA_HORIZONTAL_SCALE).toFixed(2)),
+    z: Number((pad.z * ARENA_HORIZONTAL_SCALE).toFixed(2)),
+    radius: Number((pad.radius * 1.22).toFixed(2)),
+    boostForward: pad.boostForward ? Number((pad.boostForward * 1.32).toFixed(2)) : undefined,
+  }));
+}
+
 /**
  * Returns built-in signature water springs (sanctum heal/extinguish) or
  * lava/magma crucible hazards tailored to each map's theme (never blocking origin spawn).
  */
-export function getMapSignaturePools(mapId: MapId): HazardPoolZone[] {
+function getRawMapSignaturePools(mapId: MapId): HazardPoolZone[] {
   switch (mapId) {
     case 'emerald_citadel':
       return [
@@ -2075,7 +2087,16 @@ export function getMapSignaturePools(mapId: MapId): HazardPoolZone[] {
   }
 }
 
-export function getArenaBlocksForMap(mapId: MapId): ArenaBlock[] {
+export function getMapSignaturePools(mapId: MapId): HazardPoolZone[] {
+  return getRawMapSignaturePools(mapId).map((pool) => ({
+    ...pool,
+    x: Number((pool.x * ARENA_HORIZONTAL_SCALE).toFixed(2)),
+    z: Number((pool.z * ARENA_HORIZONTAL_SCALE).toFixed(2)),
+    radius: Number((pool.radius * 1.28).toFixed(2)),
+  }));
+}
+
+function getRawArenaBlocksForMap(mapId: MapId): ArenaBlock[] {
   switch (mapId) {
     case 'container_yard':
       return buildContainerYardBlocks();
@@ -2119,6 +2140,16 @@ export function getArenaBlocksForMap(mapId: MapId): ArenaBlock[] {
     default:
       return buildEmeraldCitadelBlocks();
   }
+}
+
+export function getArenaBlocksForMap(mapId: MapId): ArenaBlock[] {
+  return getRawArenaBlocksForMap(mapId).map((b) => ({
+    ...b,
+    x: Number((b.x * ARENA_HORIZONTAL_SCALE).toFixed(2)),
+    z: Number((b.z * ARENA_HORIZONTAL_SCALE).toFixed(2)),
+    w: Number((b.w * ARENA_HORIZONTAL_SCALE).toFixed(2)),
+    d: Number((b.d * ARENA_HORIZONTAL_SCALE).toFixed(2)),
+  }));
 }
 
 export interface CombatScoreEntry {

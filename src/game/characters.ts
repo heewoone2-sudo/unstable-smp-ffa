@@ -8,6 +8,7 @@ export const DEFAULT_GAME_SETTINGS: GameSettings = {
   masterVolume: 85,
   muted: false,
   graphicsQuality: 'high',
+  shaderPreset: 'valorant',
   particlesEnabled: true,
   showFps: false,
   mobileAutoSprint: true,

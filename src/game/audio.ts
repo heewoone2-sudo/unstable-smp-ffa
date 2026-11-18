@@ -799,4 +799,63 @@ export class GameAudio {
     }
     this.triggerDullThud(ctx, now, 860, 170, 34, 0.52, 0.18);
   }
+
+  public playSpikeBeep(remainingSec: number): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    const baseHz = remainingSec <= 5 ? 1567.98 : remainingSec <= 10 ? 1318.51 : 1046.5;
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(baseHz, now);
+    osc.frequency.exponentialRampToValueAtTime(baseHz * 0.94, now + 0.065);
+    g.gain.setValueAtTime(0.001, now);
+    g.gain.linearRampToValueAtTime(remainingSec <= 10 ? 0.24 : 0.17, now + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.075);
+    osc.connect(g).connect(this.masterGain ?? ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.085);
+  }
+
+  public playSpikePlanted(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const notes = [523.25, 392.0, 659.25];
+    for (let i = 0; i < notes.length; i++) {
+      const t = now + i * 0.08;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(notes[i], t);
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.28, t + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+      osc.connect(g).connect(this.masterGain ?? ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.3);
+    }
+    this.triggerDullThud(ctx, now, 720, 160, 42, 0.48, 0.14);
+  }
+
+  public playSpikeDefused(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const notes = [587.33, 783.99, 1046.5, 1318.51];
+    for (let i = 0; i < notes.length; i++) {
+      const t = now + i * 0.06;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(notes[i], t);
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.26, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
+      osc.connect(g).connect(this.masterGain ?? ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.34);
+    }
+  }
 }
