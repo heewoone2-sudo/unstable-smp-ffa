@@ -9,6 +9,7 @@ import {
   GAME_MODES,
   hasDoubleJumpLoadout,
   hasRangedBowLoadout,
+  ITEM_CATALOG,
 } from './characters';
 import {
   addUltimateCharge,
@@ -817,8 +818,17 @@ export class UnstableArenaEngine {
         const peer = this.remotePeers.get(msg.id);
         if (!peer) return;
         peer.targetPos.set(msg.x, msg.y, msg.z);
+        if (peer.pos.distanceToSquared(peer.targetPos) > 400) {
+          peer.pos.copy(peer.targetPos);
+        }
         peer.vel.set(msg.vx, msg.vy, msg.vz);
         peer.targetYaw = msg.yaw + Math.PI;
+        if (!peer.alive && peer.hp > 0) {
+          peer.alive = true;
+        }
+        if (peer.alive) {
+          peer.rig.root.visible = true;
+        }
         if (peer.activeSlot !== msg.activeSlot) {
           peer.activeSlot = msg.activeSlot as WeaponSlotId;
           peer.rig.setActiveWeapon(peer.activeSlot);
@@ -2105,7 +2115,7 @@ export class UnstableArenaEngine {
 
   public createMultiplayerRoom(
     name: string,
-    _includeBots: boolean,
+    includeBots: boolean,
     roomMode: 'ffa' | 'team',
     team: 'red' | 'blue' | 'ffa',
     botDifficulty: BotDifficulty = 'medium',
@@ -2118,14 +2128,16 @@ export class UnstableArenaEngine {
     this.chatMessages = [];
     this.botDifficulty = botDifficulty;
     this.customPartyMode = partyMode;
+    const effRoomMode = partyMode === 'spike_defuse' ? 'team' : roomMode;
+    const effIncludeBots = includeBots || effRoomMode === 'team' || partyMode === 'spike_defuse';
     this.localPreferredTeam = team === 'blue' ? 'blue' : 'red';
-    this.mpState = { ...this.mpState, roomMode, includeBots: false };
+    this.mpState = { ...this.mpState, roomMode: effRoomMode, includeBots: effIncludeBots };
     this.net.createRoom(
       name,
       this.selectedCharId,
-      false,
-      roomMode,
-      team,
+      effIncludeBots,
+      effRoomMode,
+      effRoomMode === 'team' && team === 'ffa' ? 'red' : team,
       botDifficulty,
       partyMode,
       customBots,
@@ -2733,7 +2745,8 @@ export class UnstableArenaEngine {
     }
 
     if (this.mode === 'multiplayer') {
-      const customList = normalizeCustomBots(this.mpState.customBots ?? [], this.mpState.roomMode);
+      const effRoomMode = this.getEffectiveRoomMode();
+      const customList = normalizeCustomBots(this.mpState.customBots ?? [], effRoomMode);
       if (customList.length > 0) {
         let redIdx = 0;
         let blueIdx = 0;
@@ -2742,12 +2755,12 @@ export class UnstableArenaEngine {
           const cb = customList[i];
           const prof = CHARACTERS[cb.characterId] ?? rivals[i % rivals.length];
           let spawnVec: THREE.Vector3;
-          if (this.mpState.roomMode === 'team') {
+          if (effRoomMode === 'team') {
             if (cb.team === 'red') {
-              spawnVec = new THREE.Vector3(teamSpawnXs[redIdx % teamSpawnXs.length], 0, 9.5 + Math.floor(redIdx / 5) * 3);
+              spawnVec = new THREE.Vector3(teamSpawnXs[redIdx % teamSpawnXs.length], 0, 18.5 + Math.floor(redIdx / 5) * 3);
               redIdx++;
             } else {
-              spawnVec = new THREE.Vector3(teamSpawnXs[blueIdx % teamSpawnXs.length], 0, -9.5 - Math.floor(blueIdx / 5) * 3);
+              spawnVec = new THREE.Vector3(teamSpawnXs[blueIdx % teamSpawnXs.length], 0, -18.5 - Math.floor(blueIdx / 5) * 3);
               blueIdx++;
             }
           } else {
@@ -2765,55 +2778,86 @@ export class UnstableArenaEngine {
           );
           this.enemies.push(bot);
         }
+
+        // In Team mode, if the opposing team has 0 human peers and 0 custom bots, spawn opposing bots so they are never missing!
+        if (effRoomMode === 'team') {
+          const localTeam = this.getLocalPlayerTeam();
+          const oppTeam: PlayerTeam = localTeam === 'blue' ? 'red' : 'blue';
+          const oppPeers = this.mpState.peers.filter((p) => p.team === oppTeam).length;
+          const oppBots = oppTeam === 'red' ? redIdx : blueIdx;
+          if (oppPeers + oppBots === 0) {
+            for (let i = 0; i < 2; i++) {
+              const prof = rivals[(customList.length + i) % rivals.length];
+              const callsign = humanCallsigns[(customList.length + i) % humanCallsigns.length] ?? prof.name;
+              const spawnZ = oppTeam === 'blue' ? -22.0 : 22.0;
+              this.enemies.push(
+                this.createEnemy(
+                  prof,
+                  this.policyForCharacter(prof, customList.length + i),
+                  new THREE.Vector3(i === 0 ? -8.5 : 8.5, 0, spawnZ),
+                  `mp-opp-fill-${i}`,
+                  false,
+                  oppTeam,
+                  callsign
+                )
+              );
+            }
+          }
+        }
         return;
       }
-    }
 
-    if (this.mode === 'multiplayer' && !this.mpState.includeBots) {
-      return;
-    }
+      if (effRoomMode === 'team') {
+        const localTeam = this.getLocalPlayerTeam();
+        const redPeerCount = this.mpState.peers.filter((p) => p.team === 'red').length;
+        const bluePeerCount = this.mpState.peers.filter((p) => p.team === 'blue').length;
+        const effectiveRedCount = Math.max(redPeerCount, localTeam === 'red' ? 1 : 0);
+        const effectiveBlueCount = Math.max(bluePeerCount, localTeam === 'blue' ? 1 : 0);
+        const needAutoTeamBots =
+          this.mpState.includeBots || effectiveRedCount === 0 || effectiveBlueCount === 0;
 
-    if (this.mode === 'multiplayer' && this.mpState.includeBots) {
-      if (this.getEffectiveRoomMode() === 'team') {
-        const redCount = this.mpState.peers.filter((p) => p.team === 'red').length;
-        const blueCount = this.mpState.peers.filter((p) => p.team === 'blue').length;
-        const redNeed = Math.max(0, 3 - redCount);
-        const blueNeed = Math.max(1, 3 - blueCount);
-        const teamSpawnXs = [-9.0, 9.0, -14.0];
-        let idx = 0;
-        for (let i = 0; i < redNeed; i++) {
-          const prof = rivals[idx % rivals.length];
-          const callsign = humanCallsigns[idx % humanCallsigns.length] ?? prof.name;
-          this.enemies.push(
-            this.createEnemy(
-              prof,
-              this.policyForCharacter(prof, idx),
-              new THREE.Vector3(teamSpawnXs[i % teamSpawnXs.length], 0, 22.0),
-              `mp-bot-r-${i}`,
-              false,
-              'red',
-              callsign
-            )
-          );
-          idx++;
+        if (needAutoTeamBots) {
+          const redNeed = Math.max(0, 3 - effectiveRedCount);
+          const blueNeed = Math.max(0, 3 - effectiveBlueCount);
+          const teamSpawnXs = [-9.0, 9.0, -14.0];
+          let idx = 0;
+          for (let i = 0; i < redNeed; i++) {
+            const prof = rivals[idx % rivals.length];
+            const callsign = humanCallsigns[idx % humanCallsigns.length] ?? prof.name;
+            this.enemies.push(
+              this.createEnemy(
+                prof,
+                this.policyForCharacter(prof, idx),
+                new THREE.Vector3(teamSpawnXs[i % teamSpawnXs.length], 0, 22.0),
+                `mp-bot-r-${i}`,
+                false,
+                'red',
+                callsign
+              )
+            );
+            idx++;
+          }
+          for (let i = 0; i < blueNeed; i++) {
+            const prof = rivals[idx % rivals.length];
+            const callsign = humanCallsigns[idx % humanCallsigns.length] ?? prof.name;
+            this.enemies.push(
+              this.createEnemy(
+                prof,
+                this.policyForCharacter(prof, idx),
+                new THREE.Vector3(teamSpawnXs[i % teamSpawnXs.length], 0, -22.0),
+                `mp-bot-b-${i}`,
+                false,
+                'blue',
+                callsign
+              )
+            );
+            idx++;
+          }
         }
-        for (let i = 0; i < blueNeed; i++) {
-          const prof = rivals[idx % rivals.length];
-          const callsign = humanCallsigns[idx % humanCallsigns.length] ?? prof.name;
-          this.enemies.push(
-            this.createEnemy(
-              prof,
-              this.policyForCharacter(prof, idx),
-              new THREE.Vector3(teamSpawnXs[i % teamSpawnXs.length], 0, -22.0),
-              `mp-bot-b-${i}`,
-              false,
-              'blue',
-              callsign
-            )
-          );
-          idx++;
-        }
-      } else {
+        return;
+      }
+
+      if (this.mpState.includeBots || this.mpState.peers.length < 2) {
         const mpSpawns =
           this.customPartyMode === 'knockout'
             ? [
@@ -3019,7 +3063,7 @@ export class UnstableArenaEngine {
           hitFlashTimer: 0,
           recoilTilt: 0,
           walkDist: 0,
-          alive: p.hp > 0,
+          alive: (p.hp ?? 100) > 0,
         });
       } else {
         existing.name = p.name;
@@ -3027,6 +3071,10 @@ export class UnstableArenaEngine {
         existing.maxHp = p.maxHp;
         existing.kills = p.kills || 0;
         existing.deaths = p.deaths || 0;
+        existing.alive = (p.hp ?? 100) > 0;
+        if (existing.alive) {
+          existing.rig.root.visible = true;
+        }
         existing.rig.setTeamOutline(rel.outlineHex);
         existing.overhead.updateHp(p.hp / p.maxHp);
       }
@@ -4690,9 +4738,9 @@ export class UnstableArenaEngine {
     slot.damage =
       custom?.damage ??
       (kind === 'arrow'
-        ? Math.round(18 * prof.damageMult)
+        ? Math.round((ITEM_CATALOG.bow.damage ?? 13) * prof.damageMult)
         : kind === 'bolt'
-          ? Math.round(12 * prof.damageMult)
+          ? Math.round((ITEM_CATALOG.crossbow.damage ?? 9) * prof.damageMult)
           : kind === 'trident'
             ? Math.round(24 * prof.damageMult)
             : 0);
@@ -6652,7 +6700,7 @@ export class UnstableArenaEngine {
           const label = p.kind === 'arrow' ? '정밀 장궁' : p.kind === 'bolt' ? '속사 석궁' : '삼지창';
           const projWeaponId: WeaponSlotId =
             p.kind === 'arrow' ? 'bow' : p.kind === 'bolt' ? 'crossbow' : 'trident';
-          const kb = p.kind === 'arrow' ? 8.5 : p.kind === 'bolt' ? 5.2 : 11;
+          const kb = p.kind === 'arrow' ? 4.8 : p.kind === 'bolt' ? 3.2 : 11;
 
           if (hitPeer) {
             const peerFloor = getSupportHeightAt(
@@ -6666,10 +6714,9 @@ export class UnstableArenaEngine {
             const isCrit =
               isAirshot ||
               !isArrow ||
-              p.pos.y >= hitPeer.pos.y + 1.42 ||
-              !this.playerOnGround;
-            let dmg = isArrow && isCrit ? Math.round(p.damage * 1.35) : p.damage || 24;
-            if (isAirshot) dmg = Math.round(dmg * 1.25);
+              p.pos.y >= hitPeer.pos.y + 1.48;
+            let dmg = isArrow && isCrit ? Math.round(p.damage * 1.2) : p.damage || 16;
+            if (isAirshot && !isArrow) dmg = Math.round(dmg * 1.2);
             this.applyHitToRemotePeer(hitPeer, dmg, isCrit, false, dirX, dirZ, kb, false, projWeaponId);
             if (isAirshot && p.ownerId === localSelfId) {
               this.lastHitText = `${dmg} AIRSHOT! 🎯`;
@@ -6686,11 +6733,9 @@ export class UnstableArenaEngine {
             const isHeadOrAir =
               isAirshot ||
               !isArrow ||
-              p.pos.y >= hitEnemy.pos.y + 1.42 ||
-              !hitEnemy.onGround ||
-              !this.playerOnGround;
-            let dmg = isArrow && isHeadOrAir ? Math.round((p.damage || 20) * 1.35) : p.damage || 24;
-            if (isAirshot) dmg = Math.round(dmg * 1.25);
+              p.pos.y >= hitEnemy.pos.y + 1.48;
+            let dmg = isArrow && isHeadOrAir ? Math.round((p.damage || 13) * 1.2) : p.damage || 16;
+            if (isAirshot && !isArrow) dmg = Math.round(dmg * 1.2);
             if (p.ownerId === localSelfId) {
               this.applyHitToEnemy(hitEnemy, dmg, isHeadOrAir, false, false, dirX, dirZ, kb, label, projWeaponId);
               if (isAirshot) {
@@ -6698,9 +6743,9 @@ export class UnstableArenaEngine {
                 this.spawnParticles(hitEnemy.pos.x, hitEnemy.pos.y + 1.3, hitEnemy.pos.z, 18, 0xfacc15, 9);
               }
             } else {
-              // AI vs AI projectile hit (scaled so ranged AIs cleanly eliminate rival AIs)
+              // AI vs AI projectile hit
               const shooter = this.enemies.find((e) => e.id === p.ownerId);
-              const aiProjDmg = Math.round(dmg * 1.45);
+              const aiProjDmg = Math.round(dmg * (isArrow ? 0.95 : 1.25));
               const resolvedProjDmg = computeOneShotDamage(aiProjDmg, this.customPartyMode === 'one_shot');
               const res = applyCombatDamage(
                 { hp: hitEnemy.hp, maxHp: hitEnemy.maxHp, absorption: hitEnemy.absorption, isBlocking: hitEnemy.isBlocking },
@@ -6733,10 +6778,10 @@ export class UnstableArenaEngine {
               }
             }
           } else if (hitLocalPlayer) {
-            const isCrit = isArrow && p.pos.y >= this.playerPos.y + 1.45;
-            const dmg = isCrit ? Math.round((p.damage || 16) * 1.3) : Math.max(8, p.damage || 16);
+            const isCrit = isArrow && p.pos.y >= this.playerPos.y + 1.52;
+            const dmg = isCrit ? Math.round((p.damage || 10) * 1.15) : Math.max(6, p.damage || 10);
             const attacker = this.enemies.find((e) => e.id === p.ownerId);
-            this.applyDamageToLocalPlayer(dmg, isCrit, dirX, dirZ, kb * 0.75, attacker?.name ?? label, attacker, projWeaponId);
+            this.applyDamageToLocalPlayer(dmg, false, dirX, dirZ, kb * 0.6, attacker?.name ?? label, attacker, projWeaponId);
           } else {
             this.spawnParticles(
               p.pos.x,
@@ -6999,15 +7044,15 @@ export class UnstableArenaEngine {
         }
 
         // Fire bow / crossbow projectile!
-        if (e.stealthTimer <= 0 && targetKind && e.attackCooldown <= 0 && dist < 44 && Math.abs(targetPos.y - e.pos.y) < 16) {
-          e.attackCooldown = (isCrossbow ? 0.85 : 1.35) * diff.attackCooldownMult;
-          e.swingTimer = 0.22;
+        if (e.stealthTimer <= 0 && targetKind && e.attackCooldown <= 0 && dist < 38 && Math.abs(targetPos.y - e.pos.y) < 15) {
+          e.attackCooldown = (isCrossbow ? 1.25 : 1.75) * diff.attackCooldownMult;
+          e.swingTimer = 0.24;
           _v1.set(e.pos.x, e.pos.y + 1.48, e.pos.z);
           _v2
             .set(
-              targetPos.x - e.pos.x + (Math.random() - 0.5) * diff.aimJitter * dist * 0.35,
-              (targetPos.y + 1.25) - (e.pos.y + 1.48) + dist * 0.015 + (Math.random() - 0.5) * diff.aimJitter * 2,
-              targetPos.z - e.pos.z + (Math.random() - 0.5) * diff.aimJitter * dist * 0.35
+              targetPos.x - e.pos.x + (Math.random() - 0.5) * diff.aimJitter * dist * 0.48,
+              (targetPos.y + 1.05) - (e.pos.y + 1.48) + dist * 0.012 + (Math.random() - 0.5) * diff.aimJitter * 2.2,
+              targetPos.z - e.pos.z + (Math.random() - 0.5) * diff.aimJitter * dist * 0.48
             )
             .normalize();
           this.fireProjectile(isCrossbow ? 'bolt' : 'arrow', {
@@ -7015,7 +7060,7 @@ export class UnstableArenaEngine {
             ownerTeam: e.team,
             origin: _v1,
             dir: _v2,
-            damage: Math.round((isCrossbow ? 10 : 15) * e.profile.damageMult),
+            damage: Math.round((isCrossbow ? 7 : 10) * e.profile.damageMult),
           });
         }
       } else if (e.policy === 'wind_diver') {

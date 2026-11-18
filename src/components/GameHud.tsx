@@ -65,6 +65,7 @@ interface GameHudProps {
   onSpectatorPrev?: () => void;
   onSpectatorNext?: () => void;
   onToggleSpectatorMode?: () => void;
+  onSetSpikeHold?: (active: boolean) => void;
 }
 
 export function GameHud({
@@ -94,6 +95,7 @@ export function GameHud({
   onSpectatorPrev,
   onSpectatorNext,
   onToggleSpectatorMode,
+  onSetSpikeHold,
 }: GameHudProps) {
   const prof = CHARACTERS[hud.characterId];
   const mapDef = MAP_DEFINITIONS[hud.currentMapId] ?? MAP_DEFINITIONS.container_yard;
@@ -710,7 +712,75 @@ export function GameHud({
           data-testid="top-center-score-banner"
           className="fixed top-[128px] sm:top-3 left-1/2 -translate-x-1/2 pointer-events-none z-15 bg-zinc-950/92 border border-white/15 rounded-xl px-3 sm:px-3.5 py-1.5 sm:py-2 shadow-lg flex items-center gap-2.5 sm:gap-3 text-white whitespace-nowrap"
         >
-          {(hud.mode === 'multiplayer' || hud.mode === 'ffa') && hud.partyMode === 'boss_raid' ? (
+          {hud.partyMode === 'spike_defuse' && hud.spikeState ? (
+            (() => {
+              const sp = hud.spikeState;
+              const isPlanted = sp.phase === 'planted';
+              const remSec = Math.max(0, sp.timerSec);
+              const timerLabel = isPlanted
+                ? `${remSec.toFixed(1)}s`
+                : `${String(Math.floor(remSec / 60)).padStart(2, '0')}:${String(Math.floor(remSec % 60)).padStart(2, '0')}`;
+              return (
+                <div
+                  data-testid="spike-defuse-hud"
+                  className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 text-xs sm:text-sm font-display font-bold"
+                >
+                  <span className="flex items-center gap-1.5 text-rose-400">
+                    <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white text-[10px] font-black">
+                      공격 RED
+                    </span>
+                    <span className="font-mono-num text-base sm:text-lg font-black text-white">
+                      {sp.redRounds}
+                    </span>
+                  </span>
+
+                  <span
+                    data-testid="spike-timer-readout"
+                    className={`font-mono-num text-base sm:text-xl font-black px-2.5 py-0.5 rounded-lg border ${
+                      isPlanted
+                        ? 'bg-rose-600/35 border-rose-400 text-rose-200 animate-pulse'
+                        : 'bg-white/10 border-white/15 text-amber-300'
+                    }`}
+                  >
+                    {isPlanted ? `🔺 ${timerLabel}` : timerLabel}
+                  </span>
+
+                  <span className="flex items-center gap-1.5 text-cyan-400">
+                    <span className="font-mono-num text-base sm:text-lg font-black text-white">
+                      {sp.blueRounds}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-sky-600 text-white text-[10px] font-black">
+                      수비 BLUE
+                    </span>
+                  </span>
+
+                  <div className="flex items-center gap-1 ml-1 pl-2 border-l border-white/15 text-[11px]">
+                    <span
+                      className={`px-1.5 py-0.5 rounded font-black ${
+                        sp.plantedSite === 'A'
+                          ? 'bg-rose-600 text-white animate-pulse'
+                          : 'bg-white/10 text-zinc-200'
+                      }`}
+                    >
+                      A 사이트
+                    </span>
+                    <span
+                      className={`px-1.5 py-0.5 rounded font-black ${
+                        sp.plantedSite === 'B'
+                          ? 'bg-rose-600 text-white animate-pulse'
+                          : 'bg-white/10 text-zinc-200'
+                      }`}
+                    >
+                      B 사이트
+                    </span>
+                    <span className="hidden md:inline text-zinc-400 ml-1">
+                      R{sp.round} · {sp.targetRounds}선승
+                    </span>
+                  </div>
+                </div>
+              );
+            })()
+          ) : (hud.mode === 'multiplayer' || hud.mode === 'ffa') && hud.partyMode === 'boss_raid' ? (
             <div className="flex flex-col items-center gap-1 min-w-[200px] sm:min-w-[280px]">
               <div className="w-full flex items-center justify-between gap-3 text-xs font-display font-bold">
                 <span className="text-rose-400">👹 {hud.bossName || '보스 레이드'}</span>
@@ -1690,6 +1760,63 @@ export function GameHud({
             ))}
           </div>
         )}
+        {hud.spikeState &&
+          (hud.spikeState.canPlantSite ||
+            hud.spikeState.canDefuse ||
+            hud.spikeState.channelKind !== null) && (
+            <div
+              data-testid="spike-action-bar"
+              className="pointer-events-auto flex flex-col items-center gap-1.5 bg-zinc-950/95 border-2 border-rose-500/80 rounded-xl px-4 py-2 text-white shadow-xl min-w-[260px] sm:min-w-[320px]"
+            >
+              <div className="w-full flex items-center justify-between gap-3 text-xs font-display font-bold">
+                <span className="text-rose-300">
+                  {hud.spikeState.channelKind === 'plant'
+                    ? `🔺 ${hud.spikeState.canPlantSite ?? ''} 사이트 스파이크 설치 중...`
+                    : hud.spikeState.channelKind === 'defuse'
+                      ? '🛡️ 스파이크 해체 중...'
+                      : hud.spikeState.canPlantSite
+                        ? `🔺 [${hud.spikeState.canPlantSite} 사이트] 스파이크 설치 가능`
+                        : '🛡️ 스파이크 해체 가능 (50% 하프 체크포인트)'}
+                </span>
+                <button
+                  type="button"
+                  data-testid="spike-hold-btn"
+                  onMouseDown={() => onSetSpikeHold?.(true)}
+                  onMouseUp={() => onSetSpikeHold?.(false)}
+                  onMouseLeave={() => onSetSpikeHold?.(false)}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    onSetSpikeHold?.(true);
+                  }}
+                  onTouchEnd={() => onSetSpikeHold?.(false)}
+                  className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 active:scale-95 text-white font-mono-num text-[11px] font-black cursor-pointer shrink-0"
+                >
+                  {hud.spikeState.canDefuse || hud.spikeState.channelKind === 'defuse'
+                    ? '[G] 홀드 해체'
+                    : '[G] 홀드 설치'}
+                </button>
+              </div>
+
+              <div className="relative w-full h-2.5 rounded-full bg-zinc-800 overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-75 ${
+                    hud.spikeState.channelKind === 'defuse' || hud.spikeState.canDefuse
+                      ? 'bg-cyan-400'
+                      : 'bg-rose-500'
+                  }`}
+                  style={{ width: `${Math.min(100, Math.round(hud.spikeState.channelProgress * 100))}%` }}
+                />
+                {(hud.spikeState.canDefuse || hud.spikeState.channelKind === 'defuse') && (
+                  <div
+                    title="50% 하프 해체 체크포인트"
+                    className={`absolute top-0 bottom-0 left-1/2 w-0.5 ${
+                      hud.spikeState.halfDefuseReached ? 'bg-amber-300' : 'bg-white/75'
+                    }`}
+                  />
+                )}
+              </div>
+            </div>
+          )}
         <div className="text-xs font-medium text-slate-900 bg-white/95 border border-slate-200 rounded-md px-2.5 py-0.5 shadow-xs whitespace-nowrap">
           {activeWeapon ? (
             <>

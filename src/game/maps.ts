@@ -168,7 +168,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfff8eb,
     ambientSky: 0xdbeafe,
     ambientGround: 0x475569,
-    worldRadius: 46,
+    worldRadius: 70,
   },
   emerald_citadel: {
     id: 'emerald_citadel',
@@ -199,7 +199,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfff7e6,
     ambientSky: 0xdbeafe,
     ambientGround: 0x3f6b35,
-    worldRadius: 50,
+    worldRadius: 70,
   },
   sky_dock: {
     id: 'sky_dock',
@@ -230,7 +230,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffffff,
     ambientSky: 0xe0f2fe,
     ambientGround: 0x64748b,
-    worldRadius: 46,
+    worldRadius: 70,
   },
   nether_foundry: {
     id: 'nether_foundry',
@@ -261,7 +261,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffedd5,
     ambientSky: 0xfed7aa,
     ambientGround: 0x451a03,
-    worldRadius: 46,
+    worldRadius: 70,
   },
   cyber_nexus: {
     id: 'cyber_nexus',
@@ -292,7 +292,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xe0f2fe,
     ambientSky: 0x7dd3fc,
     ambientGround: 0x1e293b,
-    worldRadius: 46,
+    worldRadius: 70,
   },
   frost_bastion: {
     id: 'frost_bastion',
@@ -385,7 +385,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xeef2ff,
     ambientSky: 0xc7d2fe,
     ambientGround: 0x1e1b4b,
-    worldRadius: 46,
+    worldRadius: 70,
   },
   volcanic_caldera: {
     id: 'volcanic_caldera',
@@ -478,7 +478,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xf0f9ff,
     ambientSky: 0x93c5fd,
     ambientGround: 0x1e293b,
-    worldRadius: 46,
+    worldRadius: 70,
   },
   sunken_atlantis: {
     id: 'sunken_atlantis',
@@ -540,7 +540,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfffbeb,
     ambientSky: 0xfef3c7,
     ambientGround: 0x451a03,
-    worldRadius: 46,
+    worldRadius: 70,
   },
   desert_mirage: {
     id: 'desert_mirage',
@@ -571,7 +571,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffffff,
     ambientSky: 0xfef9c3,
     ambientGround: 0x854d0e,
-    worldRadius: 50,
+    worldRadius: 70,
   },
   crystal_cavern: {
     id: 'crystal_cavern',
@@ -602,7 +602,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfaf5ff,
     ambientSky: 0xd8b4fe,
     ambientGround: 0x2e1065,
-    worldRadius: 46,
+    worldRadius: 70,
   },
   cherry_pagoda: {
     id: 'cherry_pagoda',
@@ -726,7 +726,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xecfdf5,
     ambientSky: 0xa7f3d0,
     ambientGround: 0x14532d,
-    worldRadius: 46,
+    worldRadius: 70,
   },
   aether_spire: {
     id: 'aether_spire',
@@ -757,7 +757,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffffff,
     ambientSky: 0xddd6fe,
     ambientGround: 0x64748b,
-    worldRadius: 50,
+    worldRadius: 70,
   },
 };
 
@@ -2142,14 +2142,374 @@ function getRawArenaBlocksForMap(mapId: MapId): ArenaBlock[] {
   }
 }
 
+interface MapCoverPalette {
+  contA: ArenaBlock['kind'];
+  contB: ArenaBlock['kind'];
+  wall: ArenaBlock['kind'];
+  step: ArenaBlock['kind'];
+  bridge: ArenaBlock['kind'];
+}
+
+function getCoverPaletteForMap(mapId: MapId): MapCoverPalette {
+  switch (mapId) {
+    case 'container_yard':
+    case 'sky_dock':
+      return {
+        contA: 'container_blue',
+        contB: 'container_red',
+        wall: 'container_teal',
+        step: 'wood_crate',
+        bridge: 'container_amber',
+      };
+    case 'nether_foundry':
+    case 'volcanic_caldera':
+    case 'obsidian_keep':
+      return {
+        contA: 'crimson_brick',
+        contB: 'basalt',
+        wall: 'obsidian',
+        step: 'deepslate',
+        bridge: 'gold',
+      };
+    case 'cyber_nexus':
+    case 'neon_downtown':
+    case 'orbital_reactor':
+    case 'toxic_refinery':
+      return {
+        contA: 'cyber_panel',
+        contB: 'container_teal',
+        wall: 'deepslate',
+        step: 'reactor_core',
+        bridge: 'cyber_panel',
+      };
+    case 'frost_bastion':
+    case 'crystal_cavern':
+    case 'sunken_atlantis':
+      return {
+        contA: 'ice_brick',
+        contB: 'amethyst',
+        wall: 'stone',
+        step: 'wood_crate',
+        bridge: 'ice_brick',
+      };
+    case 'desert_mirage':
+    case 'ancient_temple':
+    case 'solar_observatory':
+    case 'clockwork_tower':
+      return {
+        contA: 'sandstone',
+        contB: 'gold',
+        wall: 'stone',
+        step: 'wood_crate',
+        bridge: 'gold',
+      };
+    default:
+      return {
+        contA: 'container_teal',
+        contB: 'deepslate',
+        wall: 'stone',
+        step: 'wood_crate',
+        bridge: 'gold',
+      };
+  }
+}
+
+function aabbCircleDist(
+  bx: number,
+  bz: number,
+  bw: number,
+  bd: number,
+  cx: number,
+  cz: number
+): number {
+  const dx = Math.max(0, Math.abs(cx - bx) - bw * 0.5);
+  const dz = Math.max(0, Math.abs(cz - bz) - bd * 0.5);
+  return Math.hypot(dx, dz);
+}
+
+/**
+ * Generates high-density urban barricades, container mazes, step-jumpable crate stairs
+ * (1.3m vertical steps climbed with normal Space jumps), and 2~3F high-ground towers
+ * connected by elevated skywalk bridges across the expanded 140m arena.
+ */
+function buildUrbanCoverAndHighGroundForMap(
+  mapId: MapId,
+  pads: JumpPadZone[],
+  pools: HazardPoolZone[]
+): ArenaBlock[] {
+  const pal = getCoverPaletteForMap(mapId);
+  const candidates: ArenaBlock[] = [];
+  const pfx = `ug_${mapId.slice(0, 3)}`;
+
+  const pushSteppedTowerWithStairs = (
+    tag: string,
+    tx: number,
+    tz: number,
+    stairDirX: number,
+    stairDirZ: number,
+    hasThirdFloor: boolean
+  ) => {
+    // 2nd Floor Bastion Deck (y=0..3.9m, w=5.6, d=5.6)
+    candidates.push({
+      id: `${pfx}_${tag}_t2f`,
+      x: tx,
+      y: 0,
+      z: tz,
+      w: 5.6,
+      h: 3.9,
+      d: 5.6,
+      kind: pal.wall,
+    });
+    // 2F Parapet Cover Lips
+    candidates.push({
+      id: `${pfx}_${tag}_par1`,
+      x: tx - stairDirZ * 2.35,
+      y: 3.9,
+      z: tz + stairDirX * 2.35,
+      w: stairDirZ !== 0 ? 0.85 : 3.6,
+      h: 1.15,
+      d: stairDirX !== 0 ? 0.85 : 3.6,
+      kind: pal.contB,
+    });
+
+    // Normal-Jump Stepped Crate Staircase (0m -> 1.3m -> 2.6m -> 3.9m 2F)
+    // Step 1: h = 1.3m (outermost)
+    candidates.push({
+      id: `${pfx}_${tag}_st1`,
+      x: tx + stairDirX * 6.4,
+      y: 0,
+      z: tz + stairDirZ * 6.4,
+      w: 2.8,
+      h: 1.3,
+      d: 2.8,
+      kind: pal.step,
+    });
+    // Step 2: h = 2.6m (middle, flush between Step 1 and 2F Tower)
+    candidates.push({
+      id: `${pfx}_${tag}_st2`,
+      x: tx + stairDirX * 4.1,
+      y: 0,
+      z: tz + stairDirZ * 4.1,
+      w: 2.8,
+      h: 2.6,
+      d: 2.8,
+      kind: pal.contA,
+    });
+
+    if (hasThirdFloor) {
+      // Step 3 on top of 2F Deck: y=3.9, h=1.3 -> top at 5.2m
+      candidates.push({
+        id: `${pfx}_${tag}_st3`,
+        x: tx + stairDirX * 1.3,
+        y: 3.9,
+        z: tz + stairDirZ * 1.3,
+        w: 2.4,
+        h: 1.3,
+        d: 2.4,
+        kind: pal.step,
+      });
+      // 3rd Floor Sniper Overwatch Deck: y=3.9, h=2.6 -> top at 6.5m
+      candidates.push({
+        id: `${pfx}_${tag}_t3f`,
+        x: tx - stairDirX * 1.1,
+        y: 3.9,
+        z: tz - stairDirZ * 1.1,
+        w: 3.2,
+        h: 2.6,
+        d: 3.2,
+        kind: pal.contB,
+      });
+      // 3F Head-Glitch Crenellation
+      candidates.push({
+        id: `${pfx}_${tag}_t3cov`,
+        x: tx - stairDirX * 2.2,
+        y: 6.5,
+        z: tz - stairDirZ * 2.2,
+        w: stairDirX !== 0 ? 0.75 : 2.4,
+        h: 1.05,
+        d: stairDirZ !== 0 ? 0.75 : 2.4,
+        kind: pal.bridge,
+      });
+    }
+  };
+
+  // 1. Four Corner 3-Story High-Ground Bastions at (±24, ±24) + 4 Mid-Axis 2-Story Hubs
+  pushSteppedTowerWithStairs('nw', -24, -24, 0, 1, true);
+  pushSteppedTowerWithStairs('ne', 24, -24, 0, 1, true);
+  pushSteppedTowerWithStairs('sw', -24, 24, 0, -1, true);
+  pushSteppedTowerWithStairs('se', 24, 24, 0, -1, true);
+
+  pushSteppedTowerWithStairs('mn', 0, -24, 0, 1, false);
+  pushSteppedTowerWithStairs('ms', 0, 24, 0, -1, false);
+  pushSteppedTowerWithStairs('mw', -43, 0, -1, 0, true);
+  pushSteppedTowerWithStairs('me', 43, 0, 1, 0, true);
+
+  // 2. Elevated Skywalk Bridges (y = 3.9m, h = 0.65m) connecting the 2F/3F Towers
+  // North Skywalk Bridge (NW <-> MN <-> NE) with tactical bridge cover blocks
+  candidates.push(
+    { id: `${pfx}_br_nw_mn`, x: -12, y: 3.3, z: -24, w: 18.8, h: 0.6, d: 3.2, kind: pal.bridge },
+    { id: `${pfx}_br_ne_mn`, x: 12, y: 3.3, z: -24, w: 18.8, h: 0.6, d: 3.2, kind: pal.bridge },
+    { id: `${pfx}_brcov_n1`, x: -12, y: 3.9, z: -22.7, w: 3.2, h: 1.15, d: 0.6, kind: pal.step },
+    { id: `${pfx}_brcov_n2`, x: 12, y: 3.9, z: -22.7, w: 3.2, h: 1.15, d: 0.6, kind: pal.step },
+    // South Skywalk Bridge (SW <-> MS <-> SE)
+    { id: `${pfx}_br_sw_ms`, x: -12, y: 3.3, z: 24, w: 18.8, h: 0.6, d: 3.2, kind: pal.bridge },
+    { id: `${pfx}_br_se_ms`, x: 12, y: 3.3, z: 24, w: 18.8, h: 0.6, d: 3.2, kind: pal.bridge },
+    { id: `${pfx}_brcov_s1`, x: -12, y: 3.9, z: 22.7, w: 3.2, h: 1.15, d: 0.6, kind: pal.step },
+    { id: `${pfx}_brcov_s2`, x: 12, y: 3.9, z: 22.7, w: 3.2, h: 1.15, d: 0.6, kind: pal.step },
+    // West & East Flanking Skywalks
+    { id: `${pfx}_br_w_n`, x: -24, y: 3.3, z: -12, w: 3.2, h: 0.6, d: 18.8, kind: pal.bridge },
+    { id: `${pfx}_br_w_s`, x: -24, y: 3.3, z: 12, w: 3.2, h: 0.6, d: 18.8, kind: pal.bridge },
+    { id: `${pfx}_br_e_n`, x: 24, y: 3.3, z: -12, w: 3.2, h: 0.6, d: 18.8, kind: pal.bridge },
+    { id: `${pfx}_br_e_s`, x: 24, y: 3.3, z: 12, w: 3.2, h: 0.6, d: 18.8, kind: pal.bridge }
+  );
+
+  // 3. High-Density Urban Container Maze & L-Shaped Barricades (with 1.3m -> 2.6m step-up boxes!)
+  const pushClimbableContainerCluster = (
+    tag: string,
+    cx: number,
+    cz: number,
+    horizontal: boolean,
+    stepSign: 1 | -1
+  ) => {
+    const w = horizontal ? 8.2 : 3.4;
+    const d = horizontal ? 3.4 : 8.2;
+    // Main shipping container (h = 3.4m)
+    candidates.push({
+      id: `${pfx}_mz_${tag}_main`,
+      x: cx,
+      y: 0,
+      z: cz,
+      w,
+      h: 3.4,
+      d,
+      kind: horizontal ? pal.contA : pal.contB,
+    });
+    // L-wing tactical barricade wall (h = 2.4m) breaking perpendicular sightlines
+    candidates.push({
+      id: `${pfx}_mz_${tag}_wing`,
+      x: cx + (horizontal ? stepSign * 4.8 : stepSign * 2.8),
+      y: 0,
+      z: cz + (horizontal ? stepSign * 2.8 : stepSign * 4.8),
+      w: horizontal ? 2.6 : 4.6,
+      h: 2.4,
+      d: horizontal ? 4.6 : 2.6,
+      kind: pal.wall,
+    });
+    // Step 1 (h = 1.25m) & Step 2 (h = 2.4m) so players can normal-jump onto the 3.4m container roof!
+    candidates.push({
+      id: `${pfx}_mz_${tag}_s1`,
+      x: cx + (horizontal ? -stepSign * 5.4 : 0),
+      y: 0,
+      z: cz + (horizontal ? 0 : -stepSign * 5.4),
+      w: 2.5,
+      h: 1.25,
+      d: 2.5,
+      kind: pal.step,
+    });
+    candidates.push({
+      id: `${pfx}_mz_${tag}_s2`,
+      x: cx + (horizontal ? -stepSign * 3.1 : -stepSign * 2.2),
+      y: 0,
+      z: cz + (horizontal ? -stepSign * 2.2 : -stepSign * 3.1),
+      w: 2.5,
+      h: 2.35,
+      d: 2.5,
+      kind: pal.step,
+    });
+  };
+
+  // Inner-Mid Choke Container Clusters (blocks cross-map sniper sightlines while leaving center open)
+  pushClimbableContainerCluster('in_nw', -13.5, -11.5, true, 1);
+  pushClimbableContainerCluster('in_ne', 13.5, -11.5, false, -1);
+  pushClimbableContainerCluster('in_sw', -13.5, 11.5, false, 1);
+  pushClimbableContainerCluster('in_se', 13.5, 11.5, true, -1);
+
+  // Mid-Lane & Spike A/B Approach Urban Barricade Maze
+  pushClimbableContainerCluster('ap_wn', -33, -15, false, 1);
+  pushClimbableContainerCluster('ap_ws', -33, 15, true, -1);
+  pushClimbableContainerCluster('ap_en', 33, -15, true, 1);
+  pushClimbableContainerCluster('ap_es', 33, 15, false, -1);
+
+  // Outer Perimeter Street Maze Clusters
+  pushClimbableContainerCluster('out_nw', -38, -34, true, 1);
+  pushClimbableContainerCluster('out_ne', 38, -34, false, -1);
+  pushClimbableContainerCluster('out_sw', -38, 34, false, 1);
+  pushClimbableContainerCluster('out_se', 38, 34, true, -1);
+  pushClimbableContainerCluster('out_n', 0, -40, true, 1);
+  pushClimbableContainerCluster('out_s', 0, 40, true, -1);
+
+  // 4. Tactical Street Peek Barricades (crouch/peek cover + double-box step-ups in mid & site lanes)
+  const streetBarricades: Array<{ tag: string; x: number; z: number; w: number; h: number; d: number; kind: ArenaBlock['kind'] }> = [
+    // Mid-Ring 4-Way Tactical Bunkers
+    { tag: 'sb_mn_w', x: -6.5, z: -15.5, w: 4.2, h: 2.2, d: 1.8, kind: pal.wall },
+    { tag: 'sb_mn_s', x: -4.2, z: -14.0, w: 2.0, h: 1.25, d: 2.0, kind: pal.step },
+    { tag: 'sb_ms_e', x: 6.5, z: 15.5, w: 4.2, h: 2.2, d: 1.8, kind: pal.wall },
+    { tag: 'sb_ms_s', x: 4.2, z: 14.0, w: 2.0, h: 1.25, d: 2.0, kind: pal.step },
+    { tag: 'sb_mw_n', x: -16.5, z: -4.5, w: 1.8, h: 2.2, d: 4.2, kind: pal.wall },
+    { tag: 'sb_mw_s', x: -15.0, z: -2.2, w: 2.0, h: 1.25, d: 2.0, kind: pal.step },
+    { tag: 'sb_me_s', x: 16.5, z: 4.5, w: 1.8, h: 2.2, d: 4.2, kind: pal.wall },
+    { tag: 'sb_me_st', x: 15.0, z: 2.2, w: 2.0, h: 1.25, d: 2.0, kind: pal.step },
+    // Spike A Site (-34, 0) & B Site (+34, 0) Tactical Perimeter Ring Cover
+    { tag: 'sb_asite_n', x: -34, z: -6.2, w: 4.6, h: 2.3, d: 1.8, kind: pal.contA },
+    { tag: 'sb_asite_n_st', x: -31.2, z: -6.2, w: 2.0, h: 1.25, d: 2.0, kind: pal.step },
+    { tag: 'sb_asite_s', x: -34, z: 6.2, w: 4.6, h: 2.3, d: 1.8, kind: pal.contB },
+    { tag: 'sb_asite_s_st', x: -31.2, z: 6.2, w: 2.0, h: 1.25, d: 2.0, kind: pal.step },
+    { tag: 'sb_bsite_n', x: 34, z: -6.2, w: 4.6, h: 2.3, d: 1.8, kind: pal.contB },
+    { tag: 'sb_bsite_n_st', x: 31.2, z: -6.2, w: 2.0, h: 1.25, d: 2.0, kind: pal.step },
+    { tag: 'sb_bsite_s', x: 34, z: 6.2, w: 4.6, h: 2.3, d: 1.8, kind: pal.contA },
+    { tag: 'sb_bsite_s_st', x: 31.2, z: 6.2, w: 2.0, h: 1.25, d: 2.0, kind: pal.step },
+  ];
+
+  for (const sb of streetBarricades) {
+    candidates.push({
+      id: `${pfx}_${sb.tag}`,
+      x: sb.x,
+      y: 0,
+      z: sb.z,
+      w: sb.w,
+      h: sb.h,
+      d: sb.d,
+      kind: sb.kind,
+    });
+  }
+
+  // Filter out any candidate that overlaps origin spawn (0,0), Spike beacons (±34,0), jump pads, or pools
+  return candidates.filter((b) => {
+    // 1. Keep center spawn (0,0) clear
+    if (aabbCircleDist(b.x, b.z, b.w, b.d, 0, 0) < 6.2) return false;
+    // 2. Keep exact Spike A (-34,0) and B (34,0) plant core pads clear
+    if (b.y < 3.0) {
+      if (aabbCircleDist(b.x, b.z, b.w, b.d, -34, 0) < 3.4) return false;
+      if (aabbCircleDist(b.x, b.z, b.w, b.d, 34, 0) < 3.4) return false;
+    }
+    // 3. Never block any Jump Pad (neither on the ground nor overhead launch shaft)
+    for (const pad of pads) {
+      if (aabbCircleDist(b.x, b.z, b.w, b.d, pad.x, pad.z) < pad.radius + 1.4) {
+        return false;
+      }
+    }
+    // 4. Never overlap any Map Signature Pool (lava/water)
+    for (const pool of pools) {
+      if (aabbCircleDist(b.x, b.z, b.w, b.d, pool.x, pool.z) < pool.radius + 1.2) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
 export function getArenaBlocksForMap(mapId: MapId): ArenaBlock[] {
-  return getRawArenaBlocksForMap(mapId).map((b) => ({
+  const baseScaled = getRawArenaBlocksForMap(mapId).map((b) => ({
     ...b,
     x: Number((b.x * ARENA_HORIZONTAL_SCALE).toFixed(2)),
     z: Number((b.z * ARENA_HORIZONTAL_SCALE).toFixed(2)),
     w: Number((b.w * ARENA_HORIZONTAL_SCALE).toFixed(2)),
     d: Number((b.d * ARENA_HORIZONTAL_SCALE).toFixed(2)),
   }));
+  const pads = getJumpPadsForMap(mapId);
+  const pools = getMapSignaturePools(mapId);
+  const urbanExtra = buildUrbanCoverAndHighGroundForMap(mapId, pads, pools);
+  return [...baseScaled, ...urbanExtra];
 }
 
 export interface CombatScoreEntry {

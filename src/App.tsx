@@ -310,14 +310,44 @@ export default function App() {
   };
 
   const activePlayerName = account?.nickname || hud.multiplayer.playerName || 'Player';
+  const activeShader = hud.settings.shaderPreset ?? 'valorant';
+  const qualityTier = hud.settings.graphicsQuality ?? 'high';
+  const shaderCanvasFilter =
+    activeShader === 'valorant'
+      ? qualityTier === 'high'
+        ? 'contrast-[1.09] saturate-[1.22] brightness-[1.03]'
+        : 'contrast-[1.06] saturate-[1.16]'
+      : activeShader === 'cinematic'
+        ? qualityTier === 'high'
+          ? 'contrast-[1.14] saturate-[1.12] brightness-[1.04]'
+          : 'contrast-[1.10] saturate-[1.08]'
+        : activeShader === 'cyber_neon'
+          ? qualityTier === 'high'
+            ? 'contrast-[1.16] saturate-[1.38] brightness-[1.05] hue-rotate-[-4deg]'
+            : 'contrast-[1.12] saturate-[1.28]'
+          : 'contrast-100 saturate-100';
 
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-zinc-950">
       <div
         ref={canvasMountRef}
         data-testid="arena-canvas"
-        className="absolute inset-0 w-full h-full"
+        data-shader-preset={activeShader}
+        className={`absolute inset-0 w-full h-full transition-[filter] duration-200 ${shaderCanvasFilter}`}
       />
+      {hud.screen === 'playing' && activeShader !== 'clean' && (
+        <div
+          data-testid="shader-postfx-layer"
+          data-shader-mode={activeShader}
+          className={`fixed inset-0 pointer-events-none z-5 ${
+            activeShader === 'valorant'
+              ? 'bg-[radial-gradient(circle_at_center,transparent_58%,rgba(15,23,42,0.22)_100%)]'
+              : activeShader === 'cinematic'
+                ? 'bg-[radial-gradient(circle_at_center,rgba(251,191,36,0.05)_0%,transparent_52%,rgba(2,6,23,0.36)_100%)]'
+                : 'bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.07)_0%,transparent_54%,rgba(88,28,135,0.28)_100%)]'
+          }`}
+        />
+      )}
 
       {hud.screen === 'title' && (
         <TitleScreen
@@ -399,6 +429,7 @@ export default function App() {
           onSpectatorPrev={() => engineRef.current?.selectPrevSpectatorTarget()}
           onSpectatorNext={() => engineRef.current?.selectNextSpectatorTarget()}
           onToggleSpectatorMode={() => engineRef.current?.toggleSpectatorViewMode()}
+          onSetSpikeHold={(active) => engineRef.current?.setSpikeHold(active)}
         />
       )}
 

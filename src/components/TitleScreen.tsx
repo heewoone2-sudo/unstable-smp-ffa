@@ -93,6 +93,12 @@ const ARENA_RULE_LIST: Array<{
     shortDesc: '거대 보스 및 호위병 집중 격파',
   },
   {
+    id: 'spike_defuse',
+    label: '스파이크 폭파전 (발로란트)',
+    badge: '5선승',
+    shortDesc: 'A/B 사이트 스파이크 설치 · 45초 폭파 · 50% 하프 해체',
+  },
+  {
     id: 'classic',
     label: '클래식 난타전',
     badge: '15킬',
@@ -1008,9 +1014,19 @@ export function TitleScreen({
                         data-testid="custom-party-mode-select"
                         disabled={!canEditRoomSettings}
                         value={multiplayer.partyMode ?? 'knockout'}
-                        onChange={(e) =>
-                          onUpdateLobby({ partyMode: e.target.value as CustomPartyMode })
-                        }
+                        onChange={(e) => {
+                          const nextMode = e.target.value as CustomPartyMode;
+                          if (nextMode === 'spike_defuse') {
+                            onUpdateLobby({
+                              partyMode: nextMode,
+                              roomMode: 'team',
+                              team: 'red',
+                              includeBots: true,
+                            });
+                          } else {
+                            onUpdateLobby({ partyMode: nextMode });
+                          }
+                        }}
                         className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-bold text-slate-900 disabled:opacity-60"
                       >
                         {ARENA_RULE_LIST.map((pm) => (
@@ -2112,7 +2128,7 @@ export function TitleScreen({
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-2.5 flex-1 min-h-[96px]">
+                <div className="grid grid-cols-3 gap-2 flex-1 min-h-[96px]">
                   <button
                     type="button"
                     data-testid="create-ffa-room-btn"
@@ -2123,16 +2139,16 @@ export function TitleScreen({
                         'ffa',
                         'ffa',
                         multiplayer.botDifficulty ?? 'medium',
-                        multiplayer.partyMode ?? 'knockout',
+                        multiplayer.partyMode === 'spike_defuse' ? 'knockout' : (multiplayer.partyMode ?? 'knockout'),
                         customBots,
                         customCreateCode.trim() || undefined
                       )
                     }
-                    className="p-3.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-400 text-slate-900 text-left cursor-pointer flex items-center justify-center gap-2 shadow-xs"
+                    className="p-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-400 text-slate-900 text-left cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
                   >
                     <Flame className="w-4 h-4 text-rose-600 shrink-0" />
-                    <span className="font-display text-sm font-black leading-tight">
-                      개인전(FFA) 방 생성
+                    <span className="font-display text-xs sm:text-sm font-black leading-tight">
+                      개인전(FFA)
                     </span>
                   </button>
 
@@ -2151,11 +2167,34 @@ export function TitleScreen({
                         customCreateCode.trim() || undefined
                       )
                     }
-                    className="p-3.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-left cursor-pointer flex items-center justify-center gap-2 shadow-sm"
+                    className="p-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-left cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
                   >
                     <Users className="w-4 h-4 shrink-0" />
-                    <span className="font-display text-sm font-black leading-tight">
+                    <span className="font-display text-xs sm:text-sm font-black leading-tight">
                       팀전(RED vs BLUE)
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="create-spike-room-btn"
+                    onClick={() =>
+                      onCreateRoom(
+                        playerCallsign,
+                        true,
+                        'team',
+                        'red',
+                        multiplayer.botDifficulty ?? 'medium',
+                        'spike_defuse',
+                        customBots,
+                        customCreateCode.trim() || undefined
+                      )
+                    }
+                    className="p-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-left cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    <Zap className="w-4 h-4 shrink-0" />
+                    <span className="font-display text-xs sm:text-sm font-black leading-tight">
+                      스파이크 폭파전
                     </span>
                   </button>
                 </div>

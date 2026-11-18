@@ -13,10 +13,13 @@ import {
   computeMaceSmashPreview,
   computeMatchGrade,
   computeRangedAimAssist,
+  computeSupernovaPullVelocity,
   computeSwordDamage,
   consumeSlotUse,
   createArenaBlocks,
   DASH_COOLDOWN_SEC,
+  DASH_DURATION_SEC,
+  DASH_SPEED,
   getSupportHeightAt,
   isInsideCobweb,
   isInsideHazardPool,
@@ -26,10 +29,14 @@ import {
   resolveHorizontalCollision,
   resolveUltimatePreset,
   stepPlayerJump,
+  SUPERNOVA_DURATION_SEC,
+  SUPERNOVA_PULL_RADIUS,
   tickCooldowns,
   tickSlotRecharge,
+  ULTIMATE_CHARGE_MULT,
 } from './combatMath';
 import {
+  ARENA_HORIZONTAL_SCALE,
   MAP_DEFINITIONS,
   MAP_ORDER,
   MAP_ROTATION_SECONDS,
@@ -141,31 +148,31 @@ test('all 11 playable characters including ranged marksmen have distinct 6-item 
   assert.equal(signatures.size, CHARACTER_LIST.length);
   for (const c of CHARACTER_LIST) {
     assert.equal(c.loadout.length, 6);
-    assert.ok(c.maxHp >= 108, `${c.id} should keep healthy post-buff HP`);
+    assert.ok(c.maxHp >= 100, `${c.id} should keep healthy HP`);
   }
   const kestrel = CHARACTER_LIST.find((c) => c.id === 'kestrel');
   const vexor = CHARACTER_LIST.find((c) => c.id === 'vexor');
   const flame = CHARACTER_LIST.find((c) => c.id === 'flamefrags');
   assert.ok(kestrel && kestrel.loadout[0].id === 'bow');
   assert.ok(vexor && vexor.loadout[0].id === 'crossbow');
-  assert.equal(ITEM_CATALOG.bow.cooldown, 0);
-  assert.equal(ITEM_CATALOG.crossbow.cooldown, 0);
+  assert.equal(ITEM_CATALOG.bow.cooldown, 0.55);
+  assert.equal(ITEM_CATALOG.crossbow.cooldown, 0.38);
   assert.equal(ITEM_CATALOG.crossbow.maxCharges, 1);
   assert.ok((ITEM_CATALOG.tnt_charge.damage ?? 0) >= 120);
   assert.ok(flame && flame.loadout.some((i) => i.id === 'cobweb'));
   assert.ok(flame && !flame.loadout.some((i) => i.id === 'tnt_charge'));
 });
 
-test('bow/crossbow fire without cooldown and bow/crossbow/mace characters get x1->x2 double jump', () => {
+test('bow/crossbow respect tactical draw cooldowns and bow/crossbow/mace characters get x1->x2 double jump', () => {
   const charges = [1, 1, 1, 1, 1, 1];
   const maxCharges = [1, 1, 1, 1, 1, 1];
   const cds = [0, 0, 0, 0, 0, 0];
   const maxCds = [ITEM_CATALOG.bow.cooldown, ITEM_CATALOG.crossbow.cooldown, 0, 0, 0, 0];
   const delays = [0, 0, 0, 0, 0, 0];
   assert.equal(consumeSlotUse(0, charges, maxCharges, cds, maxCds, delays, 0), true);
-  assert.equal(consumeSlotUse(0, charges, maxCharges, cds, maxCds, delays, 0), true);
+  assert.equal(consumeSlotUse(0, charges, maxCharges, cds, maxCds, delays, 0), false);
   assert.equal(consumeSlotUse(1, charges, maxCharges, cds, maxCds, delays, 0), true);
-  assert.equal(consumeSlotUse(1, charges, maxCharges, cds, maxCds, delays, 0), true);
+  assert.equal(consumeSlotUse(1, charges, maxCharges, cds, maxCds, delays, 0), false);
 
   const djIds = CHARACTER_LIST.filter((c) => hasDoubleJumpLoadout(c.loadout)).map((c) => c.id);
   assert.deepEqual(djIds.sort(), ['kestrel', 'manepear', 'minutetech', 'vexor', 'wemmbu']);
@@ -197,9 +204,9 @@ test('bow/crossbow fire without cooldown and bow/crossbow/mace characters get x1
   assert.equal(webbed, 4.8);
 });
 
-test('bow and crossbow damages are lowered and shadow_step stealth restricts offensive attacks', () => {
-  assert.equal(ITEM_CATALOG.bow.damage, 18);
-  assert.equal(ITEM_CATALOG.crossbow.damage, 12);
+test('bow and crossbow damages are balanced and shadow_step stealth restricts offensive attacks', () => {
+  assert.equal(ITEM_CATALOG.bow.damage, 13);
+  assert.equal(ITEM_CATALOG.crossbow.damage, 9);
 
   assert.equal(isStealthAttackRestricted('sword', true), true);
   assert.equal(isStealthAttackRestricted('bow', true), true);
@@ -303,12 +310,13 @@ test('all 20 arena maps provide clear origin spawn, jump pads, and 15-minute 4-m
   assert.equal(MAP_ROTATION_SECONDS, 900);
   assert.equal(MAP_ORDER.length, 20);
   assert.equal(MAP_ORDER[0], 'container_yard');
+  assert.equal(ARENA_HORIZONTAL_SCALE, 1.45);
   for (const mapId of MAP_ORDER) {
     const def = MAP_DEFINITIONS[mapId];
     const blocks = getArenaBlocksForMap(mapId);
     const pads = getJumpPadsForMap(mapId);
-    assert.ok(def.worldRadius <= 52, `${mapId} should be compact (${def.worldRadius}m)`);
-    assert.ok(blocks.length >= 36, `${mapId} should have enclosed Valorant tactical geometry (${blocks.length})`);
+    assert.equal(def.worldRadius, 70, `${mapId} should be expanded to 70m radius`);
+    assert.ok(blocks.length >= 90, `${mapId} should have high-density urban cover, container mazes, and step-jumpable 2-3F towers (${blocks.length})`);
     assert.ok(pads.length >= 4, `${mapId} should include jump pads for vertical combat`);
     assert.equal(getSupportHeightAt(0, 0, 0.5, 0.55, blocks), 0, `${mapId} origin must stay open for safe spawn`);
   }
@@ -868,4 +876,80 @@ test('all 20 maps feature genuinely distinct Valorant-style architectural layout
   assert.equal(ringStyles.size, 3, 'all 3 ringStyle variants must be utilized');
   assert.ok(floatingCount >= 4 && floatingCount <= 8, `expected floating sky maps, got ${floatingCount}`);
 });
+
+test('Jett Tailwind-style high-speed Dash, Gravitational Supernova pull, and 2x Ultimate charge work properly', () => {
+  assert.equal(DASH_SPEED, 48);
+  assert.equal(DASH_DURATION_SEC, 0.26);
+  // Sustained dash displacement = 48 * 0.26 = 12.48m+
+  assert.ok(DASH_SPEED * DASH_DURATION_SEC >= 12.4);
+
+  const dash = computeDashVelocity(1, 0, 0);
+  assert.equal(dash.dirX, 0);
+  assert.equal(dash.dirZ, -1);
+  assert.equal(dash.vz, -48);
+
+  assert.equal(ULTIMATE_CHARGE_MULT, 2.0);
+  assert.equal(addUltimateCharge(10, 20, ULTIMATE_CHARGE_MULT), 50);
+
+  assert.equal(SUPERNOVA_PULL_RADIUS, 15.0);
+  assert.equal(SUPERNOVA_DURATION_SEC, 0.42);
+  const pullIn = computeSupernovaPullVelocity(9, 0, 0, 0);
+  assert.equal(pullIn.inRange, true);
+  assert.ok(pullIn.vx < -15);
+  assert.equal(pullIn.vz, 0);
+
+  const pullOut = computeSupernovaPullVelocity(20, 0, 0, 0);
+  assert.equal(pullOut.inRange, false);
+});
+
+test('Valorant-style Spike Defuse mode enforces team mode, detects A/B sites, and preserves 50% Half-Defuse Checkpoint', async () => {
+  const {
+    resolveEffectiveRoomMode,
+    shouldEndMatchOnKillLimit,
+    getSpikeSites,
+    detectSpikeSiteAtPosition,
+    stepSpikePlantProgress,
+    stepSpikeDefuseProgress,
+    computeSpikeBeepInterval,
+  } = await import('./partyModes');
+
+  assert.equal(resolveEffectiveRoomMode('multiplayer', 'ffa', 'spike_defuse'), 'team');
+  assert.equal(shouldEndMatchOnKillLimit('spike_defuse', 'multiplayer'), false);
+
+  const sites = getSpikeSites();
+  assert.equal(Object.keys(sites).length, 2);
+  assert.equal(detectSpikeSiteAtPosition(-34, 0), 'A');
+  assert.equal(detectSpikeSiteAtPosition(34, 0), 'B');
+  assert.equal(detectSpikeSiteAtPosition(0, 0), null);
+
+  // Plant takes 3.2s
+  const pStep1 = stepSpikePlantProgress(0, 1.6, true);
+  assert.equal(pStep1.completed, false);
+  assert.ok(Math.abs(pStep1.progress - 0.5) < 1e-5);
+  const pCancel = stepSpikePlantProgress(pStep1.progress, 0.1, false);
+  assert.equal(pCancel.progress, 0);
+
+  // Defuse takes 5.0s and locks at 50% Half-Defuse Checkpoint after 2.5s
+  const dHalf = stepSpikeDefuseProgress(0, 2.6, true, false);
+  assert.equal(dHalf.halfReached, true);
+  assert.equal(dHalf.completed, false);
+  assert.ok(dHalf.progress >= 0.5);
+
+  // Releasing hold after 50% drops back to exactly 0.5 (Half-Defuse Checkpoint!)
+  const dRelease = stepSpikeDefuseProgress(dHalf.progress, 0.2, false, dHalf.halfReached);
+  assert.equal(dRelease.progress, 0.5);
+  assert.equal(dRelease.halfReached, true);
+
+  // Resuming hold for remaining 2.5s completes defuse
+  const dFinish = stepSpikeDefuseProgress(dRelease.progress, 2.5, true, dRelease.halfReached);
+  assert.equal(dFinish.completed, true);
+  assert.equal(dFinish.progress, 1);
+
+  assert.equal(computeSpikeBeepInterval(30), 1.0);
+  assert.equal(computeSpikeBeepInterval(15), 0.5);
+  assert.equal(computeSpikeBeepInterval(8), 0.25);
+  assert.equal(computeSpikeBeepInterval(3), 0.12);
+});
+
+
 

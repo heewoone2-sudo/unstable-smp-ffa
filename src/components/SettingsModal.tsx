@@ -1,5 +1,5 @@
-import { Eye, Monitor, RotateCcw, Volume2, X } from 'lucide-react';
-import type { CameraMode, GameSettings, GraphicsQuality } from '../game/types';
+import { Eye, Monitor, RotateCcw, Sparkles, Volume2, X } from 'lucide-react';
+import type { CameraMode, GameSettings, GraphicsQuality, ShaderPreset } from '../game/types';
 
 interface SettingsModalProps {
   open: boolean;
@@ -30,6 +30,14 @@ export function SettingsModal({
     { id: 'high', label: '높음', desc: '그림자 · 고해상도' },
   ];
 
+  const shaderOptions: Array<{ id: ShaderPreset; label: string; desc: string }> = [
+    { id: 'clean', label: '기본 클린', desc: '선명한 표준 톤매핑' },
+    { id: 'valorant', label: '발로란트 택티컬', desc: '고대비 채도 · 전술 윤곽' },
+    { id: 'cinematic', label: '시네마틱 블룸', desc: '풍부한 광원 · 영화적 색감' },
+    { id: 'cyber_neon', label: '사이버 네온', desc: '네온 글로우 · 비비드' },
+  ];
+  const activeShader = settings.shaderPreset ?? 'valorant';
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
@@ -44,7 +52,7 @@ export function SettingsModal({
             <h2 id="settings-modal-title" className="font-display text-lg font-bold text-slate-950">
               게임 환경설정
             </h2>
-            <p className="text-xs text-slate-500 mt-0.5">시점 · 그래픽 · 오디오 설정이 한 화면에 모두 표시되며 즉시 적용됩니다.</p>
+            <p className="text-xs text-slate-500 mt-0.5">시점 · 그래픽 셰이더 · 오디오 설정이 한 화면에 모두 표시되며 즉시 적용됩니다.</p>
           </div>
           <button
             type="button"
@@ -150,11 +158,11 @@ export function SettingsModal({
             </label>
           </div>
 
-          {/* Column 2: Graphics & Display */}
+          {/* Column 2: Graphics & Shader */}
           <div className="space-y-3 bg-slate-50/70 border border-slate-200 rounded-xl p-3.5">
             <div className="flex items-center gap-1.5 text-xs font-black text-slate-900 pb-2 border-b border-slate-200">
               <Monitor className="w-3.5 h-3.5 text-sky-600" />
-              <span>비디오 · 그래픽</span>
+              <span>비디오 · 그래픽 · 셰이더</span>
             </div>
 
             <div className="space-y-1.5">
@@ -183,10 +191,40 @@ export function SettingsModal({
               </div>
             </div>
 
-            <label className="flex items-center justify-between p-2.5 rounded-lg border border-slate-200 bg-white cursor-pointer">
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-1 text-[11px] font-bold text-slate-600">
+                <Sparkles className="w-3 h-3 text-indigo-600" />
+                <span>셰이더 스타일 (실시간 렌더링)</span>
+              </label>
+              <div className="grid grid-cols-2 gap-1.5" data-testid="shader-preset-grid">
+                {shaderOptions.map((opt) => {
+                  const active = activeShader === opt.id;
+                  return (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      data-testid={`shader-preset-${opt.id}`}
+                      onClick={() => onUpdate({ shaderPreset: opt.id })}
+                      className={`p-2 rounded-lg border text-left cursor-pointer transition-colors ${
+                        active
+                          ? 'bg-slate-950 border-slate-950 text-white'
+                          : 'bg-white border-slate-200 text-slate-800 hover:border-slate-400'
+                      }`}
+                    >
+                      <div className="font-display text-xs font-bold">{opt.label}</div>
+                      <div className={`text-[10px] mt-0.5 leading-tight ${active ? 'text-slate-300' : 'text-slate-500'}`}>
+                        {opt.desc}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <label className="flex items-center justify-between p-2 rounded-lg border border-slate-200 bg-white cursor-pointer">
               <div>
                 <div className="text-xs font-semibold text-slate-800">전투 파티클 효과</div>
-                <div className="text-[10px] text-slate-500">타격 파편·폭발·스매시 입자 표시</div>
+                <div className="text-[10px] text-slate-500">타격 파편·폭발·초신성 입자 표시</div>
               </div>
               <input
                 type="checkbox"
@@ -196,7 +234,7 @@ export function SettingsModal({
               />
             </label>
 
-            <label className="flex items-center justify-between p-2.5 rounded-lg border border-slate-200 bg-white cursor-pointer">
+            <label className="flex items-center justify-between p-2 rounded-lg border border-slate-200 bg-white cursor-pointer">
               <div>
                 <div className="text-xs font-semibold text-slate-800">실시간 FPS 표시</div>
                 <div className="text-[10px] text-slate-500">전투 화면 상단 프레임 수치 표시</div>
@@ -254,16 +292,24 @@ export function SettingsModal({
                   <span className="font-mono-num font-bold text-slate-900">1~6</span>
                 </div>
                 <div className="flex justify-between px-1.5 py-0.5 rounded bg-slate-50">
+                  <span className="text-slate-500">고속 대쉬</span>
+                  <span className="font-mono-num font-bold text-slate-900">Z</span>
+                </div>
+                <div className="flex justify-between px-1.5 py-0.5 rounded bg-slate-50">
+                  <span className="text-slate-500">초신성 궁극기</span>
+                  <span className="font-mono-num font-bold text-slate-900">X</span>
+                </div>
+                <div className="flex justify-between px-1.5 py-0.5 rounded bg-slate-50">
+                  <span className="text-slate-500">스파이크</span>
+                  <span className="font-mono-num font-bold text-slate-900">G / E</span>
+                </div>
+                <div className="flex justify-between px-1.5 py-0.5 rounded bg-slate-50">
                   <span className="text-slate-500">겉날개</span>
                   <span className="font-mono-num font-bold text-slate-900">F</span>
                 </div>
                 <div className="flex justify-between px-1.5 py-0.5 rounded bg-slate-50">
                   <span className="text-slate-500">시점 전환</span>
                   <span className="font-mono-num font-bold text-slate-900">V</span>
-                </div>
-                <div className="flex justify-between px-1.5 py-0.5 rounded bg-slate-50">
-                  <span className="text-slate-500">전적표</span>
-                  <span className="font-mono-num font-bold text-slate-900">Tab</span>
                 </div>
               </div>
             </div>
