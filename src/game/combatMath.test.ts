@@ -835,3 +835,37 @@ test('all 20 maps define distinct GOAT traits, valid multipliers, and clear jump
   }
   assert.equal(traitNames.size, 20, 'all 20 maps must have unique GOAT trait names');
 });
+
+test('all 20 maps feature genuinely distinct Valorant-style architectural layouts, 10 ground styles, and floating sky variants', () => {
+  const groundStyles = new Set<string>();
+  const ringStyles = new Set<string>();
+  const layoutFingerprints = new Set<string>();
+  let floatingCount = 0;
+
+  for (const mapId of MAP_ORDER) {
+    const def = MAP_DEFINITIONS[mapId];
+    const blocks = getArenaBlocksForMap(mapId);
+    groundStyles.add(def.groundStyle);
+    ringStyles.add(def.ringStyle);
+    if (def.isFloatingSky) floatingCount += 1;
+
+    // Ensure no map uses the old cookie-cutter 4-wall enclosure (`_enc_n`, `_cat_n`)
+    assert.ok(
+      !blocks.some((b) => b.id.endsWith('_enc_n') || b.id.endsWith('_cat_n')),
+      `${mapId} must not use shared cookie-cutter perimeter enclosure`
+    );
+
+    // Compute a geometric fingerprint of the map's block positions & heights
+    const sig = blocks
+      .slice(0, 12)
+      .map((b) => `${Math.round(b.x)}:${Math.round(b.y)}:${Math.round(b.z)}:${Math.round(b.w)}:${Math.round(b.h)}`)
+      .join('|');
+    layoutFingerprints.add(sig);
+  }
+
+  assert.equal(layoutFingerprints.size, 20, 'all 20 maps must have unique 3D block topology fingerprints');
+  assert.equal(groundStyles.size, 10, 'all 10 procedural floor groundStyles must be utilized across the 20 maps');
+  assert.equal(ringStyles.size, 3, 'all 3 ringStyle variants must be utilized');
+  assert.ok(floatingCount >= 4 && floatingCount <= 8, `expected floating sky maps, got ${floatingCount}`);
+});
+

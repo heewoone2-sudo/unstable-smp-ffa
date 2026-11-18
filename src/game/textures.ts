@@ -542,6 +542,146 @@ function createReactorCoreTexture(anisotropy: number, seed: number): THREE.Canva
   return finalizePbrTexture(canvas, anisotropy, true);
 }
 
+function createThemeFloorTexture(
+  pattern: 'runway' | 'sand' | 'ice' | 'cyber' | 'obsidian' | 'marble' | 'brass' | 'geode',
+  anisotropy: number,
+  seed: number
+): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const rand = createMulberry32(seed);
+
+  if (pattern === 'runway') {
+    ctx.fillStyle = '#475569';
+    ctx.fillRect(0, 0, size, size);
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(0, 0, size, 12);
+    ctx.fillRect(0, size - 12, size, 12);
+    ctx.fillStyle = '#facc15';
+    ctx.fillRect(size * 0.46, 16, size * 0.08, 86);
+    ctx.fillRect(size * 0.46, 146, size * 0.08, 86);
+    ctx.fillStyle = '#e2e8f0';
+    ctx.fillRect(18, 0, 6, size);
+    ctx.fillRect(size - 24, 0, 6, size);
+  } else if (pattern === 'sand') {
+    ctx.fillStyle = '#e2c48c';
+    ctx.fillRect(0, 0, size, size);
+    for (let y = 0; y < size; y += 14) {
+      ctx.strokeStyle = y % 28 === 0 ? 'rgba(180, 125, 58, 0.24)' : 'rgba(255, 244, 214, 0.28)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.bezierCurveTo(size * 0.3, y + 6, size * 0.7, y - 6, size, y);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(161, 110, 48, 0.22)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(4, 4, size - 8, size - 8);
+  } else if (pattern === 'ice') {
+    ctx.fillStyle = '#bae6fd';
+    ctx.fillRect(0, 0, size, size);
+    for (let i = 0; i < 28; i++) {
+      ctx.strokeStyle = i % 2 === 0 ? '#f0f9ff' : '#38bdf8';
+      ctx.globalAlpha = 0.36;
+      ctx.lineWidth = 1.5 + rand() * 2;
+      ctx.beginPath();
+      const sx = rand() * size;
+      const sy = rand() * size;
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx + (rand() - 0.5) * 90, sy + (rand() - 0.5) * 90);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  } else if (pattern === 'cyber') {
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = '#06b6d4';
+    ctx.globalAlpha = 0.42;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(2, 2, size - 4, size - 4);
+    ctx.strokeRect(36, 36, size - 72, size - 72);
+    ctx.beginPath();
+    ctx.moveTo(0, size * 0.5);
+    ctx.lineTo(36, size * 0.5);
+    ctx.moveTo(size - 36, size * 0.5);
+    ctx.lineTo(size, size * 0.5);
+    ctx.moveTo(size * 0.5, 0);
+    ctx.lineTo(size * 0.5, 36);
+    ctx.moveTo(size * 0.5, size - 36);
+    ctx.lineTo(size * 0.5, size);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  } else if (pattern === 'obsidian') {
+    ctx.fillStyle = '#1f192b';
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = '#6d28d9';
+    ctx.globalAlpha = 0.28;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(6, 6, size * 0.5 - 10, size * 0.5 - 10);
+    ctx.strokeRect(size * 0.5 + 4, size * 0.5 + 4, size * 0.5 - 10, size * 0.5 - 10);
+    ctx.fillStyle = '#4c1d95';
+    for (let i = 0; i < 60; i++) {
+      ctx.fillRect(rand() * size, rand() * size, 4, 4);
+    }
+    ctx.globalAlpha = 1;
+  } else if (pattern === 'marble') {
+    ctx.fillStyle = '#f1f5f9';
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(2, 2, size * 0.5 - 4, size * 0.5 - 4);
+    ctx.strokeRect(size * 0.5 + 2, 2, size * 0.5 - 4, size * 0.5 - 4);
+    ctx.strokeRect(2, size * 0.5 + 2, size * 0.5 - 4, size * 0.5 - 4);
+    ctx.strokeRect(size * 0.5 + 2, size * 0.5 + 2, size * 0.5 - 4, size * 0.5 - 4);
+    for (let i = 0; i < 16; i++) {
+      ctx.strokeStyle = 'rgba(148, 163, 184, 0.28)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      const x = rand() * size;
+      const y = rand() * size;
+      ctx.moveTo(x, y);
+      ctx.quadraticCurveTo(x + 24, y - 16, x + 52, y + 18);
+      ctx.stroke();
+    }
+  } else if (pattern === 'brass') {
+    ctx.fillStyle = '#334155';
+    ctx.fillRect(0, 0, size, size);
+    ctx.strokeStyle = '#f59e0b';
+    ctx.globalAlpha = 0.45;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(size * 0.5, size * 0.5, size * 0.34, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(size * 0.5, size * 0.5, size * 0.2, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  } else {
+    // geode
+    ctx.fillStyle = '#2e2942';
+    ctx.fillRect(0, 0, size, size);
+    for (let i = 0; i < 48; i++) {
+      ctx.fillStyle = i % 3 === 0 ? '#a855f7' : '#6366f1';
+      ctx.globalAlpha = 0.28;
+      ctx.beginPath();
+      ctx.arc(rand() * size, rand() * size, 3 + rand() * 8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  for (let i = 0; i < 420; i++) {
+    ctx.fillStyle = rand() > 0.5 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.07)';
+    ctx.fillRect(rand() * size, rand() * size, 2, 2);
+  }
+
+  return finalizePbrTexture(canvas, anisotropy, true);
+}
+
 export interface ArenaMaterialSet {
   ground: THREE.MeshStandardMaterial;
   deepslate: THREE.MeshStandardMaterial;
@@ -569,6 +709,14 @@ export interface ArenaMaterialSet {
   lavaTex: THREE.CanvasTexture;
   grassGroundTex: THREE.CanvasTexture;
   asphaltGroundTex: THREE.CanvasTexture;
+  runwayGroundTex: THREE.CanvasTexture;
+  sandGroundTex: THREE.CanvasTexture;
+  iceGroundTex: THREE.CanvasTexture;
+  cyberGroundTex: THREE.CanvasTexture;
+  obsidianGroundTex: THREE.CanvasTexture;
+  marbleGroundTex: THREE.CanvasTexture;
+  brassGroundTex: THREE.CanvasTexture;
+  geodeGroundTex: THREE.CanvasTexture;
   textures: THREE.Texture[];
 }
 
@@ -581,6 +729,23 @@ export function createArenaMaterials(renderer: THREE.WebGLRenderer): ArenaMateri
 
   const asphaltGroundTex = createAsphaltTexture(anisotropy, 909);
   asphaltGroundTex.repeat.set(36, 36);
+
+  const runwayGroundTex = createThemeFloorTexture('runway', anisotropy, 1201);
+  runwayGroundTex.repeat.set(16, 16);
+  const sandGroundTex = createThemeFloorTexture('sand', anisotropy, 1202);
+  sandGroundTex.repeat.set(22, 22);
+  const iceGroundTex = createThemeFloorTexture('ice', anisotropy, 1203);
+  iceGroundTex.repeat.set(20, 20);
+  const cyberGroundTex = createThemeFloorTexture('cyber', anisotropy, 1204);
+  cyberGroundTex.repeat.set(24, 24);
+  const obsidianGroundTex = createThemeFloorTexture('obsidian', anisotropy, 1205);
+  obsidianGroundTex.repeat.set(24, 24);
+  const marbleGroundTex = createThemeFloorTexture('marble', anisotropy, 1206);
+  marbleGroundTex.repeat.set(24, 24);
+  const brassGroundTex = createThemeFloorTexture('brass', anisotropy, 1207);
+  brassGroundTex.repeat.set(18, 18);
+  const geodeGroundTex = createThemeFloorTexture('geode', anisotropy, 1208);
+  geodeGroundTex.repeat.set(22, 22);
 
   const turfTex = createOrganicGrassTexture('#56a844', '#7ed361', '#3b7c2d', anisotropy, 707);
   turfTex.repeat.set(2, 2);
@@ -824,10 +989,26 @@ export function createArenaMaterials(renderer: THREE.WebGLRenderer): ArenaMateri
     lavaTex,
     grassGroundTex,
     asphaltGroundTex,
+    runwayGroundTex,
+    sandGroundTex,
+    iceGroundTex,
+    cyberGroundTex,
+    obsidianGroundTex,
+    marbleGroundTex,
+    brassGroundTex,
+    geodeGroundTex,
     textures: [
       bumpMap,
       grassGroundTex,
       asphaltGroundTex,
+      runwayGroundTex,
+      sandGroundTex,
+      iceGroundTex,
+      cyberGroundTex,
+      obsidianGroundTex,
+      marbleGroundTex,
+      brassGroundTex,
+      geodeGroundTex,
       deepslateTex,
       obsidianTex,
       goldTex,

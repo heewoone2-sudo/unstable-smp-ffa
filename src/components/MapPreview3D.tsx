@@ -303,10 +303,31 @@ export function MapPreview3D({ mapId, className = '' }: MapPreview3DProps) {
     state.orbitRadius = radius * 0.94;
     state.orbitHeight = radius * 0.58;
 
+    const groundRoughness =
+      mapDef.groundStyle === 'ice'
+        ? 0.22
+        : mapDef.groundStyle === 'marble'
+          ? 0.32
+          : mapDef.groundStyle === 'cyber' || mapDef.groundStyle === 'brass'
+            ? 0.38
+            : mapDef.groundStyle === 'obsidian' || mapDef.groundStyle === 'geode'
+              ? 0.45
+              : mapDef.groundStyle === 'runway'
+                ? 0.72
+                : 0.88;
+    const groundMetalness =
+      mapDef.groundStyle === 'brass'
+        ? 0.55
+        : mapDef.groundStyle === 'cyber'
+          ? 0.42
+          : mapDef.groundStyle === 'runway' || mapDef.groundStyle === 'obsidian'
+            ? 0.22
+            : 0.06;
+
     const groundMat = new THREE.MeshStandardMaterial({
       color: mapDef.groundColor,
-      roughness: mapDef.groundStyle === 'grass' ? 0.9 : 0.84,
-      metalness: mapDef.groundStyle === 'grass' ? 0.02 : 0.08,
+      roughness: groundRoughness,
+      metalness: groundMetalness,
     });
     state.transientMaterials.push(groundMat);
 
@@ -315,6 +336,22 @@ export function MapPreview3D({ mapId, className = '' }: MapPreview3DProps) {
     groundMesh.scale.set(radius, radius, 1);
     groundMesh.receiveShadow = !state.isSoftwareGl;
     state.mapGroup.add(groundMesh);
+
+    if (!mapDef.isFloatingSky) {
+      const outerSlabGeo = new THREE.RingGeometry(radius, radius * 1.65, 48);
+      const outerSlabMat = new THREE.MeshStandardMaterial({
+        color: mapDef.ambientGround,
+        roughness: 0.92,
+        metalness: 0.04,
+        side: THREE.DoubleSide,
+      });
+      state.transientGeometries.push(outerSlabGeo);
+      state.transientMaterials.push(outerSlabMat);
+      const outerSlab = new THREE.Mesh(outerSlabGeo, outerSlabMat);
+      outerSlab.rotation.x = -Math.PI / 2;
+      outerSlab.position.y = -0.15;
+      state.mapGroup.add(outerSlab);
+    }
 
     const ringMat = new THREE.MeshStandardMaterial({
       color: mapDef.ringPrimary,
@@ -326,15 +363,19 @@ export function MapPreview3D({ mapId, className = '' }: MapPreview3DProps) {
     });
     state.transientMaterials.push(ringMat);
 
-    const innerRing = new THREE.Mesh(state.ringInnerGeo, ringMat);
-    innerRing.rotation.x = -Math.PI / 2;
-    innerRing.position.y = 0.04;
-    state.mapGroup.add(innerRing);
+    if (mapDef.ringStyle === 'double') {
+      const innerRing = new THREE.Mesh(state.ringInnerGeo, ringMat);
+      innerRing.rotation.x = -Math.PI / 2;
+      innerRing.position.y = 0.04;
+      state.mapGroup.add(innerRing);
+    }
 
-    const outerRing = new THREE.Mesh(state.ringOuterGeo, ringMat);
-    outerRing.rotation.x = -Math.PI / 2;
-    outerRing.position.y = 0.04;
-    state.mapGroup.add(outerRing);
+    if (mapDef.ringStyle === 'double' || mapDef.ringStyle === 'outer_only') {
+      const outerRing = new THREE.Mesh(state.ringOuterGeo, ringMat);
+      outerRing.rotation.x = -Math.PI / 2;
+      outerRing.position.y = 0.04;
+      state.mapGroup.add(outerRing);
+    }
 
     const rimMesh = new THREE.Mesh(state.rimGeo, ringMat);
     rimMesh.rotation.x = -Math.PI / 2;

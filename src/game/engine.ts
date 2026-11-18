@@ -999,8 +999,59 @@ export class UnstableArenaEngine {
     }
 
     const groundMat = this.materials.ground;
-    groundMat.map =
-      mapDef.groundStyle === 'asphalt' ? this.materials.asphaltGroundTex : this.materials.grassGroundTex;
+    switch (mapDef.groundStyle) {
+      case 'asphalt':
+        groundMat.map = this.materials.asphaltGroundTex;
+        groundMat.roughness = 0.86;
+        groundMat.metalness = 0.08;
+        break;
+      case 'runway':
+        groundMat.map = this.materials.runwayGroundTex;
+        groundMat.roughness = 0.72;
+        groundMat.metalness = 0.22;
+        break;
+      case 'sand':
+        groundMat.map = this.materials.sandGroundTex;
+        groundMat.roughness = 0.92;
+        groundMat.metalness = 0.02;
+        break;
+      case 'ice':
+        groundMat.map = this.materials.iceGroundTex;
+        groundMat.roughness = 0.24;
+        groundMat.metalness = 0.14;
+        break;
+      case 'cyber':
+        groundMat.map = this.materials.cyberGroundTex;
+        groundMat.roughness = 0.36;
+        groundMat.metalness = 0.45;
+        break;
+      case 'obsidian':
+        groundMat.map = this.materials.obsidianGroundTex;
+        groundMat.roughness = 0.48;
+        groundMat.metalness = 0.28;
+        break;
+      case 'marble':
+        groundMat.map = this.materials.marbleGroundTex;
+        groundMat.roughness = 0.32;
+        groundMat.metalness = 0.12;
+        break;
+      case 'brass':
+        groundMat.map = this.materials.brassGroundTex;
+        groundMat.roughness = 0.38;
+        groundMat.metalness = 0.56;
+        break;
+      case 'geode':
+        groundMat.map = this.materials.geodeGroundTex;
+        groundMat.roughness = 0.34;
+        groundMat.metalness = 0.24;
+        break;
+      case 'grass':
+      default:
+        groundMat.map = this.materials.grassGroundTex;
+        groundMat.roughness = 0.90;
+        groundMat.metalness = 0.02;
+        break;
+    }
     groundMat.color.setHex(mapDef.groundTint);
     groundMat.needsUpdate = true;
 
@@ -1009,9 +1060,11 @@ export class UnstableArenaEngine {
 
     const radiusScale = this.currentArenaRadius / ARENA_RADIUS;
     if (this.groundMesh) this.groundMesh.scale.set(radiusScale, 1, radiusScale);
-    if (this.outerTerrainMesh) this.outerTerrainMesh.scale.set(radiusScale, 1, radiusScale);
+    if (this.outerTerrainMesh) {
+      this.outerTerrainMesh.scale.set(radiusScale, 1, radiusScale);
+      this.outerTerrainMesh.visible = !mapDef.isFloatingSky;
+    }
 
-    const ringGeo = new THREE.RingGeometry(13.85, 14.25, 64);
     const ringMat = new THREE.MeshPhysicalMaterial({
       color: mapDef.ringPrimary,
       emissive: mapDef.ringEmissive,
@@ -1021,25 +1074,33 @@ export class UnstableArenaEngine {
       clearcoat: 0.8,
       side: THREE.DoubleSide,
     });
-    const centerRing = new THREE.Mesh(ringGeo, ringMat);
-    centerRing.rotation.x = -Math.PI / 2;
-    centerRing.position.y = 0.025;
-    this.mapGroup.add(centerRing);
+    this.mapSignatureMaterials.push(ringMat);
 
-    const outerRingGeo = new THREE.RingGeometry(31.6, 32.2, 72);
-    const outerRingMat = new THREE.MeshPhysicalMaterial({
-      color: mapDef.ringPrimary,
-      emissive: mapDef.ringEmissive,
-      emissiveIntensity: 0.35,
-      roughness: 0.25,
-      metalness: 0.78,
-      clearcoat: 0.7,
-      side: THREE.DoubleSide,
-    });
-    const outerRing = new THREE.Mesh(outerRingGeo, outerRingMat);
-    outerRing.rotation.x = -Math.PI / 2;
-    outerRing.position.y = 0.02;
-    this.mapGroup.add(outerRing);
+    if (mapDef.ringStyle === 'double') {
+      const ringGeo = new THREE.RingGeometry(13.85, 14.25, 64);
+      const centerRing = new THREE.Mesh(ringGeo, ringMat);
+      centerRing.rotation.x = -Math.PI / 2;
+      centerRing.position.y = 0.025;
+      this.mapGroup.add(centerRing);
+    }
+
+    if (mapDef.ringStyle === 'double' || mapDef.ringStyle === 'outer_only') {
+      const outerRingGeo = new THREE.RingGeometry(31.6, 32.2, 72);
+      const outerRingMat = new THREE.MeshPhysicalMaterial({
+        color: mapDef.ringPrimary,
+        emissive: mapDef.ringEmissive,
+        emissiveIntensity: 0.35,
+        roughness: 0.25,
+        metalness: 0.78,
+        clearcoat: 0.7,
+        side: THREE.DoubleSide,
+      });
+      this.mapSignatureMaterials.push(outerRingMat);
+      const outerRing = new THREE.Mesh(outerRingGeo, outerRingMat);
+      outerRing.rotation.x = -Math.PI / 2;
+      outerRing.position.y = 0.02;
+      this.mapGroup.add(outerRing);
+    }
 
     // Sculpted beveled architectural blocks & caps
     for (const b of this.blocks) {
