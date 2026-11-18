@@ -25,8 +25,10 @@ export interface NetEventHandlers {
     botDifficulty?: BotDifficulty
   ) => void;
   onMapChanged?: (mapId: MapId, mapStartedAt: number) => void;
+  onMatchExited?: (byName?: string) => void;
   onLinkMatchOver: (msg: { winnerId: string; winnerName: string; loserId: string; loserName: string }) => void;
   onChat: (msg: ChatEntry) => void;
+  onChatHistory?: (messages: ChatEntry[]) => void;
   onPeerState: (msg: {
     id: string;
     x: number;
@@ -129,7 +131,7 @@ export class MultiplayerClient {
       selfId: null,
       isHost: false,
       playerName: 'Player',
-      includeBots: true,
+      includeBots: false,
       customBots: [],
       botDifficulty: 'medium',
       partyMode: 'knockout',
@@ -418,6 +420,15 @@ export class MultiplayerClient {
         return;
       }
 
+      if (type === 'match_exited') {
+        this.state.status = 'lobby';
+        this.state.linkQueueing = false;
+        this.state.quickQueueing = false;
+        this.handlers.onRoomChange(this.getState());
+        this.handlers.onMatchExited?.(typeof msg.byName === 'string' ? msg.byName : undefined);
+        return;
+      }
+
       if (type === 'link_match_over') {
         this.handlers.onLinkMatchOver(
           msg as unknown as Parameters<NetEventHandlers['onLinkMatchOver']>[0]
@@ -433,6 +444,18 @@ export class MultiplayerClient {
           text: String(msg.text || ''),
           team: msg.team === 'red' || msg.team === 'blue' ? msg.team : 'ffa',
         });
+        return;
+      }
+
+      if (type === 'chat_history' && Array.isArray(msg.messages)) {
+        const history: ChatEntry[] = msg.messages.map((m: Record<string, unknown>) => ({
+          id: String(m.id || Math.random()),
+          senderId: String(m.senderId || ''),
+          senderName: String(m.senderName || 'Player'),
+          text: String(m.text || ''),
+          team: m.team === 'red' || m.team === 'blue' ? m.team : 'ffa',
+        }));
+        this.handlers.onChatHistory?.(history);
         return;
       }
 
@@ -543,10 +566,15 @@ export class MultiplayerClient {
     this.send({ type: 'join_global', name: this.state.playerName, characterId, mapId });
   }
 
-  public createLinkDuel(name: string, characterId: CharacterId): void {
+  public createLinkDuel(name: string, characterId: CharacterId, customCode?: string): void {
     this.state.playerName = name.trim() || 'Challenger';
     this.retryCount = 0;
-    this.send({ type: 'create_link_duel', name: this.state.playerName, characterId });
+    this.send({
+      type: 'create_link_duel',
+      name: this.state.playerName,
+      characterId,
+      ...(customCode?.trim() ? { customCode: customCode.trim() } : {}),
+    });
   }
 
   public joinLinkDuel(code: string, name: string, characterId: CharacterId): void {
@@ -611,14 +639,16 @@ export class MultiplayerClient {
   public createRoom(
     name: string,
     characterId: CharacterId,
-    includeBots: boolean,
+    _includeBots: boolean,
     roomMode: 'ffa' | 'team',
     team: 'red' | 'blue' | 'ffa',
     botDifficulty?: BotDifficulty,
     partyMode?: CustomPartyMode,
-    customBots?: CustomBotSlot[]
+    customBots?: CustomBotSlot[],
+    customCode?: string
   ): void {
     this.state.playerName = name.trim() || 'Player';
+    this.state.includeBots = false;
     if (botDifficulty) this.state.botDifficulty = botDifficulty;
     if (partyMode) this.state.partyMode = partyMode;
     if (customBots) this.state.customBots = customBots;
@@ -627,12 +657,13 @@ export class MultiplayerClient {
       type: 'create_room',
       name: this.state.playerName,
       characterId,
-      includeBots,
+      includeBots: false,
       roomMode,
       team,
       botDifficulty,
       partyMode,
       customBots,
+      ...(customCode?.trim() ? { customCode: customCode.trim() } : {}),
     });
   }
 

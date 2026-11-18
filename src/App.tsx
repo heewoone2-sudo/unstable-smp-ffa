@@ -10,7 +10,7 @@ import {
   subscribeAuthState,
   type PlayerAccountProfile,
 } from './firebase';
-import { CHARACTERS, DEFAULT_GAME_SETTINGS } from './game/characters';
+import { CHARACTERS, DEFAULT_GAME_SETTINGS, hasDoubleJumpLoadout } from './game/characters';
 import { UnstableArenaEngine } from './game/engine';
 import { createEmptyMapVotes, getRotationWindow } from './game/maps';
 import type { BotDifficulty, CharacterId, GameModeId, HudSnapshot } from './game/types';
@@ -98,8 +98,12 @@ const INITIAL_HUD: HudSnapshot = {
   elytraCooldown: 0,
   elytraMaxCooldown: 3.8,
   elytraFlightRemaining: 0,
+  jumpCount: 0,
+  canDoubleJump: hasDoubleJumpLoadout(CHARACTERS.wemmbu.loadout),
   isGliding: false,
   isBlocking: false,
+  isScoped: false,
+  scopeZoomFactor: 1,
   isStealthed: false,
   isInCobweb: false,
   cobwebBreakProgress: 0,
@@ -134,6 +138,9 @@ const INITIAL_HUD: HudSnapshot = {
   hitmarkerCrit: false,
   lastHitText: '',
   fallHeightReady: 0,
+  fallDistance: 0,
+  isAirborne: false,
+  maceDamageMult: CHARACTERS.wemmbu.damageMult,
   muted: false,
   fps: 60,
   settings: DEFAULT_GAME_SETTINGS,
@@ -146,7 +153,7 @@ const INITIAL_HUD: HudSnapshot = {
     selfId: null,
     isHost: false,
     playerName: 'Player',
-    includeBots: true,
+    includeBots: false,
     customBots: [],
     botDifficulty: 'medium',
     partyMode: 'knockout',
@@ -177,11 +184,11 @@ export default function App() {
 
   const [initialRoomCode] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return (params.get('room') ?? '').trim().toUpperCase().slice(0, 4);
+    return (params.get('room') ?? '').trim().toUpperCase().slice(0, 12);
   });
   const [initialLinkCode] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return (params.get('link') ?? '').trim().toUpperCase().slice(0, 4);
+    return (params.get('link') ?? '').trim().toUpperCase().slice(0, 12);
   });
 
   useEffect(() => {
@@ -329,18 +336,19 @@ export default function App() {
             setAuthModalOpen(true);
           }}
           onOpenSettings={() => setSettingsOpen(true)}
-          onCreateLinkDuel={(name) => engineRef.current?.createLinkDuelRoom(name)}
+          onCreateLinkDuel={(name, customCode) => engineRef.current?.createLinkDuelRoom(name, customCode)}
           onJoinLinkDuel={(code, name) => engineRef.current?.joinLinkDuelRoom(code, name)}
           onQueueLinkDuel={(name) => engineRef.current?.queueLinkDuel(name)}
           onCancelLinkQueue={() => engineRef.current?.cancelLinkQueue()}
           onQueueQuickMatch={(name) => engineRef.current?.queueQuickMatch(name)}
           onCancelQuickQueue={() => engineRef.current?.cancelQuickQueue()}
-          onCreateRoom={(name, includeBots, roomMode, team, botDifficulty, partyMode, customBots) =>
-            engineRef.current?.createMultiplayerRoom(name, includeBots, roomMode, team, botDifficulty, partyMode, customBots)
+          onCreateRoom={(name, includeBots, roomMode, team, botDifficulty, partyMode, customBots, customCode) =>
+            engineRef.current?.createMultiplayerRoom(name, includeBots, roomMode, team, botDifficulty, partyMode, customBots, customCode)
           }
           onJoinRoom={(code, name, team) => engineRef.current?.joinMultiplayerRoom(code, name, team)}
           onUpdateLobby={(updates) => engineRef.current?.updateMultiplayerLobby(updates)}
           onVoteMap={(mapId) => engineRef.current?.voteMap(mapId)}
+          onPreviewMap={(mapId) => engineRef.current?.previewArenaMap(mapId)}
           onSendChat={(text) => engineRef.current?.sendChatMessage(text)}
           onStartMultiplayer={() => engineRef.current?.startMultiplayerMatch()}
           onLeaveRoom={() => engineRef.current?.leaveMultiplayerRoom()}

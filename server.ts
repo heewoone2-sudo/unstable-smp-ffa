@@ -139,6 +139,7 @@ interface RoomPeer {
   maxHp: number;
   absorption: number;
   alive: boolean;
+  isStealthed?: boolean;
   activeSlot?: string;
   votedMap?: MapId;
   respawnTimer: NodeJS.Timeout | null;
@@ -168,6 +169,13 @@ interface RoomState {
   peers: Map<string, RoomPeer>;
   placedBlocks: PlacedBlockRecord[];
   seenEvents: Set<string>;
+  chatHistory?: Array<{
+    id: string;
+    senderId: string;
+    senderName: string;
+    team: 'red' | 'blue' | 'ffa';
+    text: string;
+  }>;
 }
 
 interface QueueEntry {
@@ -193,6 +201,24 @@ function generateRoomCode(): string {
     if (!code.startsWith('GLOBAL') && !rooms.has(code)) return code;
   }
   return String(Math.floor(1000 + Math.random() * 8999));
+}
+
+function normalizeCustomRoomCode(raw: unknown): { code: string | null; error?: string } {
+  if (typeof raw !== 'string') return { code: null };
+  const trimmed = raw.trim();
+  if (!trimmed) return { code: null };
+  const cleaned = trimmed
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9가-힣_-]/g, '')
+    .slice(0, 12);
+  if (cleaned.length < 2) {
+    return { code: null, error: '방 코드는 2~12자(한글/영문/숫자)로 입력해 주세요.' };
+  }
+  if (cleaned.startsWith('GLOBAL') || cleaned === 'QUICK_SERVER') {
+    return { code: null, error: '사용할 수 없는 예약 방 코드입니다.' };
+  }
+  return { code: cleaned };
 }
 
 function sendJson(ws: WebSocket, payload: Record<string, unknown>): void {
@@ -497,9 +523,21 @@ async function startServer() {
       }
 
       if (type === 'create_link_duel') {
+        const customCheck = normalizeCustomRoomCode(msg.customCode);
+        if (customCheck.error) {
+          sendJson(ws, { type: 'room_error', message: customCheck.error });
+          return;
+        }
+        if (customCheck.code && rooms.has(customCheck.code)) {
+          sendJson(ws, {
+            type: 'room_error',
+            message: `이미 사용 중인 방 코드('${customCheck.code}')입니다. 다른 코드를 입력해 주세요.`,
+          });
+          return;
+        }
         removeFromQueue(clientId);
         removePeerFromRoom(clientId, currentRoomCode);
-        const code = generateRoomCode();
+        const code = customCheck.code ?? generateRoomCode();
         const charId = (CHARACTER_HP[msg.characterId as CharacterId] ? msg.characterId : 'wemmbu') as CharacterId;
         const maxHp = CHARACTER_HP[charId];
         const name = String(msg.name || 'Challenger').trim().slice(0, 16) || 'Challenger';
@@ -745,9 +783,21 @@ async function startServer() {
       }
 
       if (type === 'create_room') {
+        const customCheck = normalizeCustomRoomCode(msg.customCode);
+        if (customCheck.error) {
+          sendJson(ws, { type: 'room_error', message: customCheck.error });
+          return;
+        }
+        if (customCheck.code && rooms.has(customCheck.code)) {
+          sendJson(ws, {
+            type: 'room_error',
+            message: `이미 사용 중인 방 코드('${customCheck.code}')입니다. 다른 코드를 입력해 주세요.`,
+          });
+          return;
+        }
         removeFromQueue(clientId);
         removePeerFromRoom(clientId, currentRoomCode);
-        const code = generateRoomCode();
+        const code = customCheck.code ?? generateRoomCode();
         const charId = (CHARACTER_HP[msg.characterId as CharacterId] ? msg.characterId : 'wemmbu') as CharacterId;
         const maxHp = CHARACTER_HP[charId];
         const name = String(msg.name || 'Player').trim().slice(0, 16) || 'Player';
@@ -771,7 +821,7 @@ async function startServer() {
           roomMode,
           hostId: clientId,
           status: 'lobby',
-          includeBots: Boolean(msg.includeBots),
+          includeBots: false,
           customBots: normalizedCustomBots,
           botDifficulty,
           partyMode,
@@ -837,6 +887,12 @@ async function startServer() {
         });
         currentRoomCode = requested;
         broadcastRoom(room, serializeRoom(room));
+        if (room.chatHistory && room.chatHistory.length > 0) {
+          sendJson(ws, {
+            type: 'chat_history',
+            messages: room.chatHistory,
+          });
+        }
         if (room.status === 'playing') {
           sendJson(ws, {
             type: 'match_started',
@@ -975,6 +1031,29 @@ async function startServer() {
       }
 
       if (type === 'exit_match') {
+        if (room.kind === 'private' || room.kind === 'link_duel') {
+          for (const peer of room.peers.values()) {
+            if (peer.respawnTimer) {
+              clearTimeout(peer.respawnTimer);
+              peer.respawnTimer = null;
+            }
+            peer.alive = true;
+            peer.hp = peer.maxHp;
+            peer.absorption = 0;
+            peer.kills = 0;
+            peer.deaths = 0;
+          }
+          room.status = 'lobby';
+          room.placedBlocks = [];
+          broadcastRoom(room, {
+            type: 'match_exited',
+            code: room.code,
+            byId: clientId,
+            byName: self.name,
+          });
+          broadcastRoom(room, serializeRoom(room));
+          return;
+        }
         if (self.respawnTimer) {
           clearTimeout(self.respawnTimer);
           self.respawnTimer = null;
@@ -996,6 +1075,7 @@ async function startServer() {
 
       if (type === 'player_state') {
         self.activeSlot = String(msg.activeSlot || self.activeSlot || 'sword');
+        self.isStealthed = Boolean(msg.isStealthed);
         broadcastRoom(
           room,
           {
@@ -1024,12 +1104,13 @@ async function startServer() {
         const text = String(msg.text || '').trim().slice(0, 160);
         if (!text) return;
         const chatMsg = {
-          id: `chat-${clientId}-${Date.now().toString(36)}`,
+          id: `chat-${clientId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
           senderId: clientId,
           senderName: self.name,
           team: self.team,
           text,
         };
+        room.chatHistory = [...(room.chatHistory || []), chatMsg].slice(-50);
         broadcastRoom(room, {
           type: 'chat_message',
           ...chatMsg,
@@ -1060,6 +1141,7 @@ async function startServer() {
         const targetId = String(msg.targetId || '');
         const target = room.peers.get(targetId);
         if (!target || !target.alive) return;
+        if (self.isStealthed || target.isStealthed) return;
         if (room.roomMode === 'team' && self.team !== 'ffa' && target.team !== 'ffa' && self.team === target.team) {
           return;
         }
@@ -1100,6 +1182,7 @@ async function startServer() {
 
         if (target.hp <= 0) {
           target.alive = false;
+          target.isStealthed = false;
           target.deaths += 1;
           self.kills += 1;
           broadcastRoom(room, {

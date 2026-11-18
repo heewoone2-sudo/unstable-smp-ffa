@@ -2,17 +2,28 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { GameAudio } from './audio';
-import { CHARACTER_LIST, CHARACTERS, DEFAULT_GAME_SETTINGS, GAME_MODES } from './characters';
+import {
+  CHARACTER_LIST,
+  CHARACTERS,
+  DEFAULT_GAME_SETTINGS,
+  GAME_MODES,
+  hasDoubleJumpLoadout,
+  hasRangedBowLoadout,
+} from './characters';
 import {
   applyCombatDamage,
   computeBlockPlacement,
+  computeBowScopeState,
+  computeJumpVelocity,
   computeMaceDamage,
   computeSwordDamage,
   consumeSlotUse,
   getSupportHeightAt,
   isInsideCobweb,
   isInsideHazardPool,
+  isStealthAttackRestricted,
   resolveHorizontalCollision,
+  stepPlayerJump,
   tickSlotRecharge,
 } from './combatMath';
 import {
@@ -308,6 +319,8 @@ export class UnstableArenaEngine {
   private hemiLight!: THREE.HemisphereLight;
   private sunLight!: THREE.DirectionalLight;
   private currentMapId: MapId = getRotationWindow().activeMaps[0];
+  private previewRestoreMapId: MapId | null = null;
+  private titlePreviewBlend = 0;
   private selectedOpenWorldMap: MapId | null = null;
   private currentArenaRadius =
     MAP_DEFINITIONS[getRotationWindow().activeMaps[0]].worldRadius;
@@ -351,6 +364,7 @@ export class UnstableArenaEngine {
   private playerFallStartY = 0;
   private playerCoyote = 0;
   private playerJumpBuffer = 0;
+  private playerJumpCount = 0;
   private attackBuffer = 0;
   private playerWalkDist = 0;
   private playerHp = 112;
@@ -535,7 +549,7 @@ export class UnstableArenaEngine {
       selfId: null,
       isHost: false,
       playerName: 'Player',
-      includeBots: true,
+      includeBots: false,
       customBots: [],
       botDifficulty: 'medium',
       partyMode: 'knockout',
@@ -626,19 +640,32 @@ export class UnstableArenaEngine {
           state.roomCode &&
           this.isNetworkedMode() &&
           state.selectedMap &&
-          state.selectedMap !== this.currentMapId &&
           this.screen === 'title'
         ) {
-          this.applyArenaMap(state.selectedMap, false);
+          if (this.previewRestoreMapId !== null) {
+            this.previewRestoreMapId = state.selectedMap;
+          } else if (state.selectedMap !== this.currentMapId) {
+            this.applyArenaMap(state.selectedMap, false);
+          }
         }
         if (placed) {
           this.syncPlacedBlocksFromServer(placed);
         }
         this.syncRemotePeers();
         this.refreshActorTeamVisuals();
+        if (
+          state.roomCode &&
+          (state.roomKind === 'private' || state.roomKind === 'link_duel') &&
+          state.status === 'lobby' &&
+          this.screen !== 'title'
+        ) {
+          this.returnToCustomRoomLobby();
+          return;
+        }
         this.emitHud(true);
       },
       onMatchStart: (roomKind, selectedMap, mapStartedAt, targetKills, partyMode, botDifficulty) => {
+        this.previewRestoreMapId = null;
         this.isPracticeMode = false;
         const nextMode =
           roomKind === 'global'
@@ -675,9 +702,21 @@ export class UnstableArenaEngine {
         this.startGameInternal();
       },
       onMapChanged: (mapId, mapStartedAt) => {
+        this.previewRestoreMapId = null;
         this.mapStartedAtMs = mapStartedAt;
         this.applyArenaMap(mapId, true);
         this.emitHud(true);
+      },
+      onMatchExited: (byName) => {
+        if (
+          (this.mode === 'multiplayer' || this.mode === 'link_duel') &&
+          this.mpState.roomCode
+        ) {
+          this.returnToCustomRoomLobby();
+          if (byName) {
+            this.pushCallout(`${byName}님이 게임을 종료하여 대기실 방으로 돌아왔습니다.`, '#38bdf8');
+          }
+        }
       },
       onLinkMatchOver: (msg) => {
         const won = msg.winnerId === this.mpState.selfId;
@@ -688,7 +727,12 @@ export class UnstableArenaEngine {
         this.triggerEndGame(won ? 'victory' : 'defeat');
       },
       onChat: (msg) => {
-        this.chatMessages = [...this.chatMessages, msg].slice(-40);
+        if (this.chatMessages.some((existing) => existing.id === msg.id)) return;
+        this.chatMessages = [...this.chatMessages, msg].slice(-50);
+        this.emitHud(true);
+      },
+      onChatHistory: (messages) => {
+        this.chatMessages = messages.slice(-50);
         this.emitHud(true);
       },
       onPeerState: (msg) => {
@@ -704,7 +748,8 @@ export class UnstableArenaEngine {
         peer.isBlocking = msg.isBlocking;
         peer.isGliding = msg.isGliding;
         peer.isStealthed = msg.isStealthed;
-        peer.rig.setOpacity(msg.isStealthed ? 0.25 : 1);
+        peer.rig.setOpacity(msg.isStealthed ? 0.12 : 1);
+        peer.rig.setTeamOutline(msg.isStealthed ? null : this.getRelationVisuals(peer.team).outlineHex);
         if (msg.swingSeq !== peer.lastSwingSeq) {
           peer.lastSwingSeq = msg.swingSeq;
           peer.swingTimer = 0.24;
@@ -1321,7 +1366,7 @@ export class UnstableArenaEngine {
     }
 
     const projGeo = new THREE.OctahedronGeometry(0.28, 1);
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 48; i++) {
       const mat = new THREE.MeshStandardMaterial({
         color: 0x7dd3fc,
         emissive: 0x38bdf8,
@@ -1467,7 +1512,7 @@ export class UnstableArenaEngine {
     return [0, 1, 2, 3, 4, 5].map((i) => {
       const it = loadout[i];
       if (!it) return 0;
-      return it.id === 'crossbow' ? 1.35 : it.cooldown;
+      return it.cooldown;
     }) as SixTuple<number>;
   }
 
@@ -1593,6 +1638,7 @@ export class UnstableArenaEngine {
   }
 
   public voteMap(mapId: MapId): void {
+    this.previewRestoreMapId = null;
     if (this.isNetworkedMode() && this.mode !== 'ffa') {
       this.net.voteMap(mapId);
       return;
@@ -1640,7 +1686,34 @@ export class UnstableArenaEngine {
     this.emitHud(true);
   }
 
+  public previewArenaMap(mapId: MapId | null): void {
+    if (this.screen !== 'title') {
+      this.previewRestoreMapId = null;
+      return;
+    }
+    if (mapId) {
+      if (!this.previewRestoreMapId) {
+        this.previewRestoreMapId = this.currentMapId;
+      }
+      if (this.currentMapId !== mapId) {
+        this.applyArenaMap(mapId, false);
+      }
+      return;
+    }
+    if (this.previewRestoreMapId !== null) {
+      const restoreTarget =
+        this.mpState.roomCode && this.isNetworkedMode() && this.mpState.selectedMap
+          ? this.mpState.selectedMap
+          : this.previewRestoreMapId;
+      this.previewRestoreMapId = null;
+      if (this.currentMapId !== restoreTarget) {
+        this.applyArenaMap(restoreTarget, false);
+      }
+    }
+  }
+
   public setOpenWorldMap(mapId: MapId): void {
+    this.previewRestoreMapId = null;
     this.selectedOpenWorldMap = mapId;
     this.applyArenaMap(mapId, false);
     this.emitHud(true);
@@ -1739,11 +1812,11 @@ export class UnstableArenaEngine {
     this.net.joinGlobal(callsign, this.selectedCharId, targetMap);
   }
 
-  public createLinkDuelRoom(name: string): void {
+  public createLinkDuelRoom(name: string, customCode?: string): void {
     this.isPracticeMode = false;
     this.mode = 'link_duel';
     const callsign = (name || this.mpState.playerName).trim() || 'Player';
-    this.net.createLinkDuel(callsign, this.selectedCharId);
+    this.net.createLinkDuel(callsign, this.selectedCharId, customCode);
   }
 
   public joinLinkDuelRoom(code: string, name: string): void {
@@ -1827,25 +1900,38 @@ export class UnstableArenaEngine {
 
   public createMultiplayerRoom(
     name: string,
-    includeBots: boolean,
+    _includeBots: boolean,
     roomMode: 'ffa' | 'team',
     team: 'red' | 'blue' | 'ffa',
     botDifficulty: BotDifficulty = 'medium',
     partyMode: CustomPartyMode = 'classic',
-    customBots?: CustomBotSlot[]
+    customBots?: CustomBotSlot[],
+    customCode?: string
   ): void {
     this.isPracticeMode = false;
     this.mode = 'multiplayer';
+    this.chatMessages = [];
     this.botDifficulty = botDifficulty;
     this.customPartyMode = partyMode;
     this.localPreferredTeam = team === 'blue' ? 'blue' : 'red';
-    this.mpState = { ...this.mpState, roomMode };
-    this.net.createRoom(name, this.selectedCharId, includeBots, roomMode, team, botDifficulty, partyMode, customBots);
+    this.mpState = { ...this.mpState, roomMode, includeBots: false };
+    this.net.createRoom(
+      name,
+      this.selectedCharId,
+      false,
+      roomMode,
+      team,
+      botDifficulty,
+      partyMode,
+      customBots,
+      customCode
+    );
   }
 
   public joinMultiplayerRoom(code: string, name: string, team: 'red' | 'blue' | 'ffa'): void {
     this.isPracticeMode = false;
     this.mode = 'multiplayer';
+    this.chatMessages = [];
     if (team === 'red' || team === 'blue') {
       this.localPreferredTeam = team;
     }
@@ -1910,7 +1996,22 @@ export class UnstableArenaEngine {
   }
 
   public exitMatchToLobby(): void {
+    if ((this.mode === 'multiplayer' || this.mode === 'link_duel') && this.mpState.roomCode) {
+      this.net.exitMatch();
+      this.returnToCustomRoomLobby();
+      return;
+    }
     this.leaveMultiplayerRoom();
+  }
+
+  public returnToCustomRoomLobby(): void {
+    document.exitPointerLock?.();
+    this.isPracticeMode = false;
+    this.resetMatch();
+    this.screen = 'title';
+    this.syncCameraVisibility();
+    this.syncBodyState();
+    this.emitHud(true);
   }
 
   public leaveMultiplayerRoom(): void {
@@ -1922,6 +2023,7 @@ export class UnstableArenaEngine {
         deaths: this.deaths,
       });
     }
+    this.chatMessages = [];
     this.net.leaveRoom();
     if (this.screen !== 'title') {
       this.returnToTitle();
@@ -2121,6 +2223,7 @@ export class UnstableArenaEngine {
     this.targetYaw = spawnYaw;
     this.targetPitch = -0.14;
     this.playerOnGround = true;
+    this.playerJumpCount = 0;
     this.playerFallStartY = spawnSupY;
     this.playerMaxHp = profile.maxHp;
     this.playerHp = profile.maxHp;
@@ -2924,6 +3027,7 @@ export class UnstableArenaEngine {
         this.triggerFireworkBoost();
       } else {
         this.isBlocking = true;
+        this.emitHud(true);
       }
     }
   };
@@ -2934,13 +3038,24 @@ export class UnstableArenaEngine {
     } else if (e.button === 2) {
       this.mouseDownRight = false;
       this.isBlocking = false;
+      this.emitHud(true);
     }
   };
+
+  private getScopeState() {
+    return computeBowScopeState({
+      isBlocking: this.isBlocking,
+      hasBowLoadout: hasRangedBowLoadout(this.getCurrentLoadout()),
+      isGliding: this.isGliding,
+      isSpectating: this.isSpectating,
+      baseFov: this.settings.fov,
+    });
+  }
 
   private handleMouseMove = (e: MouseEvent): void => {
     if (this.screen !== 'playing') return;
 
-    const sens = this.settings.sensitivity;
+    const sens = this.settings.sensitivity * this.getScopeState().sensitivityMult;
     const ySign = this.settings.invertY ? -1 : 1;
 
     if (this.pointerLocked) {
@@ -3238,6 +3353,10 @@ export class UnstableArenaEngine {
     const loadout = this.getCurrentLoadout();
     const item = loadout[this.activeSlot];
     if (!item) return;
+    if (isStealthAttackRestricted(item.id, this.stealthTimer > 0)) {
+      this.attackBuffer = 0;
+      return;
+    }
     const maxCds = this.getSlotMaxCooldowns(loadout);
 
     const used = consumeSlotUse(
@@ -3247,7 +3366,7 @@ export class UnstableArenaEngine {
       this.slotCooldowns,
       maxCds,
       this.slotUseDelays,
-      item.useDelay ?? (item.id === 'crossbow' ? 0.22 : item.cooldown <= 0 ? 0 : 0.25)
+      item.useDelay ?? (item.cooldown <= 0 ? 0 : 0.25)
     );
     if (!used) return;
     this.attackBuffer = 0;
@@ -3317,14 +3436,14 @@ export class UnstableArenaEngine {
       }
     } else if (slotId === 'shadow_step') {
       this.stealthTimer = 2.6;
-      this.playerRig.setOpacity(0.28);
+      this.playerRig.setOpacity(0.12);
       this.audio.playShadowStep();
       const aimX = -Math.sin(this.playerYaw);
       const aimZ = -Math.cos(this.playerYaw);
       this.playerVel.x += aimX * 12;
       this.playerVel.z += aimZ * 12;
       this.spawnParticles(this.playerPos.x, this.playerPos.y + 1, this.playerPos.z, 18, 0x818cf8, 7);
-      this.pushCallout('그림자 도약 · 2.6초 은신 & 이속 상승', '#818cf8');
+      this.pushCallout('그림자 도약 · 2.6초 은신 무적 (공격·피격 불가)', '#818cf8');
     } else if (slotId === 'gapple') {
       this.playerHp = this.playerMaxHp;
       this.playerBurnTimer = 0;
@@ -3657,7 +3776,9 @@ export class UnstableArenaEngine {
 
     const aimX = -Math.sin(this.playerYaw);
     const aimZ = -Math.cos(this.playerYaw);
-    const reach = kind === 'spear' ? 6.2 : kind === 'mace' ? 4.4 : 4.1;
+    const reach = kind === 'spear' ? 6.2 : kind === 'mace' ? 3.85 : 4.1;
+    const maxDyUp = kind === 'mace' ? 2.25 : 3.2;
+    const maxDyDown = kind === 'mace' ? 2.15 : 3.2;
 
     const effMode = this.getEffectiveRoomMode();
     const buffMults = computeBuffMultipliers(this.activeBuffs);
@@ -3668,13 +3789,14 @@ export class UnstableArenaEngine {
     let bestScore = Infinity;
 
     for (const enemy of this.enemies) {
-      if (!enemy.alive || enemy.koTimer > 0) continue;
+      if (!enemy.alive || enemy.koTimer > 0 || enemy.stealthTimer > 0) continue;
       if (!canDamageTarget(effMode, localTeam, enemy.team)) continue;
       const dx = enemy.pos.x - this.playerPos.x;
       const dy = enemy.pos.y - this.playerPos.y;
       const dz = enemy.pos.z - this.playerPos.z;
       const horizDist = Math.hypot(dx, dz);
-      if (horizDist > reach || Math.abs(dy) > 3.4) continue;
+      if (horizDist > reach || dy > maxDyUp || dy < -maxDyDown) continue;
+      if (kind === 'mace' && Math.hypot(dx, dy * 1.15, dz) > reach + 0.35) continue;
 
       const dot = horizDist < 0.1 ? 1 : (dx * aimX + dz * aimZ) / horizDist;
       if (dot > 0.22 && horizDist < bestScore) {
@@ -3686,13 +3808,14 @@ export class UnstableArenaEngine {
     let hitPeer: RemotePeerActor | null = null;
     let bestPeerScore = Infinity;
     for (const peer of this.remotePeers.values()) {
-      if (!peer.alive) continue;
+      if (!peer.alive || peer.isStealthed) continue;
       if (!canDamageTarget(effMode, localTeam, peer.team)) continue;
       const dx = peer.pos.x - this.playerPos.x;
       const dy = peer.pos.y - this.playerPos.y;
       const dz = peer.pos.z - this.playerPos.z;
       const horizDist = Math.hypot(dx, dz);
-      if (horizDist > reach || Math.abs(dy) > 3.4) continue;
+      if (horizDist > reach || dy > maxDyUp || dy < -maxDyDown) continue;
+      if (kind === 'mace' && Math.hypot(dx, dy * 1.15, dz) > reach + 0.35) continue;
       const dot = horizDist < 0.1 ? 1 : (dx * aimX + dz * aimZ) / horizDist;
       if (dot > 0.22 && horizDist < bestPeerScore) {
         bestPeerScore = horizDist;
@@ -3744,66 +3867,67 @@ export class UnstableArenaEngine {
     }
 
     const { damage, isSmash, shockwaveRadius } = computeMaceDamage(
-      32,
+      28,
       prof.damageMult * buffMults.damageMult * koMutatorMult,
       fallDist,
       this.playerOnGround
     );
-    this.showSlashArc(isSmash ? 0x38bdf8 : 0x94a3b8, isSmash ? 1.35 : 1.0);
+    this.showSlashArc(isSmash && (hitEnemy || hitPeer) ? 0x38bdf8 : 0x94a3b8, isSmash && (hitEnemy || hitPeer) ? 1.35 : 1.0);
 
-    if (isSmash && (hitEnemy || hitPeer || !this.playerOnGround)) {
-      const targetRef = hitPeer ?? hitEnemy;
-      const impactX = targetRef ? targetRef.pos.x : this.playerPos.x + aimX * 1.4;
-      const impactZ = targetRef ? targetRef.pos.z : this.playerPos.z + aimZ * 1.4;
-      const impactY = targetRef ? targetRef.pos.y + 0.1 : this.playerPos.y + 0.1;
+    // Mace smash & bounce ONLY trigger when actually connecting with a target within 3D Y-reach (never free-fly on whiff)
+    if (isSmash && (hitEnemy || hitPeer)) {
+      const targetRef = hitPeer ?? hitEnemy!;
+      const impactX = targetRef.pos.x;
+      const impactZ = targetRef.pos.z;
+      const impactY = targetRef.pos.y + 0.1;
 
       this.spawnShockwave(impactX, impactY, impactZ, shockwaveRadius, 0x38bdf8);
       this.spawnParticles(impactX, impactY + 0.5, impactZ, 28, 0x7dd3fc, 12);
-      this.audio.playMaceSmash(Math.min(1.6, fallDist / 8));
-      this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.62);
+      this.audio.playMaceSmash(Math.min(1.5, fallDist / 8));
+      this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.6);
       this.hitstopTimer = 0.072;
 
-      this.playerVel.y = 10.6;
+      this.playerVel.y = 8.4;
       this.playerOnGround = false;
-      this.playerFallStartY = this.playerPos.y + 3;
+      this.playerFallStartY = this.playerPos.y + 1.4;
 
       const roundedH = Math.round(fallDist);
       if (roundedH > this.maxSmashHeight) this.maxSmashHeight = roundedH;
 
       let totalHit = 0;
       for (const enemy of this.enemies) {
-        if (!enemy.alive || enemy.koTimer > 0) continue;
+        if (!enemy.alive || enemy.koTimer > 0 || enemy.stealthTimer > 0) continue;
         if (!canDamageTarget(effMode, localTeam, enemy.team)) continue;
         const d = Math.hypot(enemy.pos.x - impactX, enemy.pos.z - impactZ);
-        if (d <= shockwaveRadius) {
-          const splashDmg = enemy === hitEnemy ? damage : Math.round(damage * 0.68);
+        if (d <= shockwaveRadius && Math.abs(enemy.pos.y - impactY) <= 2.3) {
+          const splashDmg = enemy === hitEnemy ? damage : Math.round(damage * 0.62);
           const dirX = d > 0.05 ? (enemy.pos.x - impactX) / d : aimX;
           const dirZ = d > 0.05 ? (enemy.pos.z - impactZ) / d : aimZ;
-          enemy.vel.y = Math.max(enemy.vel.y, 10.2);
+          enemy.vel.y = Math.max(enemy.vel.y, 9.2);
           enemy.onGround = false;
-          this.applyHitToEnemy(enemy, splashDmg, true, true, true, dirX, dirZ, 15.0, '메이스 스매시', 'mace');
+          this.applyHitToEnemy(enemy, splashDmg, true, true, true, dirX, dirZ, 13.5, '메이스 스매시', 'mace');
           totalHit++;
         }
       }
       for (const peer of this.remotePeers.values()) {
-        if (!peer.alive) continue;
+        if (!peer.alive || peer.isStealthed) continue;
         if (!canDamageTarget(effMode, localTeam, peer.team)) continue;
         const d = Math.hypot(peer.pos.x - impactX, peer.pos.z - impactZ);
-        if (d <= shockwaveRadius) {
-          const splashDmg = peer === hitPeer ? damage : Math.round(damage * 0.68);
+        if (d <= shockwaveRadius && Math.abs(peer.pos.y - impactY) <= 2.3) {
+          const splashDmg = peer === hitPeer ? damage : Math.round(damage * 0.62);
           const dirX = d > 0.05 ? (peer.pos.x - impactX) / d : aimX;
           const dirZ = d > 0.05 ? (peer.pos.z - impactZ) / d : aimZ;
-          this.applyHitToRemotePeer(peer, splashDmg, true, true, dirX, dirZ, 15.0, false, 'mace');
+          this.applyHitToRemotePeer(peer, splashDmg, true, true, dirX, dirZ, 13.5, false, 'mace');
           totalHit++;
         }
       }
       if (totalHit > 0) {
-        this.pushCallout(`메이스 스매시 · ${roundedH}m 낙하 · ${damage} DMG`, '#38bdf8');
+        this.pushCallout(`철퇴 스매시 · ${roundedH}m 낙하 · ${damage} DMG`, '#38bdf8');
       }
     } else if (hitPeer) {
       this.applyHitToRemotePeer(hitPeer, damage, false, false, aimX, aimZ, 9.0, false, 'mace');
     } else if (hitEnemy) {
-      this.applyHitToEnemy(hitEnemy, damage, false, false, false, aimX, aimZ, 9.0, '메이스', 'mace');
+      this.applyHitToEnemy(hitEnemy, damage, false, false, false, aimX, aimZ, 9.0, '철퇴', 'mace');
     }
   }
 
@@ -3959,7 +4083,7 @@ export class UnstableArenaEngine {
 
   private registerLocalPlayerKill(victimName: string, _weaponId?: WeaponSlotId, isBountyKill = false): void {
     this.multiKillStreak = this.multiKillWindowTimer > 0 ? this.multiKillStreak + 1 : 1;
-    this.multiKillWindowTimer = 4.2;
+    this.multiKillWindowTimer = 5.5;
 
     // Adrenaline Kill Bonus + Surge Event Bounty Rush + Bounty King Reward
     const surgeMods = computeSurgeModifiers(this.activeArenaEvent);
@@ -3982,25 +4106,29 @@ export class UnstableArenaEngine {
     }
     this.elytraCooldown = isBountyKill ? 0 : Math.max(0, this.elytraCooldown * 0.5);
 
-    if (isBountyKill) {
-      this.audio.playBountyClaim();
-      this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.2, this.playerPos.z, 28, 0xfacc15, 9);
-      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.08, this.playerPos.z, 4.2, 0xfacc15);
-      this.pushCallout(`👑 현상금 킹 처치! ${victimName} (+${healGain} HP · 전 스킬 쿨초기화!)`, '#facc15');
-    } else if (this.multiKillStreak >= 2) {
-      const streakLabel =
-        this.multiKillStreak === 2
+    const streakLabel =
+      this.multiKillStreak === 1
+        ? `${victimName} 처치!`
+        : this.multiKillStreak === 2
           ? '더블 킬!'
           : this.multiKillStreak === 3
             ? '트리플 킬!'
             : this.multiKillStreak === 4
               ? '쿼드라 킬!'
               : this.multiKillStreak === 5
-                ? '펜타 킬!!'
-                : `${this.multiKillStreak}연속 처치!!`;
-      this.multiKillText = streakLabel;
-      this.multiKillBannerTimer = 2.4;
-      this.audio.playMultiKillChime(this.multiKillStreak);
+                ? '펜타 킬 · ACE!'
+                : `오버킬 (${this.multiKillStreak}연속 처치!!)`;
+
+    this.multiKillText = streakLabel;
+    this.multiKillBannerTimer = this.multiKillStreak >= 4 ? 2.6 : 1.9;
+    this.audio.playMultiKillChime(this.multiKillStreak);
+
+    if (isBountyKill) {
+      this.audio.playBountyClaim();
+      this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.2, this.playerPos.z, 28, 0xfacc15, 9);
+      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.08, this.playerPos.z, 4.2, 0xfacc15);
+      this.pushCallout(`👑 현상금 킹 처치! ${victimName} (+${healGain} HP · 전 스킬 쿨초기화!)`, '#facc15');
+    } else if (this.multiKillStreak >= 2) {
       this.pushCallout(`${streakLabel} · ${victimName} 처치 (+${healGain} HP)`, '#f59e0b');
     } else {
       this.pushCallout(`${victimName} 처치! (+${healGain} HP · 쿨타임 가속)`, '#fbbf24');
@@ -4203,7 +4331,15 @@ export class UnstableArenaEngine {
         .normalize();
 
       _right.set(Math.cos(this.playerYaw), 0, -Math.sin(this.playerYaw));
-      const shoulderOffset = this.cameraMode === 'shiftlock' ? 1.05 : 0.0;
+      const scopeActive = this.getScopeState().isScoped;
+      const shoulderOffset =
+        this.cameraMode === 'shiftlock'
+          ? scopeActive
+            ? 0.92
+            : 1.05
+          : scopeActive
+            ? 0.85
+            : 0.0;
 
       _v1
         .set(
@@ -4249,9 +4385,9 @@ export class UnstableArenaEngine {
     slot.damage =
       custom?.damage ??
       (kind === 'arrow'
-        ? Math.round(24 * prof.damageMult)
+        ? Math.round(18 * prof.damageMult)
         : kind === 'bolt'
-          ? Math.round(15 * prof.damageMult)
+          ? Math.round(12 * prof.damageMult)
           : kind === 'trident'
             ? Math.round(24 * prof.damageMult)
             : 0);
@@ -4301,7 +4437,7 @@ export class UnstableArenaEngine {
     const p3D = Math.hypot(pDist, pDy);
     const isLocalOwner = ownerId === (this.mpState.selfId ?? 'player');
     const effMode = this.getEffectiveRoomMode();
-    if (p3D < 5.4 && (isLocalOwner || canDamageTarget(effMode, ownerTeam, this.getLocalPlayerTeam()))) {
+    if (p3D < 5.4 && (isLocalOwner || (this.stealthTimer <= 0 && canDamageTarget(effMode, ownerTeam, this.getLocalPlayerTeam())))) {
       const strength = 1 - p3D / 5.4;
       this.playerVel.y = Math.max(this.playerVel.y, 14.0 + strength * 5.5);
       if (pDist > 0.2) {
@@ -4314,7 +4450,7 @@ export class UnstableArenaEngine {
 
     if (isLocalOwner) {
       for (const enemy of this.enemies) {
-        if (!enemy.alive || enemy.koTimer > 0) continue;
+        if (!enemy.alive || enemy.koTimer > 0 || enemy.stealthTimer > 0) continue;
         if (!canDamageTarget(effMode, ownerTeam, enemy.team)) continue;
         const d = Math.hypot(enemy.pos.x - pos.x, enemy.pos.z - pos.z);
         const dy = enemy.pos.y + 0.8 - pos.y;
@@ -4329,7 +4465,7 @@ export class UnstableArenaEngine {
         }
       }
       for (const peer of this.remotePeers.values()) {
-        if (!peer.alive) continue;
+        if (!peer.alive || peer.isStealthed) continue;
         if (!canDamageTarget(effMode, ownerTeam, peer.team)) continue;
         const d = Math.hypot(peer.pos.x - pos.x, peer.pos.z - pos.z);
         if (d < 5.6) {
@@ -4385,7 +4521,7 @@ export class UnstableArenaEngine {
           this.playerVel.z += ((this.playerPos.z - pos.z) / pDist) * 14.0 * falloff;
         }
         this.playerOnGround = false;
-      } else if (canDamageTarget(this.getEffectiveRoomMode(), ownerTeam, localTeam)) {
+      } else if (this.stealthTimer <= 0 && canDamageTarget(this.getEffectiveRoomMode(), ownerTeam, localTeam)) {
         const dirX = pDist > 0.1 ? (this.playerPos.x - pos.x) / pDist : 0;
         const dirZ = pDist > 0.1 ? (this.playerPos.z - pos.z) / pDist : 1;
         const dmg = Math.round(62 + falloff * 58);
@@ -4395,7 +4531,7 @@ export class UnstableArenaEngine {
 
     if (isLocalOwner) {
       for (const enemy of this.enemies) {
-        if (!enemy.alive || enemy.koTimer > 0) continue;
+        if (!enemy.alive || enemy.koTimer > 0 || enemy.stealthTimer > 0) continue;
         if (!canDamageTarget(this.getEffectiveRoomMode(), ownerTeam, enemy.team)) continue;
         const d = Math.hypot(enemy.pos.x - pos.x, enemy.pos.z - pos.z);
         if (d < blastRadius && Math.abs(enemy.pos.y - pos.y) < 5.5) {
@@ -4407,7 +4543,7 @@ export class UnstableArenaEngine {
         }
       }
       for (const peer of this.remotePeers.values()) {
-        if (!peer.alive) continue;
+        if (!peer.alive || peer.isStealthed) continue;
         if (!canDamageTarget(this.getEffectiveRoomMode(), ownerTeam, peer.team)) continue;
         const d = Math.hypot(peer.pos.x - pos.x, peer.pos.z - pos.z);
         if (d < blastRadius && Math.abs(peer.pos.y - pos.y) < 5.5) {
@@ -4427,7 +4563,7 @@ export class UnstableArenaEngine {
       }
     } else if (ownerBot) {
       for (const enemy of this.enemies) {
-        if (!enemy.alive || enemy.koTimer > 0 || enemy.id === ownerId) continue;
+        if (!enemy.alive || enemy.koTimer > 0 || enemy.stealthTimer > 0 || enemy.id === ownerId) continue;
         if (!canDamageTarget(this.getEffectiveRoomMode(), ownerTeam, enemy.team)) continue;
         const d = Math.hypot(enemy.pos.x - pos.x, enemy.pos.z - pos.z);
         if (d < blastRadius && Math.abs(enemy.pos.y - pos.y) < 5.5) {
@@ -4520,6 +4656,7 @@ export class UnstableArenaEngine {
     const supY = getSupportHeightAt(resolved.x, resolved.z, 20, PLAYER_RADIUS, this.blocks);
     this.playerPos.set(resolved.x, supY + 0.2, resolved.z);
     this.playerVel.set(0, 0, 0);
+    this.playerJumpCount = 0;
     this.isGliding = false;
     this.elytraFlightRemaining = 0;
     this.fireworkBoostTimer = 0;
@@ -4848,20 +4985,36 @@ export class UnstableArenaEngine {
         orb.mesh.visible = false;
       }
       this.titleOrbitAngle += dt * 0.18;
-      const stageX = 1.25;
+      const stageX = 0;
       const stageZ = 8.4;
       const stageY = getSupportHeightAt(stageX, stageZ, 16, PLAYER_RADIUS, this.blocks);
       this.playerRig.root.visible = true;
       this.playerRig.root.position.set(stageX, stageY, stageZ);
-      this.playerRig.root.rotation.set(0, -0.3 + Math.sin(timeSec * 0.85) * 0.14, 0);
+      this.playerRig.root.rotation.set(0, Math.sin(timeSec * 0.85) * 0.16, 0);
       this.playerRig.shadowDisc.position.y = 0.025;
 
+      const targetBlend = this.previewRestoreMapId !== null ? 1 : 0;
+      this.titlePreviewBlend += (targetBlend - this.titlePreviewBlend) * Math.min(1, dt * 6.5);
+      const b = this.titlePreviewBlend;
+
+      const baseCamX = Math.sin(this.titleOrbitAngle * 0.7) * 0.35;
+      const baseCamY = stageY + 1.52 + Math.sin(this.titleOrbitAngle * 0.5) * 0.08;
+      const baseCamZ = stageZ + 3.85 + Math.cos(this.titleOrbitAngle * 0.7) * 0.22;
+
+      const overviewCamX = Math.sin(this.titleOrbitAngle * 0.55) * 16;
+      const overviewCamY = 17.5;
+      const overviewCamZ = Math.cos(this.titleOrbitAngle * 0.55) * 19 + 7;
+
       this.camera.position.set(
-        0.15 + Math.sin(this.titleOrbitAngle * 0.7) * 0.45,
-        stageY + 1.55 + Math.sin(this.titleOrbitAngle * 0.5) * 0.1,
-        stageZ + 3.9 + Math.cos(this.titleOrbitAngle * 0.7) * 0.25
+        baseCamX + (overviewCamX - baseCamX) * b,
+        baseCamY + (overviewCamY - baseCamY) * b,
+        baseCamZ + (overviewCamZ - baseCamZ) * b
       );
-      this.camera.lookAt(0.35, stageY + 1.05, stageZ - 3.5);
+      this.camera.lookAt(
+        0,
+        stageY + 0.98 + (1.8 - (stageY + 0.98)) * b,
+        (stageZ - 3.5) * (1 - b)
+      );
       this.animateIdleFighter(this.playerRig, timeSec);
       for (const e of this.enemies) {
         this.animateIdleFighter(e.rig, timeSec + e.pos.x);
@@ -4875,15 +5028,22 @@ export class UnstableArenaEngine {
 
     this.shakeTrauma = Math.max(0, this.shakeTrauma - dt * 2.1);
     const baseFov = this.settings.fov;
-    const desiredFov =
-      this.fireworkBoostTimer > 0
+    const scopeState = this.getScopeState();
+    const desiredFov = scopeState.isScoped
+      ? scopeState.targetFov
+      : this.fireworkBoostTimer > 0
         ? Math.min(110, baseFov + 8)
         : this.isGliding
           ? Math.min(106, baseFov + 4)
           : this.stealthTimer > 0
             ? Math.max(58, baseFov - 2)
             : baseFov;
-    this.fovCurrent = THREE.MathUtils.damp(this.fovCurrent, desiredFov, 9, dt);
+    this.fovCurrent = THREE.MathUtils.damp(
+      this.fovCurrent,
+      desiredFov,
+      scopeState.isScoped ? 13 : 10,
+      dt
+    );
     if (Math.abs(this.camera.fov - this.fovCurrent) > 0.05) {
       this.camera.fov = this.fovCurrent;
       this.camera.updateProjectionMatrix();
@@ -5274,8 +5434,12 @@ export class UnstableArenaEngine {
       }
     }
 
+    const hudInterval =
+      !this.playerOnGround && this.getCurrentLoadout().some((i) => i?.id === 'mace')
+        ? 0.04
+        : 0.08;
     this.hudThrottle += wallDt;
-    if (this.hudThrottle >= 0.08) {
+    if (this.hudThrottle >= hudInterval) {
       this.hudThrottle = 0;
       this.emitHud(false);
     }
@@ -5676,24 +5840,42 @@ export class UnstableArenaEngine {
 
     if (this.playerOnGround) {
       this.playerCoyote = 0.12;
+      this.playerJumpCount = 0;
     } else {
       this.playerCoyote = Math.max(0, this.playerCoyote - dt);
     }
     const koMutator =
       this.customPartyMode === 'knockout' ? pickKnockoutMutator(this.knockoutRound) : null;
+    const canDoubleJump = hasDoubleJumpLoadout(this.getCurrentLoadout());
     if (this.playerJumpBuffer > 0) {
       this.playerJumpBuffer = Math.max(0, this.playerJumpBuffer - dt);
-      if (this.playerCoyote > 0 || inWeb || inWater) {
+      const jumpStep = stepPlayerJump({
+        jumpCount: this.playerJumpCount,
+        canDoubleJump,
+        canGroundJump: this.playerCoyote > 0 || inWeb || inWater,
+        isGliding: this.isGliding,
+      });
+      if (jumpStep.jumped) {
+        const baseVy = computeJumpVelocity({
+          inWeb,
+          canDoubleJump,
+          isDoubleJump: jumpStep.isDoubleJump,
+        });
         this.playerVel.y =
-          (inWeb ? 4.8 : 11.2) *
+          baseVy *
           buffMults.jumpMult *
           surgeMods.jumpMult *
           (koMutator ? koMutator.jumpMult : 1.0);
+        this.playerJumpCount = jumpStep.nextJumpCount;
         this.playerOnGround = false;
         this.playerCoyote = 0;
         this.playerJumpBuffer = 0;
-        this.squashY = 1.2;
+        this.squashY = jumpStep.isDoubleJump ? 1.28 : canDoubleJump ? 1.24 : 1.2;
         this.audio.playJump();
+        if (jumpStep.isDoubleJump) {
+          this.playerFallStartY = Math.max(this.playerFallStartY, this.playerPos.y);
+          this.spawnParticles(this.playerPos.x, this.playerPos.y + 0.15, this.playerPos.z, 16, 0x38bdf8, 6.8);
+        }
       }
     }
 
@@ -5736,6 +5918,7 @@ export class UnstableArenaEngine {
       this.playerPos.y = supportY;
       this.playerVel.y = 0;
       this.playerOnGround = true;
+      this.playerJumpCount = 0;
       this.isGliding = false;
       this.elytraFlightRemaining = 0;
       this.playerFallStartY = supportY;
@@ -5760,6 +5943,7 @@ export class UnstableArenaEngine {
             this.playerVel.z += _v1.z * pad.boostForward;
           }
           this.playerOnGround = false;
+          this.playerJumpCount = Math.max(this.playerJumpCount, 1);
           this.playerFallStartY = Math.max(this.playerFallStartY, this.playerPos.y + pad.boostY * 0.45);
           this.squashY = 1.28;
           this.audio.playJumpPad();
@@ -5885,7 +6069,7 @@ export class UnstableArenaEngine {
       let hitLocalPlayer = false;
 
       for (const e of this.enemies) {
-        if (!e.alive || e.koTimer > 0 || e.id === p.ownerId) continue;
+        if (!e.alive || e.koTimer > 0 || e.stealthTimer > 0 || e.id === p.ownerId) continue;
         if (p.ownerId !== localSelfId && !canDamageTarget(this.getEffectiveRoomMode(), p.ownerTeam, e.team)) continue;
         if (p.ownerId === localSelfId && !canDamageTarget(this.getEffectiveRoomMode(), localTeam, e.team)) continue;
         if (
@@ -5900,7 +6084,7 @@ export class UnstableArenaEngine {
 
       if (!hitEnemy && p.ownerId === localSelfId) {
         for (const peer of this.remotePeers.values()) {
-          if (!peer.alive) continue;
+          if (!peer.alive || peer.isStealthed) continue;
           if (!canDamageTarget(this.getEffectiveRoomMode(), localTeam, peer.team)) continue;
           if (
             Math.hypot(p.pos.x - peer.pos.x, p.pos.z - peer.pos.z) < 1.25 &&
@@ -5917,6 +6101,7 @@ export class UnstableArenaEngine {
         !hitEnemy &&
         !hitPeer &&
         p.ownerId !== localSelfId &&
+        this.stealthTimer <= 0 &&
         this.localRespawnTimer <= 0 &&
         canDamageTarget(this.getEffectiveRoomMode(), p.ownerTeam, localTeam) &&
         Math.hypot(p.pos.x - this.playerPos.x, p.pos.z - this.playerPos.z) < 1.2 &&
@@ -6006,9 +6191,10 @@ export class UnstableArenaEngine {
                 this.spawnParticles(hitEnemy.pos.x, hitEnemy.pos.y + 1.3, hitEnemy.pos.z, 18, 0xfacc15, 9);
               }
             } else {
-              // AI vs AI projectile hit
+              // AI vs AI projectile hit (scaled so ranged AIs cleanly eliminate rival AIs)
               const shooter = this.enemies.find((e) => e.id === p.ownerId);
-              const resolvedProjDmg = computeOneShotDamage(dmg, this.customPartyMode === 'one_shot');
+              const aiProjDmg = Math.round(dmg * 1.45);
+              const resolvedProjDmg = computeOneShotDamage(aiProjDmg, this.customPartyMode === 'one_shot');
               const res = applyCombatDamage(
                 { hp: hitEnemy.hp, maxHp: hitEnemy.maxHp, absorption: hitEnemy.absorption, isBlocking: hitEnemy.isBlocking },
                 resolvedProjDmg,
@@ -6157,7 +6343,7 @@ export class UnstableArenaEngine {
       e.healCd = Math.max(0, e.healCd - dt);
       if (e.stealthTimer > 0) {
         e.stealthTimer = Math.max(0, e.stealthTimer - dt);
-        e.rig.setOpacity(e.stealthTimer > 0 ? 0.28 : 1);
+        e.rig.setOpacity(e.stealthTimer > 0 ? 0.12 : 1);
         if (e.stealthTimer <= 0) {
           e.rig.setTeamOutline(this.getRelationVisuals(e.team).outlineHex);
         }
@@ -6186,25 +6372,24 @@ export class UnstableArenaEngine {
         this.spawnParticles(e.pos.x, e.pos.y + 0.9, e.pos.z, 12, 0x38bdf8, 5);
       }
 
-      // Smart healing skill (gapple / potion) with proper cooldown & difficulty threshold
+      // Balanced healing skill (only characters with gapple/potion heal, with proper cooldown so AI battles finish cleanly)
       if (e.hp < e.maxHp * diff.healThreshold && e.healCd <= 0) {
         const hasGapple = e.profile.loadout.some((item) => item?.id === 'gapple');
         const hasPotion = e.profile.loadout.some((item) => item?.id === 'potion');
         if (hasGapple) {
-          e.healCd = 11.0;
-          e.hp = e.maxHp;
-          e.absorption = Math.min(20, e.absorption + 15);
+          e.healCd = 16.5;
+          e.hp = Math.min(e.maxHp, e.hp + Math.round(e.maxHp * 0.62));
+          e.absorption = Math.min(14, e.absorption + 10);
           this.spawnParticles(e.pos.x, e.pos.y + 1.1, e.pos.z, 18, 0xfacc15, 7);
+          e.overhead.updateHp(e.hp / e.maxHp);
         } else if (hasPotion) {
-          e.healCd = 7.5;
-          e.hp = Math.min(e.maxHp, e.hp + 65);
+          e.healCd = 11.0;
+          e.hp = Math.min(e.maxHp, e.hp + 45);
           this.spawnParticles(e.pos.x, e.pos.y + 1.1, e.pos.z, 16, 0xf43f5e, 6.5);
+          e.overhead.updateHp(e.hp / e.maxHp);
         } else {
-          e.healCd = 10.0;
-          e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.35);
-          this.spawnParticles(e.pos.x, e.pos.y + 1.1, e.pos.z, 14, 0xfacc15, 6);
+          e.healCd = 99;
         }
-        e.overhead.updateHp(e.hp / e.maxHp);
       }
 
       // Acquire nearest hostile target (player, remote peer, or opposing team AI)
@@ -6298,7 +6483,8 @@ export class UnstableArenaEngine {
             this.fireProjectile('cobweb_orb', { ownerId: e.id, ownerTeam: e.team, origin: _v1, dir: _v2 });
           } else if (hasWeapon('shadow_step')) {
             e.stealthTimer = 2.0;
-            e.rig.setOpacity(0.28);
+            e.rig.setOpacity(0.12);
+            e.rig.setTeamOutline(null);
             e.vel.x -= dirX * 12;
             e.vel.z -= dirZ * 12;
             this.spawnParticles(e.pos.x, e.pos.y + 1, e.pos.z, 14, 0x818cf8, 6);
@@ -6306,7 +6492,7 @@ export class UnstableArenaEngine {
         }
 
         // Fire bow / crossbow projectile!
-        if (targetKind && e.attackCooldown <= 0 && dist < 44 && Math.abs(targetPos.y - e.pos.y) < 16) {
+        if (e.stealthTimer <= 0 && targetKind && e.attackCooldown <= 0 && dist < 44 && Math.abs(targetPos.y - e.pos.y) < 16) {
           e.attackCooldown = (isCrossbow ? 0.85 : 1.35) * diff.attackCooldownMult;
           e.swingTimer = 0.22;
           _v1.set(e.pos.x, e.pos.y + 1.48, e.pos.z);
@@ -6322,7 +6508,7 @@ export class UnstableArenaEngine {
             ownerTeam: e.team,
             origin: _v1,
             dir: _v2,
-            damage: Math.round((isCrossbow ? 13 : 19) * e.profile.damageMult),
+            damage: Math.round((isCrossbow ? 10 : 15) * e.profile.damageMult),
           });
         }
       } else if (e.policy === 'wind_diver') {
@@ -6337,7 +6523,7 @@ export class UnstableArenaEngine {
           e.fallStartY = e.pos.y + 8;
           this.spawnParticles(e.pos.x, e.pos.y + 0.3, e.pos.z, 16, 0x38bdf8, 8);
           this.audio.playWindCharge();
-        } else if (targetKind && e.specialCd <= 0 && dist >= 7 && dist < 20 && hasWeapon('wind_charge')) {
+        } else if (e.stealthTimer <= 0 && targetKind && e.specialCd <= 0 && dist >= 7 && dist < 20 && hasWeapon('wind_charge')) {
           e.specialCd = 4.6;
           _v1.set(e.pos.x, e.pos.y + 1.45, e.pos.z);
           _v2.set(dx, (targetPos.y + 0.8) - (e.pos.y + 1.45), dz).normalize();
@@ -6358,11 +6544,12 @@ export class UnstableArenaEngine {
           e.specialCd = 5.8;
           if (hasWeapon('shadow_step')) {
             e.stealthTimer = 2.1;
-            e.rig.setOpacity(0.28);
+            e.rig.setOpacity(0.12);
+            e.rig.setTeamOutline(null);
             e.vel.x += dirX * 13;
             e.vel.z += dirZ * 13;
             this.spawnParticles(e.pos.x, e.pos.y + 1, e.pos.z, 16, 0x818cf8, 7);
-          } else if (hasWeapon('cobweb')) {
+          } else if (e.stealthTimer <= 0 && hasWeapon('cobweb')) {
             _v1.set(e.pos.x, e.pos.y + 1.45, e.pos.z);
             _v2.set(dx, (targetPos.y + 0.9) - (e.pos.y + 1.45) + 0.14, dz).normalize();
             this.fireProjectile('cobweb_orb', { ownerId: e.id, ownerTeam: e.team, origin: _v1, dir: _v2 });
@@ -6403,6 +6590,49 @@ export class UnstableArenaEngine {
           const ly = getSupportHeightAt(targetPos.x, targetPos.z, targetPos.y + 1.2, 0.4, this.blocks);
           this.spawnHazardPool('lava', targetPos.x, ly, targetPos.z, e.id, false, e.team);
         }
+      } else if (e.profile.archetype === 'spear_master') {
+        // 창쟁이: 장거리 창 거리(3.8~4.6m) 유지 견제 + 삼지창 투척
+        if (dist > 4.6) {
+          moveX = dirX * 0.95 + -dirZ * 0.45 * e.strafeDir;
+          moveZ = dirZ * 0.95 + dirX * 0.45 * e.strafeDir;
+        } else if (dist < 3.0) {
+          moveX = -dirX * 0.65 + -dirZ * 0.7 * e.strafeDir;
+          moveZ = -dirZ * 0.65 + dirX * 0.7 * e.strafeDir;
+        } else {
+          moveX = -dirZ * e.strafeDir;
+          moveZ = dirX * e.strafeDir;
+        }
+        if (targetKind && e.specialCd <= 0 && dist > 6.5 && dist < 26 && hasWeapon('trident')) {
+          e.specialCd = 4.2;
+          _v1.set(e.pos.x, e.pos.y + 1.48, e.pos.z);
+          _v2.set(dx, (targetPos.y + 1.1) - (e.pos.y + 1.48), dz).normalize();
+          this.fireProjectile('trident', {
+            ownerId: e.id,
+            ownerTeam: e.team,
+            origin: _v1,
+            dir: _v2,
+            damage: Math.round(22 * e.profile.damageMult),
+          });
+        }
+      } else if (e.profile.archetype === 'pyromancer') {
+        // 폭탄광: TNT와 용암을 적극 살포하는 영역 제압형
+        if (dist > 5.5) {
+          moveX = dirX * 0.85 + -dirZ * 0.55 * e.strafeDir;
+          moveZ = dirZ * 0.85 + dirX * 0.55 * e.strafeDir;
+        } else {
+          moveX = -dirZ * e.strafeDir;
+          moveZ = dirX * e.strafeDir;
+        }
+        if (targetKind && e.specialCd <= 0 && dist > 4.5 && dist < 18 && hasWeapon('tnt_charge')) {
+          e.specialCd = 5.2;
+          _v1.set(e.pos.x, e.pos.y + 1.45, e.pos.z);
+          _v2.set(dx, (targetPos.y + 1.0) - (e.pos.y + 1.45) + 0.16, dz).normalize();
+          this.throwTntBlock({ ownerId: e.id, ownerTeam: e.team, origin: _v1, dir: _v2 });
+        } else if (targetKind && e.pearlCd <= 0 && dist >= 2.8 && dist < 8.0 && hasWeapon('lava_bucket')) {
+          e.pearlCd = 6.2;
+          const ly = getSupportHeightAt(targetPos.x, targetPos.z, targetPos.y + 1.2, 0.4, this.blocks);
+          this.spawnHazardPool('lava', targetPos.x, ly, targetPos.z, e.id, false, e.team);
+        }
       } else {
         if (dist > 2.6) {
           moveX = dirX * 0.9 + -dirZ * 0.6 * e.strafeDir;
@@ -6411,13 +6641,14 @@ export class UnstableArenaEngine {
           moveX = -dirZ * e.strafeDir;
           moveZ = dirX * e.strafeDir;
         }
-        if (e.onGround && !enemyWebbed && dist < 4.8 && Math.random() < 0.04) {
-          e.vel.y = 10.5;
+        const jumpChance = e.profile.archetype === 'acrobat' ? 0.12 : 0.04;
+        if (e.onGround && !enemyWebbed && dist < 5.5 && Math.random() < jumpChance) {
+          e.vel.y = e.profile.archetype === 'acrobat' ? 12.2 : 10.5;
           e.onGround = false;
         }
-        if (targetKind && e.specialCd <= 0 && dist > 7 && dist < 24) {
+        if (targetKind && e.specialCd <= 0 && dist > 6 && dist < 24) {
           if (hasWeapon('trident')) {
-            e.specialCd = 4.8;
+            e.specialCd = 4.6;
             _v1.set(e.pos.x, e.pos.y + 1.48, e.pos.z);
             _v2.set(dx, (targetPos.y + 1.1) - (e.pos.y + 1.48), dz).normalize();
             this.fireProjectile('trident', {
@@ -6425,15 +6656,15 @@ export class UnstableArenaEngine {
               ownerTeam: e.team,
               origin: _v1,
               dir: _v2,
-              damage: Math.round(20 * e.profile.damageMult),
+              damage: Math.round(21 * e.profile.damageMult),
             });
           } else if (hasWeapon('tnt_charge') && dist < 16) {
-            e.specialCd = 7.2;
+            e.specialCd = 6.6;
             _v1.set(e.pos.x, e.pos.y + 1.45, e.pos.z);
             _v2.set(dx, (targetPos.y + 1.0) - (e.pos.y + 1.45) + 0.18, dz).normalize();
             this.throwTntBlock({ ownerId: e.id, ownerTeam: e.team, origin: _v1, dir: _v2 });
           } else if (hasWeapon('wind_charge') && dist < 14) {
-            e.specialCd = 4.5;
+            e.specialCd = e.profile.archetype === 'acrobat' ? 2.8 : 4.4;
             _v1.set(e.pos.x, e.pos.y + 1.45, e.pos.z);
             _v2.set(dx, (targetPos.y + 0.8) - (e.pos.y + 1.45), dz).normalize();
             this.fireProjectile('wind_charge', { ownerId: e.id, ownerTeam: e.team, origin: _v1, dir: _v2 });
@@ -6460,7 +6691,10 @@ export class UnstableArenaEngine {
         dist < 22 &&
         Math.random() < (this.botDifficulty === 'hard' ? 0.065 : 0.038)
       ) {
-        e.vel.y = 9.8 + Math.random() * 1.4;
+        const aiHasDoubleJump = hasDoubleJumpLoadout(e.profile.loadout);
+        e.vel.y = aiHasDoubleJump
+          ? 15.2 + Math.random() * 2.4
+          : 9.8 + Math.random() * 1.4;
         e.onGround = false;
       }
 
@@ -6556,31 +6790,33 @@ export class UnstableArenaEngine {
           this.executeEnemyAttack(e, dist, dirX, dirZ, targetKind, targetEnemy, targetPeer);
         }
       } else if (
+        e.stealthTimer <= 0 &&
         targetKind !== null &&
         e.policy !== 'ranged_kite' &&
         e.attackCooldown <= 0 &&
-        dist < 3.6 &&
-        Math.abs(targetPos.y - e.pos.y) < 3.0
+        dist < (e.profile.archetype === 'spear_master' ? 4.8 : targetKind === 'enemy' ? 4.0 : 3.6) &&
+        Math.abs(targetPos.y - e.pos.y) < 2.6
       ) {
         if (activeTokens < 2 || targetKind === 'enemy') {
           activeTokens++;
           e.isBlocking = false;
           e.telegraphKind = e.policy === 'wind_diver' && !e.onGround ? 'smash' : 'melee';
-          e.telegraphTimer = diff.telegraphTime;
-          e.attackCooldown = (e.isBoss ? 1.05 : 1.4) * diff.attackCooldownMult;
+          e.telegraphTimer = targetKind === 'enemy' ? Math.min(0.2, diff.telegraphTime * 0.55) : diff.telegraphTime;
+          e.attackCooldown = (e.isBoss ? 1.0 : targetKind === 'enemy' ? 0.95 : 1.35) * diff.attackCooldownMult;
           if (targetKind === 'player') this.audio.playTelegraph();
         }
       } else if (
+        e.stealthTimer <= 0 &&
         targetKind !== null &&
         e.policy === 'ranged_kite' &&
         e.attackCooldown <= 0 &&
         dist < 3.4 &&
-        Math.abs(targetPos.y - e.pos.y) < 3.0
+        Math.abs(targetPos.y - e.pos.y) < 2.6
       ) {
         e.isBlocking = false;
         e.telegraphKind = 'melee';
-        e.telegraphTimer = Math.max(0.2, diff.telegraphTime * 0.8);
-        e.attackCooldown = 1.25 * diff.attackCooldownMult;
+        e.telegraphTimer = Math.max(0.18, diff.telegraphTime * 0.75);
+        e.attackCooldown = 1.2 * diff.attackCooldownMult;
       }
 
       e.rig.root.position.copy(e.pos);
@@ -6610,7 +6846,7 @@ export class UnstableArenaEngine {
         Math.hypot(e.pos.x - this.camPos.x, e.pos.z - this.camPos.z) < 0.9 &&
         Math.abs(e.pos.y + 1.2 - this.camPos.y) < 1.8;
       e.rig.root.visible = !fpHideEnemy;
-      e.overhead.group.visible = !fpHideEnemy;
+      e.overhead.group.visible = e.stealthTimer <= 0 && !fpHideEnemy;
       e.overhead.group.quaternion.copy(this.camera.quaternion);
     }
   }
@@ -6677,7 +6913,15 @@ export class UnstableArenaEngine {
     attackerBot?: AiFighter,
     weaponId: WeaponSlotId = 'sword'
   ): void {
-    if (this.isSpectating || this.outcome !== null || this.defeatDelayTimer > 0 || this.localRespawnTimer > 0) return;
+    if (
+      this.isSpectating ||
+      this.outcome !== null ||
+      this.defeatDelayTimer > 0 ||
+      this.localRespawnTimer > 0 ||
+      this.stealthTimer > 0
+    ) {
+      return;
+    }
 
     const resolvedDmg = computeOneShotDamage(rawDmg, this.customPartyMode === 'one_shot');
     const res = applyCombatDamage(
@@ -6749,6 +6993,7 @@ export class UnstableArenaEngine {
     targetEnemy: AiFighter | null,
     _targetPeer: RemotePeerActor | null
   ): void {
+    if (e.stealthTimer > 0) return;
     const isSmash = e.telegraphKind === 'smash';
     if (isSmash) {
       this.spawnShockwave(e.pos.x, e.pos.y + 0.08, e.pos.z, 3.8, 0xef4444);
@@ -6757,8 +7002,18 @@ export class UnstableArenaEngine {
       this.audio.playSwing();
     }
 
-    if (dist > (isSmash ? 4.1 : 3.6)) return;
-    const baseAiDmg = isSmash ? 22 : e.isBoss ? 17 : 12;
+    const maxStrikeDist =
+      targetKind === 'enemy'
+        ? e.profile.archetype === 'spear_master'
+          ? 5.3
+          : 4.5
+        : isSmash
+          ? 3.85
+          : e.profile.archetype === 'spear_master'
+            ? 4.4
+            : 3.6;
+    if (dist > maxStrikeDist) return;
+    const baseAiDmg = Math.round((isSmash ? 22 : e.isBoss ? 17 : 13) * e.profile.damageMult);
     const rawDmg = computeOneShotDamage(baseAiDmg, this.customPartyMode === 'one_shot');
     const firstSlotId = e.profile.loadout[0]?.id ?? 'sword';
     const aiWeaponId: WeaponSlotId = isSmash
@@ -6766,12 +7021,19 @@ export class UnstableArenaEngine {
       : firstSlotId === 'bow' || firstSlotId === 'crossbow'
         ? 'sword'
         : firstSlotId;
+    const aiBreaksShield = isSmash || firstSlotId === 'axe';
 
     const effMode = this.getEffectiveRoomMode();
-    if (targetKind === 'enemy' && targetEnemy && targetEnemy.alive && targetEnemy.koTimer <= 0) {
+    if (
+      targetKind === 'enemy' &&
+      targetEnemy &&
+      targetEnemy.alive &&
+      targetEnemy.koTimer <= 0 &&
+      targetEnemy.stealthTimer <= 0
+    ) {
       if (!canDamageTarget(effMode, e.team, targetEnemy.team)) return;
-      if (Math.abs(targetEnemy.pos.y - e.pos.y) > 2.8) return;
-      const aiVsAiDmg = computeOneShotDamage(Math.round(rawDmg * 1.85), this.customPartyMode === 'one_shot');
+      if (Math.abs(targetEnemy.pos.y - e.pos.y) > 2.4) return;
+      const aiVsAiDmg = computeOneShotDamage(Math.round(rawDmg * 2.45), this.customPartyMode === 'one_shot');
       const res = applyCombatDamage(
         {
           hp: targetEnemy.hp,
@@ -6780,7 +7042,7 @@ export class UnstableArenaEngine {
           isBlocking: targetEnemy.isBlocking,
         },
         aiVsAiDmg,
-        isSmash
+        aiBreaksShield
       );
       targetEnemy.lastDamagedBy = {
         id: e.id,
@@ -6807,7 +7069,7 @@ export class UnstableArenaEngine {
       return;
     }
 
-    if (targetKind === 'player') {
+    if (targetKind === 'player' && this.stealthTimer <= 0) {
       if (!canDamageTarget(effMode, e.team, this.getLocalPlayerTeam())) return;
       if (Math.abs(this.playerPos.y - e.pos.y) > 2.8) return;
       this.applyDamageToLocalPlayer(rawDmg, isSmash, dirX, dirZ, 8.5, e.name, e, aiWeaponId);
@@ -6962,8 +7224,19 @@ export class UnstableArenaEngine {
     _right.set(Math.cos(this.playerYaw), 0, -Math.sin(this.playerYaw));
 
     const isShiftLock = this.cameraMode === 'shiftlock';
-    const shoulderOffset = isShiftLock ? 1.15 : 0.0;
-    const camDistance = (isShiftLock ? 4.1 : 6.2) + (this.isGliding ? 1.1 : 0);
+    const scopeActive = this.getScopeState().isScoped;
+    const shoulderOffset = isShiftLock
+      ? scopeActive
+        ? 0.92
+        : 1.15
+      : scopeActive
+        ? 0.85
+        : 0.0;
+    const camDistance = scopeActive
+      ? isShiftLock
+        ? 2.15
+        : 2.95
+      : (isShiftLock ? 4.1 : 6.2) + (this.isGliding ? 1.1 : 0);
 
     _rayOrigin.set(
       this.playerPos.x + _right.x * shoulderOffset,
@@ -7068,10 +7341,19 @@ export class UnstableArenaEngine {
       this.mode === 'multiplayer'
         ? this.matchTargetKills
         : GAME_MODES.find((m) => m.id === this.mode)?.targetKills ?? 15;
-    const fallHeightReady = this.playerOnGround
+    const rawFallDistance = this.playerOnGround
       ? 0
-      : Math.max(0, Math.round(this.playerFallStartY - this.playerPos.y));
+      : Math.max(0, this.playerFallStartY - this.playerPos.y);
+    const fallDistance = Math.floor(rawFallDistance * 10) / 10;
+    const fallHeightReady = Math.round(rawFallDistance);
     const loadout = this.getCurrentLoadout();
+    const prof = CHARACTERS[this.selectedCharId];
+    const buffMults = computeBuffMultipliers(this.activeBuffs);
+    const koMutatorMult =
+      this.customPartyMode === 'knockout'
+        ? pickKnockoutMutator(this.knockoutRound).damageMult
+        : 1.0;
+    const maceDamageMult = prof.damageMult * buffMults.damageMult * koMutatorMult;
 
     const rotWindow = getRotationWindow(Date.now());
     const effectiveEndsAt =
@@ -7092,6 +7374,8 @@ export class UnstableArenaEngine {
       (this.isSpectating ? 0 : 1) +
       this.enemies.filter((e) => !e.eliminated).length +
       Array.from(this.remotePeers.values()).filter((p) => p.alive).length;
+
+    const scopeState = this.getScopeState();
 
     this.onHudChange({
       screen: this.screen,
@@ -7116,8 +7400,12 @@ export class UnstableArenaEngine {
       elytraCooldown: this.elytraCooldown,
       elytraMaxCooldown: 3.8,
       elytraFlightRemaining: this.isGliding ? this.elytraFlightRemaining : 0,
+      jumpCount: this.playerJumpCount,
+      canDoubleJump: hasDoubleJumpLoadout(loadout),
       isGliding: this.isGliding,
       isBlocking: this.isBlocking,
+      isScoped: scopeState.isScoped,
+      scopeZoomFactor: scopeState.zoomFactor,
       isStealthed: this.stealthTimer > 0,
       isInCobweb: this.playerInCobweb,
       cobwebBreakProgress: this.cobwebBreakProgress,
@@ -7152,6 +7440,9 @@ export class UnstableArenaEngine {
       hitmarkerCrit: this.hitmarkerCrit,
       lastHitText: this.lastHitText,
       fallHeightReady,
+      fallDistance,
+      isAirborne: !this.playerOnGround,
+      maceDamageMult,
       muted: this.audio.isMuted(),
       fps: this.fps,
       settings: { ...this.settings },
@@ -7855,8 +8146,11 @@ export class UnstableArenaEngine {
 
   public mobileJump(pressed: boolean): void {
     if (pressed) {
+      const wasHeld = this.keys.has('Space');
       this.keys.add('Space');
-      this.playerJumpBuffer = 0.2;
+      if (!wasHeld) {
+        this.playerJumpBuffer = 0.2;
+      }
     } else {
       this.keys.delete('Space');
     }
@@ -7905,7 +8199,7 @@ export class UnstableArenaEngine {
   }
 
   public mobileLook(dx: number, dy: number): void {
-    const sens = this.settings.sensitivity;
+    const sens = this.settings.sensitivity * this.getScopeState().sensitivityMult;
     const ySign = this.settings.invertY ? -1 : 1;
     this.targetYaw -= dx * 0.0045 * sens;
     this.targetPitch = THREE.MathUtils.clamp(this.targetPitch - dy * 0.0045 * sens * ySign, -1.46, 1.42);

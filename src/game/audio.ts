@@ -173,18 +173,53 @@ export class GameAudio {
   }
 
   /**
-   * Heavy, dull meaty hit ("퍽!") & weighty double-thud critical ("퍽-퍽!").
+   * High-impact FPS hitmarker + visceral low-end crunch ("틱-퍽!" / crit double-crunch).
    */
   public playHit(isCrit: boolean): void {
     const ctx = this.ensureContext();
     if (!ctx) return;
     const now = ctx.currentTime;
 
+    const shaper = ctx.createWaveShaper();
+    if (this.softClipCurve) {
+      shaper.curve = this.softClipCurve;
+    }
+
+    // 1. Sharp FPS hitmarker transient tick (non-robotic organic wood/plate click)
+    const tick = ctx.createOscillator();
+    const tickGain = ctx.createGain();
+    tick.type = 'triangle';
+    tick.frequency.setValueAtTime(isCrit ? this.jitter(2550, 0.04) : this.jitter(1850, 0.05), now);
+    tick.frequency.exponentialRampToValueAtTime(isCrit ? 880 : 620, now + 0.024);
+    tickGain.gain.setValueAtTime(isCrit ? 0.34 : 0.25, now);
+    tickGain.gain.exponentialRampToValueAtTime(0.001, now + 0.028);
+    tick.connect(tickGain).connect(this.masterGain ?? ctx.destination);
+    tick.start(now);
+    tick.stop(now + 0.032);
+
+    // 2. Band-passed physical impact crack
+    if (this.noiseBuffer) {
+      const snap = ctx.createBufferSource();
+      snap.buffer = this.noiseBuffer;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(isCrit ? 2250 : 1550, now);
+      bp.frequency.exponentialRampToValueAtTime(480, now + 0.055);
+      bp.Q.setValueAtTime(1.1, now);
+      const sg = ctx.createGain();
+      sg.gain.setValueAtTime(isCrit ? 0.56 : 0.42, now);
+      sg.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+      snap.connect(bp).connect(shaper).connect(sg).connect(this.masterGain ?? ctx.destination);
+      snap.start(now);
+      snap.stop(now + 0.068);
+    }
+
+    // 3. Heavy chest sub-punch
     if (isCrit) {
-      this.triggerDullThud(ctx, now, this.jitter(680), this.jitter(148), 40, 0.44, 0.068);
-      this.triggerDullThud(ctx, now + 0.056, this.jitter(760), this.jitter(172), 42, 0.48, 0.085);
+      this.triggerDullThud(ctx, now, this.jitter(820), this.jitter(162), 38, 0.54, 0.075);
+      this.triggerDullThud(ctx, now + 0.045, this.jitter(940), this.jitter(196), 44, 0.52, 0.088);
     } else {
-      this.triggerDullThud(ctx, now, this.jitter(520), this.jitter(132), 42, 0.36, 0.068);
+      this.triggerDullThud(ctx, now, this.jitter(640), this.jitter(142), 40, 0.46, 0.07);
     }
   }
 
@@ -494,24 +529,95 @@ export class GameAudio {
     this.triggerDullThud(ctx, now, 540, 140, 62, 0.26, 0.09);
   }
 
+  private triggerValorantHit(
+    ctx: AudioContext,
+    startTime: number,
+    rootHz: number,
+    durationSec: number,
+    gainAmt: number,
+    withFifth = false
+  ): void {
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(Math.min(4800, rootHz * 4.5), startTime);
+    lp.frequency.exponentialRampToValueAtTime(Math.max(900, rootHz * 1.8), startTime + durationSec);
+
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, startTime);
+    env.gain.linearRampToValueAtTime(gainAmt, startTime + 0.01);
+    env.gain.exponentialRampToValueAtTime(0.001, startTime + durationSec);
+
+    const o1 = ctx.createOscillator();
+    o1.type = 'triangle';
+    o1.frequency.setValueAtTime(rootHz, startTime);
+
+    const o2 = ctx.createOscillator();
+    o2.type = 'sine';
+    o2.frequency.setValueAtTime(rootHz * 2, startTime);
+    const o2Gain = ctx.createGain();
+    o2Gain.gain.setValueAtTime(0.45, startTime);
+
+    o1.connect(lp);
+    o2.connect(o2Gain).connect(lp);
+
+    if (withFifth) {
+      const o3 = ctx.createOscillator();
+      o3.type = 'triangle';
+      o3.frequency.setValueAtTime(rootHz * 1.498, startTime);
+      const o3Gain = ctx.createGain();
+      o3Gain.gain.setValueAtTime(0.55, startTime);
+      o3.connect(o3Gain).connect(lp);
+      o3.start(startTime);
+      o3.stop(startTime + durationSec + 0.02);
+    }
+
+    lp.connect(env).connect(this.masterGain ?? ctx.destination);
+    o1.start(startTime);
+    o2.start(startTime);
+    o1.stop(startTime + durationSec + 0.02);
+    o2.stop(startTime + durationSec + 0.02);
+
+    // Tight sub-bass chest kick under the chime
+    this.triggerDullThud(ctx, startTime, 980, 145, 36, gainAmt * 0.95, 0.075);
+  }
+
+  /**
+   * Valorant-style escalating multi-kill audio:
+   * 1 kill: 빰! | 2 kills: 빰! (higher) | 3 kills: 빰!! (chord)
+   * 4 kills: 빰-빰! | 5 kills (Ace): 빠-바-바-밤!! | 6+ (Overkill): 빠-바-바-바-밤!!
+   */
   public playMultiKillChime(streak: number): void {
     const ctx = this.ensureContext();
     if (!ctx) return;
     const now = ctx.currentTime;
-    const baseFreqs = [523.25, 659.25, 783.99, 1046.5];
-    const count = Math.max(1, Math.min(4, streak));
-    for (let i = 0; i < count; i++) {
-      const t = now + i * 0.055;
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(baseFreqs[i], t);
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(0.22, t + 0.015);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
-      osc.connect(g).connect(this.masterGain ?? ctx.destination);
-      osc.start(t);
-      osc.stop(t + 0.25);
+    const s = Math.max(1, streak);
+
+    if (s === 1) {
+      this.triggerValorantHit(ctx, now, 587.33, 0.32, 0.28, false); // D5: 빰
+    } else if (s === 2) {
+      this.triggerValorantHit(ctx, now, 659.25, 0.36, 0.30, false); // E5: 빰!
+    } else if (s === 3) {
+      this.triggerValorantHit(ctx, now, 739.99, 0.42, 0.32, true); // F#5 + 5th: 빰!!
+    } else if (s === 4) {
+      // 4 kills: 빰-빰!
+      this.triggerValorantHit(ctx, now, 783.99, 0.14, 0.28, false);
+      this.triggerValorantHit(ctx, now + 0.11, 880.0, 0.45, 0.34, true);
+    } else if (s === 5) {
+      // 5 kills (Ace): 빠-바-바-밤!!
+      const notes = [659.25, 739.99, 880.0, 1174.66];
+      const offsets = [0, 0.072, 0.144, 0.225];
+      notes.forEach((hz, idx) => {
+        const isLast = idx === notes.length - 1;
+        this.triggerValorantHit(ctx, now + offsets[idx], hz, isLast ? 0.58 : 0.11, isLast ? 0.36 : 0.24, isLast);
+      });
+    } else {
+      // 6+ kills (Overkill): 빠-바-바-바-밤!!
+      const notes = [698.46, 783.99, 880.0, 1046.5, 1318.51];
+      const offsets = [0, 0.06, 0.12, 0.18, 0.25];
+      notes.forEach((hz, idx) => {
+        const isLast = idx === notes.length - 1;
+        this.triggerValorantHit(ctx, now + offsets[idx], hz, isLast ? 0.65 : 0.1, isLast ? 0.38 : 0.25, isLast);
+      });
     }
   }
 

@@ -8,7 +8,7 @@ import {
   Wind,
   X,
 } from 'lucide-react';
-import { CHARACTER_LIST, CHARACTER_MAP } from '../game/characters';
+import { CHARACTER_LIST, CHARACTER_MAP, hasDoubleJumpLoadout } from '../game/characters';
 import type { CharacterId, CharacterProfile } from '../game/types';
 import { WeaponIcon } from './WeaponIcons';
 
@@ -72,7 +72,7 @@ export function OverwatchHeroSelect({
   const heroRole = HERO_ROLE_MAP[hero.id] ?? 'damage';
   const roleMeta = ROLE_GROUPS.find((r) => r.id === heroRole) ?? ROLE_GROUPS[1];
 
-  const hpPct = Math.min(100, Math.round((hero.maxHp / 145) * 100));
+  const hpPct = Math.min(100, Math.round((hero.maxHp / 155) * 100));
   const spdPct = Math.min(100, Math.round(((hero.speedMult - 0.9) / 0.3) * 100));
   const dmgPct = Math.min(100, Math.round(((hero.damageMult - 0.9) / 0.38) * 100));
 
@@ -140,9 +140,9 @@ export function OverwatchHeroSelect({
       </header>
 
       {/* ==================== MIDDLE STAGE: LEFT HERO BIO + OPEN 3D FIGHTER + RIGHT 6-SLOT ABILITY LIST ==================== */}
-      <div className="relative z-10 flex-1 min-h-0 px-4 sm:px-7 py-2 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 overflow-y-auto lg:overflow-hidden">
+      <div className="relative z-10 flex-1 min-h-0 px-4 sm:px-7 py-1.5 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 overflow-hidden">
         {/* LEFT: OVERWATCH HERO IDENTITY & STATS */}
-        <div className="pointer-events-auto w-full lg:w-[330px] xl:w-[360px] shrink-0 space-y-3 bg-slate-950/75 backdrop-blur-md border border-white/15 rounded-xl p-4 shadow-2xl">
+        <div className="pointer-events-auto w-full lg:w-[310px] xl:w-[340px] shrink-0 space-y-2.5 bg-slate-950/75 backdrop-blur-md border border-white/15 rounded-xl p-3.5 shadow-2xl">
           <div className="flex items-center justify-between gap-2">
             <span
               className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-xs border text-[11px] font-black ${roleMeta.badgeBg}`}
@@ -156,17 +156,17 @@ export function OverwatchHeroSelect({
           <div>
             <h2
               data-testid="selected-character-name"
-              className="font-display text-3xl sm:text-4xl font-black italic tracking-tight text-white drop-shadow-sm"
+              className="font-display text-2xl sm:text-3xl font-black italic tracking-tight text-white drop-shadow-sm"
             >
               {hero.name}
             </h2>
             <div
-              className="mt-1.5 h-1 w-20 rounded-full"
+              className="mt-1 h-1 w-16 rounded-full"
               style={{ backgroundColor: hero.trimColor }}
             />
           </div>
 
-          <p className="text-xs sm:text-sm leading-relaxed text-slate-200 font-medium">
+          <p className="text-xs leading-relaxed text-slate-200 font-medium">
             {hero.summary}
           </p>
 
@@ -216,44 +216,51 @@ export function OverwatchHeroSelect({
         {/* CENTER OPEN SPACE FOR LIVE 3D CHARACTER */}
         <div className="hidden lg:block flex-1 min-w-[200px]" />
 
-        {/* RIGHT: OVERWATCH F1-STYLE 6-SLOT ABILITY / WEAPON DESCRIPTIONS */}
-        <div className="pointer-events-auto w-full lg:w-[370px] xl:w-[400px] shrink-0 bg-slate-950/78 backdrop-blur-md border border-white/15 rounded-xl p-3.5 shadow-2xl space-y-2">
+        {/* RIGHT: OVERWATCH F1-STYLE 6-SLOT ABILITY / WEAPON DESCRIPTIONS (2x3 NON-SCROLL GRID) */}
+        <div className="pointer-events-auto w-full lg:w-[470px] xl:w-[530px] shrink-0 bg-slate-950/78 backdrop-blur-md border border-white/15 rounded-xl p-3 shadow-2xl space-y-2">
           <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
             <div className="flex items-center gap-1.5 text-xs font-black tracking-wide text-amber-300">
               <Swords className="w-3.5 h-3.5" />
               <span>보유 무장 &amp; 스킬 설명</span>
             </div>
-            <span className="text-[10px] font-mono-num text-slate-400">숫자키 1 ~ 6</span>
+            <div className="flex items-center gap-1.5">
+              {hasDoubleJumpLoadout(hero.loadout) && (
+                <span className="px-1.5 py-0.5 rounded bg-sky-500/20 border border-sky-400/50 text-sky-300 font-mono-num text-[10px] font-bold">
+                  더블점프 x2
+                </span>
+              )}
+              <span className="text-[10px] font-mono-num text-slate-400">숫자키 1 ~ 6</span>
+            </div>
           </div>
 
-          <div className="space-y-1.5 max-h-[300px] lg:max-h-[370px] overflow-y-auto pr-0.5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
             {hero.loadout.map((item, idx) => (
               <div
                 key={`${hero.id}-skill-${item.id}-${idx}`}
-                className="flex items-start gap-2.5 p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 border-l-4 transition-colors"
+                className="flex items-start gap-2 p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 border-l-4 transition-colors"
                 style={{ borderLeftColor: item.accent }}
               >
                 <div className="flex flex-col items-center gap-1 shrink-0">
-                  <div className="w-8 h-8 rounded-md bg-slate-900 border border-white/15 flex items-center justify-center">
-                    <WeaponIcon id={item.id} className="w-4 h-4 text-white" />
+                  <div className="w-7 h-7 rounded-md bg-slate-900 border border-white/15 flex items-center justify-center">
+                    <WeaponIcon id={item.id} className="w-3.5 h-3.5 text-white" />
                   </div>
                   <span className="px-1.5 py-0.2 rounded bg-white/10 font-mono-num text-[9px] font-black text-amber-300">
                     {idx + 1}
                   </span>
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-black text-white truncate">{item.name}</span>
-                    <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-mono-num font-bold">
-                      {item.damage > 0 && (
-                        <span className="text-rose-300">DMG {item.damage}</span>
-                      )}
-                      <span className="px-1.5 py-0.5 rounded bg-slate-900 text-slate-300 border border-white/10">
-                        {item.cooldown <= 0 ? '연속' : `${item.cooldown.toFixed(1)}s`}
-                      </span>
-                    </div>
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[11px] font-black text-white truncate">{item.name}</span>
+                    <span className="px-1 py-0.2 rounded bg-slate-900 text-slate-300 border border-white/10 font-mono-num text-[9px] font-bold shrink-0">
+                      {item.cooldown <= 0 ? '연속' : `${item.cooldown.toFixed(1)}s`}
+                    </span>
                   </div>
-                  <p className="text-[11px] text-slate-300 leading-snug mt-0.5">
+                  {(item.damage ?? 0) > 0 && (
+                    <div className="text-[9px] font-mono-num font-bold text-rose-300">
+                      DMG {item.damage}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-slate-300 leading-snug mt-0.5 line-clamp-2">
                     {item.description}
                   </p>
                 </div>
@@ -264,14 +271,14 @@ export function OverwatchHeroSelect({
       </div>
 
       {/* ==================== BOTTOM: LOCK-IN BUTTON + OVERWATCH ROLE-GROUPED ROSTER BAR ==================== */}
-      <div className="relative z-10 w-full px-3 sm:px-6 pb-3 sm:pb-4 pt-1 flex flex-col items-center gap-2.5 pointer-events-auto">
+      <div className="relative z-10 w-full px-3 sm:px-6 pb-2.5 sm:pb-3 pt-1 flex flex-col items-center gap-2 pointer-events-auto">
         <button
           type="button"
           data-testid="hero-select-confirm-btn"
           data-start="true"
           disabled={isLaunching}
           onClick={onConfirm}
-          className="-skew-x-6 px-9 sm:px-12 py-3 sm:py-3.5 rounded-md bg-amber-400 hover:bg-amber-300 active:translate-y-0.5 text-slate-950 font-display text-lg sm:text-xl font-black tracking-tight border-b-4 border-amber-600 shadow-2xl cursor-pointer transition-all flex items-center gap-2.5"
+          className="-skew-x-6 px-8 sm:px-11 py-2.5 sm:py-3 rounded-md bg-amber-400 hover:bg-amber-300 active:translate-y-0.5 text-slate-950 font-display text-base sm:text-lg font-black tracking-tight border-b-4 border-amber-600 shadow-2xl cursor-pointer transition-all flex items-center gap-2"
         >
           <span className="skew-x-6 flex items-center gap-2">
             <Play className="w-5 h-5 fill-slate-950 text-slate-950 shrink-0" />
@@ -288,7 +295,7 @@ export function OverwatchHeroSelect({
         {/* Role-Grouped Overwatch Hero Roster Strip */}
         <div
           data-testid="overwatch-hero-roster"
-          className="w-full max-w-6xl bg-slate-950/85 backdrop-blur-md border border-white/15 rounded-xl px-2.5 sm:px-4 py-2.5 shadow-2xl flex flex-wrap items-end justify-center gap-2 sm:gap-3"
+          className="w-full max-w-6xl bg-slate-950/85 backdrop-blur-md border border-white/15 rounded-xl px-2.5 sm:px-4 py-2 shadow-2xl flex flex-wrap items-end justify-center gap-2 sm:gap-3"
         >
           {ROLE_GROUPS.map((group) => {
             const groupHeroes = CHARACTER_LIST.filter(

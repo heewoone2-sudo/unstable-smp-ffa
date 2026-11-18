@@ -1,17 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { CHARACTER_LIST, GAME_MODES, ITEM_CATALOG } from './characters';
+import { CHARACTER_LIST, GAME_MODES, ITEM_CATALOG, hasDoubleJumpLoadout, hasRangedBowLoadout } from './characters';
 import {
   applyCombatDamage,
   computeBlockPlacement,
+  computeBowScopeState,
+  computeJumpVelocity,
   computeMaceDamage,
+  computeMaceSmashPreview,
   computeSwordDamage,
   consumeSlotUse,
   createArenaBlocks,
   getSupportHeightAt,
   isInsideCobweb,
   isInsideHazardPool,
+  isStealthAttackRestricted,
   resolveHorizontalCollision,
+  stepPlayerJump,
   tickCooldowns,
   tickSlotRecharge,
 } from './combatMath';
@@ -77,6 +82,33 @@ test('computeMaceDamage scales strongly with fall height and triggers smash >= 2
   assert.ok(mediumSmash.damage > 25);
 });
 
+test('computeMaceSmashPreview tracks fall distance, 2.0m threshold tier, and damage multiplier', () => {
+  const ground = computeMaceSmashPreview(28, 1.0, 5.0, true);
+  assert.equal(ground.tier, 'ground');
+  assert.equal(ground.fallDistance, 0);
+  assert.equal(ground.isSmashReady, false);
+  assert.equal(ground.damageMultiplier, 1.0);
+
+  const charging = computeMaceSmashPreview(28, 1.0, 1.97, false);
+  assert.equal(charging.tier, 'charging');
+  assert.equal(charging.fallDistance, 1.9);
+  assert.equal(charging.isSmashReady, false);
+  assert.equal(charging.damageMultiplier, 1.0);
+  assert.ok(charging.progressPct < charging.thresholdPct);
+
+  const ready = computeMaceSmashPreview(28, 1.0, 2.04, false);
+  assert.equal(ready.tier, 'ready');
+  assert.equal(ready.fallDistance, 2.0);
+  assert.equal(ready.isSmashReady, true);
+  assert.ok(ready.damageMultiplier >= 1.7);
+  assert.ok(ready.potentialDamage > ready.groundDamage);
+
+  const maxCap = computeMaceSmashPreview(28, 1.0, 10.5, false);
+  assert.equal(maxCap.tier, 'max');
+  assert.equal(maxCap.progressPct, 100);
+  assert.ok(maxCap.damageMultiplier >= 5.0);
+});
+
 test('isInsideCobweb detects actors trapped in cobweb bounds', () => {
   const webs = [{ x: 4, y: 0, z: -6, radius: 1.5, height: 2.2 }];
   assert.equal(isInsideCobweb(4.5, 0.2, -5.5, webs), true);
@@ -106,10 +138,94 @@ test('all 11 playable characters including ranged marksmen have distinct 6-item 
   const flame = CHARACTER_LIST.find((c) => c.id === 'flamefrags');
   assert.ok(kestrel && kestrel.loadout[0].id === 'bow');
   assert.ok(vexor && vexor.loadout[0].id === 'crossbow');
-  assert.equal(ITEM_CATALOG.crossbow.maxCharges, 3);
+  assert.equal(ITEM_CATALOG.bow.cooldown, 0);
+  assert.equal(ITEM_CATALOG.crossbow.cooldown, 0);
+  assert.equal(ITEM_CATALOG.crossbow.maxCharges, 1);
   assert.ok((ITEM_CATALOG.tnt_charge.damage ?? 0) >= 120);
   assert.ok(flame && flame.loadout.some((i) => i.id === 'cobweb'));
   assert.ok(flame && !flame.loadout.some((i) => i.id === 'tnt_charge'));
+});
+
+test('bow/crossbow fire without cooldown and bow/crossbow/mace characters get x1->x2 double jump', () => {
+  const charges = [1, 1, 1, 1, 1, 1];
+  const maxCharges = [1, 1, 1, 1, 1, 1];
+  const cds = [0, 0, 0, 0, 0, 0];
+  const maxCds = [ITEM_CATALOG.bow.cooldown, ITEM_CATALOG.crossbow.cooldown, 0, 0, 0, 0];
+  const delays = [0, 0, 0, 0, 0, 0];
+  assert.equal(consumeSlotUse(0, charges, maxCharges, cds, maxCds, delays, 0), true);
+  assert.equal(consumeSlotUse(0, charges, maxCharges, cds, maxCds, delays, 0), true);
+  assert.equal(consumeSlotUse(1, charges, maxCharges, cds, maxCds, delays, 0), true);
+  assert.equal(consumeSlotUse(1, charges, maxCharges, cds, maxCds, delays, 0), true);
+
+  const djIds = CHARACTER_LIST.filter((c) => hasDoubleJumpLoadout(c.loadout)).map((c) => c.id);
+  assert.deepEqual(djIds.sort(), ['kestrel', 'manepear', 'minutetech', 'vexor', 'wemmbu']);
+
+  const first = stepPlayerJump({ jumpCount: 0, canDoubleJump: true, canGroundJump: true, isGliding: false });
+  assert.equal(first.jumped, true);
+  assert.equal(first.isDoubleJump, false);
+  assert.equal(first.nextJumpCount, 1);
+
+  const second = stepPlayerJump({ jumpCount: first.nextJumpCount, canDoubleJump: true, canGroundJump: false, isGliding: false });
+  assert.equal(second.jumped, true);
+  assert.equal(second.isDoubleJump, true);
+  assert.equal(second.nextJumpCount, 2);
+
+  const third = stepPlayerJump({ jumpCount: second.nextJumpCount, canDoubleJump: true, canGroundJump: false, isGliding: false });
+  assert.equal(third.jumped, false);
+  assert.equal(third.nextJumpCount, 2);
+
+  const noDj = stepPlayerJump({ jumpCount: 1, canDoubleJump: false, canGroundJump: false, isGliding: false });
+  assert.equal(noDj.jumped, false);
+  assert.equal(noDj.nextJumpCount, 1);
+
+  const stdJump = computeJumpVelocity({ inWeb: false, canDoubleJump: false, isDoubleJump: false });
+  const djFirst = computeJumpVelocity({ inWeb: false, canDoubleJump: true, isDoubleJump: false });
+  const djSecond = computeJumpVelocity({ inWeb: false, canDoubleJump: true, isDoubleJump: true });
+  const webbed = computeJumpVelocity({ inWeb: true, canDoubleJump: true, isDoubleJump: true });
+  assert.ok(djFirst > stdJump * 1.35);
+  assert.ok(djSecond > djFirst);
+  assert.equal(webbed, 4.8);
+});
+
+test('bow and crossbow damages are lowered and shadow_step stealth restricts offensive attacks', () => {
+  assert.equal(ITEM_CATALOG.bow.damage, 18);
+  assert.equal(ITEM_CATALOG.crossbow.damage, 12);
+
+  assert.equal(isStealthAttackRestricted('sword', true), true);
+  assert.equal(isStealthAttackRestricted('bow', true), true);
+  assert.equal(isStealthAttackRestricted('mace', true), true);
+  assert.equal(isStealthAttackRestricted('tnt_charge', true), true);
+  assert.equal(isStealthAttackRestricted('ender_pearl', true), false);
+  assert.equal(isStealthAttackRestricted('gapple', true), false);
+  assert.equal(isStealthAttackRestricted('sword', false), false);
+});
+
+test('bow and crossbow loadouts trigger scope zoom and sensitivity scaling while shield blocking', () => {
+  const bowIds = CHARACTER_LIST.filter((c) => hasRangedBowLoadout(c.loadout)).map((c) => c.id);
+  assert.deepEqual(bowIds.sort(), ['kestrel', 'vexor']);
+
+  const scoped = computeBowScopeState({
+    isBlocking: true,
+    hasBowLoadout: true,
+    isGliding: false,
+    isSpectating: false,
+    baseFov: 78,
+  });
+  assert.equal(scoped.isScoped, true);
+  assert.equal(scoped.targetFov, 33);
+  assert.ok(scoped.sensitivityMult < 0.6);
+  assert.ok(scoped.zoomFactor >= 2.2);
+
+  const nonBow = computeBowScopeState({
+    isBlocking: true,
+    hasBowLoadout: false,
+    isGliding: false,
+    isSpectating: false,
+    baseFov: 78,
+  });
+  assert.equal(nonBow.isScoped, false);
+  assert.equal(nonBow.targetFov, 78);
+  assert.equal(nonBow.sensitivityMult, 1.0);
 });
 
 test('stackable cobweb charges consume down and recharge 1 at a time on cooldown', () => {

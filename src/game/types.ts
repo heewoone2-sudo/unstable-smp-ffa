@@ -276,8 +276,12 @@ export interface HudSnapshot {
   elytraCooldown: number;
   elytraMaxCooldown: number;
   elytraFlightRemaining?: number;
+  jumpCount: number;
+  canDoubleJump: boolean;
   isGliding: boolean;
   isBlocking: boolean;
+  isScoped: boolean;
+  scopeZoomFactor: number;
   isStealthed: boolean;
   isInCobweb: boolean;
   cobwebBreakProgress: number;
@@ -314,6 +318,9 @@ export interface HudSnapshot {
   hitmarkerCrit: boolean;
   lastHitText: string;
   fallHeightReady: number;
+  fallDistance: number;
+  isAirborne: boolean;
+  maceDamageMult: number;
   muted: boolean;
   fps: number;
   settings: GameSettings;

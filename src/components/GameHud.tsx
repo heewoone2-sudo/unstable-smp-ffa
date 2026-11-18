@@ -17,8 +17,10 @@ import {
   MapPin,
   DoorOpen,
   X,
+  Hammer,
 } from 'lucide-react';
 import { CHARACTER_LIST, CHARACTERS } from '../game/characters';
+import { computeMaceSmashPreview } from '../game/combatMath';
 import { MAP_DEFINITIONS, MAP_ORDER } from '../game/maps';
 import {
   ARENA_BUFF_DEFINITIONS,
@@ -96,6 +98,22 @@ export function GameHud({
   const hpPct = Math.max(0, Math.min(100, (hud.hp / hud.maxHp) * 100));
   const absPct = Math.max(0, Math.min(100, (hud.absorption / 30) * 100));
   const activeWeapon = hud.loadout[hud.activeSlot] ?? hud.loadout.find((s) => s !== null) ?? null;
+  const maceSlotIdx = hud.loadout.findIndex((s) => s?.id === 'mace');
+  const hasMaceInLoadout = maceSlotIdx >= 0;
+  const maceSelected = activeWeapon?.id === 'mace';
+  const macePreview = hasMaceInLoadout
+    ? computeMaceSmashPreview(
+        28,
+        hud.maceDamageMult || 1,
+        hud.fallDistance ?? hud.fallHeightReady ?? 0,
+        !hud.isAirborne
+      )
+    : null;
+  const showMaceFlightHud =
+    !hud.isSpectating &&
+    hasMaceInLoadout &&
+    macePreview !== null &&
+    (hud.isAirborne || hud.isGliding || macePreview.fallDistance >= 0.2);
   const lowHp = hud.hp <= hud.maxHp * 0.3;
 
   const [showTouchControls, setShowTouchControls] = useState<boolean>(() => {
@@ -111,10 +129,13 @@ export function GameHud({
   const [scoreboardToggled, setScoreboardToggled] = useState(false);
   const [chatText, setChatText] = useState('');
   const [chatOpenMobile, setChatOpenMobile] = useState(false);
+  const [worldChatHovered, setWorldChatHovered] = useState(false);
+  const [worldChatFocused, setWorldChatFocused] = useState(false);
   const [practiceModalOpen, setPracticeModalOpen] = useState(false);
   const [practiceCatFilter, setPracticeCatFilter] = useState<'all' | MapCategory>('all');
   const chatInputRef = useRef<HTMLInputElement | null>(null);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const worldChatExpanded = worldChatHovered || worldChatFocused;
 
   const [joystickCenter, setJoystickCenter] = useState<{ x: number; y: number } | null>(null);
   const [joystickOffset, setJoystickOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -127,10 +148,25 @@ export function GameHud({
   }, []);
 
   useEffect(() => {
-    if (chatScrollRef.current) {
-      chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-    }
-  }, [hud.chatMessages.length]);
+    const el = chatScrollRef.current;
+    if (!el) return;
+    const pinBottom = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+    pinBottom();
+    const timer = window.setTimeout(pinBottom, 220);
+    const observer =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => {
+            pinBottom();
+          })
+        : null;
+    observer?.observe(el);
+    return () => {
+      window.clearTimeout(timer);
+      observer?.disconnect();
+    };
+  }, [hud.chatMessages.length, worldChatExpanded]);
 
   const isPracticeOffline = Boolean(hud.isPractice) && !hud.multiplayer.roomCode && hud.mode === 'ffa';
 
@@ -211,11 +247,13 @@ export function GameHud({
         ? '물 속'
         : hud.isStealthed
           ? '은신 중'
-          : hud.isBlocking
-            ? '방어 중'
-            : hud.isGliding
-              ? '활공 중 · HP 회복 (우클릭: 폭죽)'
-              : '전투 중';
+          : hud.isScoped
+            ? '방패 스코프 조준'
+            : hud.isBlocking
+              ? '방어 중'
+              : hud.isGliding
+                ? '활공 중 · HP 회복 (우클릭: 폭죽)'
+                : '전투 중';
 
   return (
     <div
@@ -256,6 +294,29 @@ export function GameHud({
           className="fixed inset-0 pointer-events-none"
           style={{
             boxShadow: 'inset 0 0 75px rgba(234, 88, 12, 0.48)',
+          }}
+        />
+      )}
+
+      {hud.isStealthed && (
+        <div
+          data-testid="stealth-vignette"
+          className="fixed inset-0 pointer-events-none transition-opacity duration-200"
+          style={{
+            background:
+              'radial-gradient(circle at center, rgba(15, 10, 40, 0) 44%, rgba(49, 46, 129, 0.36) 76%, rgba(17, 12, 46, 0.78) 100%)',
+            boxShadow: 'inset 0 0 110px rgba(139, 92, 246, 0.52)',
+          }}
+        />
+      )}
+
+      {hud.isScoped && !hud.isSpectating && (
+        <div
+          data-testid="bow-scope-overlay"
+          className="fixed inset-0 pointer-events-none transition-opacity duration-150"
+          style={{
+            background:
+              'radial-gradient(circle at center, rgba(2, 6, 23, 0) 34%, rgba(2, 6, 23, 0.34) 68%, rgba(2, 6, 23, 0.76) 100%)',
           }}
         />
       )}
@@ -742,17 +803,25 @@ export function GameHud({
         </div>
       )}
 
-      {/* Overwatch-style Multi-Kill Streak Banner */}
+      {/* Valorant-style Multi-Kill Streak Banner (1 Kill -> Ace -> Overkill) */}
       {hud.multiKillTimer > 0 && hud.multiKillText && (
         <div
           data-testid="multikill-banner"
           className="fixed top-[174px] sm:top-[68px] left-1/2 -translate-x-1/2 pointer-events-none z-25"
         >
-          <div className="flex items-center gap-2.5 px-5 py-2 rounded-2xl bg-zinc-950/95 text-white border-2 border-rose-500 shadow-lg">
-            <span className="font-display font-mono-num text-base sm:text-lg font-extrabold text-cyan-400">
-              {hud.multiKillStreak}x
+          <div
+            className={`flex items-center gap-3 px-6 py-2.5 rounded-2xl text-white border-2 shadow-2xl ${
+              hud.multiKillStreak >= 5
+                ? 'bg-gradient-to-r from-amber-600 via-rose-600 to-amber-600 border-amber-300'
+                : hud.multiKillStreak >= 3
+                  ? 'bg-zinc-950/95 border-amber-400'
+                  : 'bg-zinc-950/95 border-rose-500'
+            }`}
+          >
+            <span className="font-display font-mono-num text-lg sm:text-xl font-black text-amber-300">
+              {hud.multiKillStreak} KILL{hud.multiKillStreak > 1 ? 'S' : ''}
             </span>
-            <span className="font-display text-sm sm:text-base font-extrabold tracking-wide">
+            <span className="font-display text-sm sm:text-base font-black tracking-wider">
               {hud.multiKillText}
             </span>
           </div>
@@ -855,6 +924,39 @@ export function GameHud({
           )}
         </svg>
 
+        {hud.isScoped && (
+          <>
+            <svg
+              width="96"
+              height="96"
+              viewBox="0 0 96 96"
+              aria-hidden="true"
+              className="absolute pointer-events-none"
+            >
+              <circle
+                cx="48"
+                cy="48"
+                r="40"
+                fill="none"
+                stroke="#38bdf8"
+                strokeWidth="1"
+                strokeOpacity="0.45"
+                strokeDasharray="4 6"
+              />
+              <line x1="48" y1="6" x2="48" y2="16" stroke="#e0f2fe" strokeWidth="1.2" strokeOpacity="0.75" />
+              <line x1="48" y1="80" x2="48" y2="90" stroke="#e0f2fe" strokeWidth="1.2" strokeOpacity="0.75" />
+              <line x1="6" y1="48" x2="16" y2="48" stroke="#e0f2fe" strokeWidth="1.2" strokeOpacity="0.75" />
+              <line x1="80" y1="48" x2="90" y2="48" stroke="#e0f2fe" strokeWidth="1.2" strokeOpacity="0.75" />
+            </svg>
+            <div
+              data-testid="bow-scope-readout"
+              className="absolute -top-11 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-950/80 border border-sky-400/35 px-2 py-0.5 font-mono-num text-[10px] font-bold text-sky-300 shadow-sm"
+            >
+              {hud.scopeZoomFactor.toFixed(1)}x · 방패 스코프
+            </div>
+          </>
+        )}
+
         {hud.hitmarkerTimer > 0 && hud.lastHitText && (
           <div
             className={`absolute left-7 -top-4 whitespace-nowrap font-display font-mono-num text-sm font-bold hud-text-stroke ${
@@ -865,11 +967,137 @@ export function GameHud({
           </div>
         )}
 
-        {activeWeapon?.id === 'mace' && hud.fallHeightReady >= 2 && (
-          <div className="absolute top-7 whitespace-nowrap font-mono-num text-xs font-bold text-white hud-text-stroke">
-            SMASH +{hud.fallHeightReady}m
-          </div>
-        )}
+        {showMaceFlightHud && macePreview && (() => {
+          const arcR = 22;
+          const arcCirc = 2 * Math.PI * arcR;
+          const arcOffset = arcCirc * (1 - macePreview.progressPct / 100);
+          const threshRad = -Math.PI / 2 + (macePreview.thresholdPct / 100) * Math.PI * 2;
+          const tx1 = 28 + Math.cos(threshRad) * 18.5;
+          const ty1 = 28 + Math.sin(threshRad) * 18.5;
+          const tx2 = 28 + Math.cos(threshRad) * 25.5;
+          const ty2 = 28 + Math.sin(threshRad) * 25.5;
+          const tierColor =
+            macePreview.tier === 'max' || macePreview.tier === 'overdrive'
+              ? '#f59e0b'
+              : macePreview.tier === 'ready'
+                ? '#38bdf8'
+                : '#cbd5e1';
+          const tierLabel =
+            macePreview.tier === 'max'
+              ? '최대 배율 달성'
+              : macePreview.tier === 'overdrive'
+                ? '고출력 스매시'
+                : macePreview.tier === 'ready'
+                  ? '스매시 장전'
+                  : '낙하 준비 · 2.0m+ 필요';
+          return (
+            <>
+              <svg
+                width="56"
+                height="56"
+                viewBox="0 0 56 56"
+                aria-hidden="true"
+                className="absolute pointer-events-none"
+              >
+                <circle
+                  cx="28"
+                  cy="28"
+                  r={arcR}
+                  fill="none"
+                  stroke="rgba(15, 23, 42, 0.45)"
+                  strokeWidth="2.5"
+                />
+                <circle
+                  cx="28"
+                  cy="28"
+                  r={arcR}
+                  fill="none"
+                  stroke={tierColor}
+                  strokeWidth="2.75"
+                  strokeLinecap="round"
+                  strokeDasharray={arcCirc}
+                  strokeDashoffset={arcOffset}
+                  transform="rotate(-90 28 28)"
+                />
+                <line
+                  x1={tx1}
+                  y1={ty1}
+                  x2={tx2}
+                  y2={ty2}
+                  stroke="#ffffff"
+                  strokeWidth="1.6"
+                  strokeOpacity="0.9"
+                />
+              </svg>
+
+              <div
+                data-testid="mace-smash-hud"
+                className={`absolute left-1/2 -translate-x-1/2 pointer-events-none min-w-[224px] rounded-xl bg-slate-950/84 backdrop-blur-sm border px-3 py-2 text-white shadow-lg transition-opacity duration-150 ${
+                  hud.cobwebBreakProgress > 0 || hud.isInCobweb ? 'top-24' : 'top-10'
+                } ${
+                  macePreview.tier === 'max' || macePreview.tier === 'overdrive'
+                    ? 'border-amber-400/55'
+                    : macePreview.tier === 'ready'
+                      ? 'border-sky-400/50'
+                      : 'border-white/15'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3 text-[11px] font-semibold whitespace-nowrap">
+                  <span className="flex items-center gap-1.5" style={{ color: tierColor }}>
+                    <Hammer className="w-3.5 h-3.5 shrink-0" />
+                    <span>{tierLabel}</span>
+                  </span>
+                  <span className="font-mono-num text-[10px] text-slate-300">
+                    {!maceSelected
+                      ? `[${maceSlotIdx + 1}] 철퇴 스왑`
+                      : macePreview.isSmashReady
+                        ? `충격파 ${macePreview.shockwaveRadius.toFixed(1)}m`
+                        : '공중 체공'}
+                  </span>
+                </div>
+
+                <div className="mt-1 flex items-baseline justify-between gap-3 whitespace-nowrap">
+                  <div className="flex items-baseline gap-1">
+                    <span className="font-display font-mono-num text-base font-bold text-white">
+                      {macePreview.fallDistance.toFixed(1)}m
+                    </span>
+                    <span className="text-[10px] text-slate-400">낙하</span>
+                  </div>
+
+                  <div className="flex items-baseline gap-1">
+                    <span
+                      data-testid="mace-smash-multiplier"
+                      className="font-display font-mono-num text-base font-bold"
+                      style={{ color: tierColor }}
+                    >
+                      x{macePreview.damageMultiplier.toFixed(1)}
+                    </span>
+                    <span className="text-[10px] text-slate-400">배율</span>
+                  </div>
+
+                  <div className="font-mono-num text-xs font-bold text-slate-200">
+                    {macePreview.potentialDamage} DMG
+                  </div>
+                </div>
+
+                <div className="relative mt-1.5 h-1.5 w-full rounded-xs bg-white/15 overflow-hidden">
+                  <div
+                    className="h-full w-full origin-left transition-transform duration-75"
+                    style={{
+                      transform: `scaleX(${macePreview.progressPct / 100})`,
+                      backgroundColor: tierColor,
+                    }}
+                  />
+                  <div
+                    aria-hidden="true"
+                    className="absolute top-0 bottom-0 w-0.5 bg-white/90"
+                    style={{ left: `${macePreview.thresholdPct}%` }}
+                  />
+                </div>
+              </div>
+            </>
+          );
+        })()}
 
         {hud.cobwebBreakProgress > 0 && (
           <div className="absolute top-10 w-44 bg-white/95 border border-slate-200 rounded-lg px-2.5 py-1.5 shadow-sm text-center">
@@ -902,7 +1130,7 @@ export function GameHud({
           data-testid="scoreboard-overlay"
           className="fixed inset-0 z-30 flex items-center justify-center bg-slate-950/45 p-4 pointer-events-auto"
         >
-          <div className="w-full max-w-2xl bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden text-slate-900">
+          <div className="w-full max-w-3xl bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden text-slate-900">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
               <div className="flex items-center gap-2">
                 <span className="font-display text-sm font-bold text-slate-950">
@@ -978,51 +1206,67 @@ export function GameHud({
                 ))}
               </div>
             ) : (
-              <div className="divide-y divide-slate-100 max-h-80 overflow-y-auto">
-                <div className="grid grid-cols-12 px-4 py-2 text-[11px] font-semibold text-slate-500 bg-slate-50/60">
-                  <span className="col-span-5">플레이어</span>
-                  <span className="col-span-3">캐릭터</span>
-                  <span className="col-span-2">체력</span>
-                  <span className="col-span-2 text-right">K / D</span>
+              <div>
+                <div className={`grid ${hud.scoreboard.length > 6 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} bg-slate-50/60 border-b border-slate-100`}>
+                  <div className="grid grid-cols-12 px-4 py-1.5 text-[11px] font-semibold text-slate-500">
+                    <span className="col-span-5">플레이어</span>
+                    <span className="col-span-3">캐릭터</span>
+                    <span className="col-span-2">체력</span>
+                    <span className="col-span-2 text-right">K / D</span>
+                  </div>
+                  {hud.scoreboard.length > 6 && (
+                    <div className="hidden sm:grid grid-cols-12 px-4 py-1.5 text-[11px] font-semibold text-slate-500 border-l border-slate-200">
+                      <span className="col-span-5">플레이어</span>
+                      <span className="col-span-3">캐릭터</span>
+                      <span className="col-span-2">체력</span>
+                      <span className="col-span-2 text-right">K / D</span>
+                    </div>
+                  )}
                 </div>
-                {hud.scoreboard.map((entry) => {
-                  const cProf = CHARACTERS[entry.characterId];
-                  return (
-                    <div
-                      key={entry.id}
-                      className={`grid grid-cols-12 items-center px-4 py-2 text-xs ${
-                        entry.isLocal ? 'bg-amber-50/70 font-semibold' : ''
-                      }`}
-                    >
-                      <div className="col-span-5 flex items-center gap-1.5 min-w-0">
-                        <span className="truncate text-slate-900">
-                          {entry.name}
-                          {entry.isLocal ? ' (나)' : ''}
+                <div className={`grid ${hud.scoreboard.length > 6 ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1'} divide-y divide-slate-100`}>
+                  {hud.scoreboard.map((entry) => {
+                    const cProf = CHARACTERS[entry.characterId];
+                    return (
+                      <div
+                        key={entry.id}
+                        className={`grid grid-cols-12 items-center px-4 py-1.5 text-xs ${
+                          entry.isLocal ? 'bg-amber-50/70 font-semibold' : ''
+                        }`}
+                      >
+                        <div className="col-span-5 flex items-center gap-1.5 min-w-0">
+                          <span className="truncate text-slate-900">
+                            {entry.name}
+                            {entry.isLocal ? ' (나)' : ''}
+                          </span>
+                        </div>
+                        <span className="col-span-3 text-slate-600 truncate">{cProf?.name ?? entry.characterId}</span>
+                        <span className="col-span-2 font-mono-num text-slate-700">{Math.max(0, entry.hp)}</span>
+                        <span className="col-span-2 font-mono-num font-bold text-slate-900 text-right">
+                          {entry.kills}/{entry.deaths}
                         </span>
                       </div>
-                      <span className="col-span-3 text-slate-600 truncate">{cProf?.name ?? entry.characterId}</span>
-                      <span className="col-span-2 font-mono-num text-slate-700">{Math.max(0, entry.hp)}</span>
-                      <span className="col-span-2 font-mono-num font-bold text-slate-900 text-right">
-                        {entry.kills}/{entry.deaths}
-                      </span>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* Real-time Chat Panel (Bottom-Left on desktop, collapsible top-left on mobile) */}
+      {/* Real-time Chat Panel (Bottom-Left on desktop with smooth hover/focus upward expansion) */}
       <div
         data-testid="hud-chat-panel"
-        className={`fixed pointer-events-auto z-20 ${
+        onMouseEnter={() => setWorldChatHovered(true)}
+        onMouseLeave={() => setWorldChatHovered(false)}
+        className={`fixed pointer-events-auto transition-all duration-200 ease-out ${
           showTouchControls || isCompactViewport
             ? isPracticeOffline
-              ? 'top-[224px] left-2.5 w-48'
-              : 'top-[174px] left-2.5 w-48'
-            : 'bottom-4 left-4 w-76'
+              ? 'top-[224px] left-2.5 w-48 z-20'
+              : 'top-[174px] left-2.5 w-48 z-20'
+            : worldChatExpanded
+              ? 'bottom-4 left-4 w-[420px] z-30'
+              : 'bottom-4 left-4 w-80 z-20'
         }`}
       >
         {(showTouchControls || isCompactViewport) && !chatOpenMobile ? (
@@ -1035,11 +1279,22 @@ export function GameHud({
             채팅 ({hud.chatMessages.length})
           </button>
         ) : (
-          <div className="bg-white/95 border border-slate-200 rounded-xl shadow-sm overflow-hidden text-slate-900">
+          <div
+            className={`border rounded-xl overflow-hidden text-slate-900 transition-all duration-200 ${
+              worldChatExpanded && !showTouchControls && !isCompactViewport
+                ? 'bg-white/98 border-slate-300 shadow-2xl'
+                : 'bg-white/92 border-slate-200 shadow-sm'
+            }`}
+          >
             <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200/80 text-[11px] font-semibold text-slate-600">
               <span className="flex items-center gap-1.5">
-                <MessageSquare className="w-3 h-3" />
+                <MessageSquare className="w-3 h-3 text-rose-600" />
                 월드 채팅
+                {hud.chatMessages.length > 0 && (
+                  <span className="font-mono-num text-[10px] text-slate-400">
+                    {hud.chatMessages.length}
+                  </span>
+                )}
               </span>
               {(showTouchControls || isCompactViewport) && (
                 <button
@@ -1054,12 +1309,18 @@ export function GameHud({
 
             <div
               ref={chatScrollRef}
-              className="max-h-32 overflow-y-auto px-3 py-2 space-y-1 text-xs"
+              className={`overflow-y-auto px-3 py-2 space-y-1 text-xs transition-all duration-200 ease-out ${
+                showTouchControls || isCompactViewport
+                  ? 'max-h-32'
+                  : worldChatExpanded
+                    ? 'h-[min(430px,calc(100vh-280px))]'
+                    : 'h-24'
+              }`}
             >
               {hud.chatMessages.length === 0 ? (
                 <div className="text-slate-400 text-[11px]">Enter 키로 채팅 입력</div>
               ) : (
-                hud.chatMessages.slice(-20).map((m) => (
+                hud.chatMessages.slice(-40).map((m) => (
                   <div key={m.id} className="leading-snug break-words">
                     <span className="font-semibold text-slate-950">{m.senderName}: </span>
                     <span className="text-slate-700">{m.text}</span>
@@ -1070,20 +1331,28 @@ export function GameHud({
 
             <form
               onSubmit={handleChatSubmit}
-              className="flex items-center border-t border-slate-200/80 bg-white/80"
+              autoComplete="off"
+              className="flex items-center border-t border-slate-200/80 bg-white/90"
             >
               <input
                 ref={chatInputRef}
                 type="text"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
                 data-testid="chat-input"
                 maxLength={160}
                 value={chatText}
+                onFocus={() => setWorldChatFocused(true)}
+                onBlur={() => setWorldChatFocused(false)}
                 onChange={(e) => setChatText(e.target.value)}
                 placeholder="메시지 입력 (Enter)"
                 className="flex-1 min-w-0 px-3 py-1.5 bg-transparent text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none"
               />
               <button
                 type="submit"
+                tabIndex={-1}
                 aria-label="전송"
                 className="px-2.5 py-1.5 text-slate-600 hover:text-slate-950 cursor-pointer"
               >
@@ -1332,7 +1601,7 @@ export function GameHud({
           )}
         </div>
 
-        <div className="flex items-center gap-1 sm:gap-1.5 bg-white/95 border border-slate-200 rounded-xl p-1.5 pointer-events-auto shadow-sm overflow-x-auto max-w-full">
+        <div className="flex items-center gap-1 sm:gap-1.5 bg-white/95 border border-slate-200 rounded-xl p-1.5 pointer-events-auto shadow-sm max-w-full">
           {hud.loadout.map((slot, idx) => {
             if (!slot) {
               return (
@@ -1340,7 +1609,7 @@ export function GameHud({
                   key={`empty-${idx}`}
                   data-slot-index={idx}
                   aria-label={`${idx + 1}번 빈 슬롯`}
-                  className="relative w-10 h-10 sm:w-13 sm:h-13 rounded-lg border border-dashed border-slate-200 bg-slate-50/50 flex flex-col items-center justify-center text-slate-300 select-none"
+                  className="relative w-9 h-9 sm:w-12 sm:h-12 rounded-lg border border-dashed border-slate-200 bg-slate-50/50 flex flex-col items-center justify-center text-slate-300 select-none"
                 >
                   <span className="absolute top-0.5 left-1 sm:left-1.5 font-mono-num text-[9px] sm:text-[10px]">
                     {idx + 1}
@@ -1372,7 +1641,7 @@ export function GameHud({
                   e.currentTarget.blur();
                   onSelectSlot(idx);
                 }}
-                className={`relative w-10 h-10 sm:w-13 sm:h-13 rounded-lg border flex flex-col items-center justify-center transition-colors cursor-pointer overflow-hidden ${
+                className={`relative w-9 h-9 sm:w-12 sm:h-12 rounded-lg border flex flex-col items-center justify-center transition-colors cursor-pointer overflow-hidden ${
                   active
                     ? 'bg-slate-900 border-slate-900 text-white'
                     : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-400'
@@ -1425,6 +1694,32 @@ export function GameHud({
 
           <div className="w-px h-8 bg-slate-200 mx-0.5" aria-hidden="true" />
 
+          {hud.canDoubleJump && (
+            <div
+              data-testid="hud-double-jump-status"
+              className={`px-2 py-1 rounded-lg border text-center min-w-14 ${
+                (hud.jumpCount ?? 0) >= 2
+                  ? 'bg-slate-100 border-slate-300'
+                  : (hud.jumpCount ?? 0) === 1
+                    ? 'bg-sky-50 border-sky-300'
+                    : 'bg-emerald-50 border-emerald-300'
+              }`}
+            >
+              <div className="text-[10px] font-medium text-slate-500">더블점프</div>
+              <div
+                className={`font-mono-num text-xs font-bold ${
+                  (hud.jumpCount ?? 0) >= 2
+                    ? 'text-slate-500'
+                    : (hud.jumpCount ?? 0) === 1
+                      ? 'text-sky-700'
+                      : 'text-emerald-700'
+                }`}
+              >
+                x{Math.min(2, hud.jumpCount ?? 0)}
+              </div>
+            </div>
+          )}
+
           <div
             data-testid="hud-elytra-status"
             className={`px-2 py-1 rounded-lg border text-center min-w-16 ${
@@ -1462,8 +1757,8 @@ export function GameHud({
           data-testid="practice-quick-modal"
           className="fixed inset-0 z-35 flex items-center justify-center bg-slate-950/50 p-4 pointer-events-auto"
         >
-          <div className="w-full max-w-2xl bg-white border border-slate-200 rounded-2xl shadow-xl p-5 space-y-4 text-slate-900 max-h-[88vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+          <div className="w-full max-w-4xl bg-white border border-slate-200 rounded-2xl shadow-xl p-4 sm:p-5 space-y-3 text-slate-900 overflow-hidden">
+            <div className="flex items-center justify-between pb-2.5 border-b border-slate-200">
               <div>
                 <h2 className="font-display text-lg font-bold text-slate-950">
                   연습장 맵 &amp; 캐릭터 즉시 변경 [M]
@@ -1484,9 +1779,9 @@ export function GameHud({
               </button>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <div className="text-xs font-bold text-slate-800">캐릭터 변경 (11명)</div>
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+              <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
                 {CHARACTER_LIST.map((c) => {
                   const active = hud.characterId === c.id;
                   return (
@@ -1495,7 +1790,7 @@ export function GameHud({
                       type="button"
                       data-testid={`practice-modal-char-${c.id}`}
                       onClick={() => onChangeCharacter?.(c.id)}
-                      className={`px-2.5 py-1.5 rounded-lg border text-xs font-semibold text-left truncate cursor-pointer transition-colors ${
+                      className={`px-2 py-1 rounded-lg border text-xs font-semibold text-left truncate cursor-pointer transition-colors ${
                         active
                           ? 'bg-slate-950 border-slate-950 text-white'
                           : 'bg-white border-slate-200 text-slate-800 hover:border-slate-400'
@@ -1508,8 +1803,8 @@ export function GameHud({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-              <div className="space-y-1.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1">
                 <div className="text-xs font-bold text-slate-800">보급 코어 버프 즉시 테스트</div>
                 <div className="grid grid-cols-2 gap-1.5">
                   {ARENA_BUFF_ORDER.map((bKind) => {
@@ -1520,23 +1815,23 @@ export function GameHud({
                         type="button"
                         data-testid={`practice-buff-${bKind}`}
                         onClick={() => onTriggerPracticeBuff?.(bKind)}
-                        className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-left cursor-pointer transition-colors"
+                        className="px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-left cursor-pointer transition-colors"
                       >
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-900">
+                        <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-900">
                           <span
                             className="w-2 h-2 rounded-full shrink-0"
                             style={{ backgroundColor: bDef.color }}
                           />
                           <span className="truncate">{bDef.label}</span>
                         </div>
-                        <div className="text-[10px] text-slate-500 truncate mt-0.5">{bDef.shortDesc}</div>
+                        <div className="text-[10px] text-slate-500 truncate">{bDef.shortDesc}</div>
                       </button>
                     );
                   })}
                 </div>
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 <div className="text-xs font-bold text-slate-800">돌발 아레나 서지 이벤트 발동</div>
                 <div className="grid grid-cols-2 gap-1.5">
                   {ARENA_EVENT_ORDER.map((eKind) => {
@@ -1547,7 +1842,7 @@ export function GameHud({
                         type="button"
                         data-testid={`practice-event-${eKind}`}
                         onClick={() => onTriggerPracticeEvent?.(eKind)}
-                        className="px-2 py-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-left cursor-pointer transition-colors"
+                        className="px-2 py-1 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-left cursor-pointer transition-colors"
                       >
                         <div
                           className="text-[11px] font-bold truncate"
@@ -1555,7 +1850,7 @@ export function GameHud({
                         >
                           {eDef.title}
                         </div>
-                        <div className="text-[10px] text-slate-500 truncate mt-0.5">{eDef.durationSec}초 지속</div>
+                        <div className="text-[10px] text-slate-500 truncate">{eDef.durationSec}초 지속</div>
                       </button>
                     );
                   })}
@@ -1563,7 +1858,7 @@ export function GameHud({
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-xs font-bold text-slate-800">아레나 맵 변경 (전체 20종)</span>
                 <div className="flex flex-wrap items-center gap-1">
@@ -1591,7 +1886,7 @@ export function GameHud({
                   ))}
                 </div>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
                 {MAP_ORDER.filter(
                   (mId) =>
                     practiceCatFilter === 'all' ||
@@ -1608,7 +1903,7 @@ export function GameHud({
                         onChangeMap?.(mId);
                         setPracticeModalOpen(false);
                       }}
-                      className={`p-2 rounded-xl border text-left transition-colors cursor-pointer ${
+                      className={`px-2.5 py-1.5 rounded-xl border text-left transition-colors cursor-pointer ${
                         active
                           ? 'bg-slate-950 border-slate-950 text-white'
                           : 'bg-white border-slate-200 text-slate-800 hover:border-slate-400'
@@ -1623,7 +1918,7 @@ export function GameHud({
                       >
                         {def.badge}
                       </span>
-                      <div className="font-display text-xs font-bold mt-1 truncate">{def.name}</div>
+                      <div className="font-display text-xs font-bold mt-0.5 truncate">{def.name}</div>
                     </button>
                   );
                 })}

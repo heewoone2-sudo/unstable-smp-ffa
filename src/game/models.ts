@@ -794,10 +794,30 @@ export function createFighterModel(
       }
     },
     setOpacity: (opacity: number) => {
-      for (const m of hitFlashMaterials) {
+      const matSet = new Set<THREE.Material>(hitFlashMaterials);
+      Object.values(weaponModels).forEach((grp) => {
+        grp.traverse((obj) => {
+          if (obj instanceof THREE.Mesh && !Array.isArray(obj.material)) {
+            matSet.add(obj.material);
+          }
+        });
+      });
+      shieldMesh.traverse((obj) => {
+        if (obj instanceof THREE.Mesh && !Array.isArray(obj.material)) {
+          matSet.add(obj.material);
+        }
+      });
+      wingsGroup.traverse((obj) => {
+        if (obj instanceof THREE.Mesh && !Array.isArray(obj.material)) {
+          matSet.add(obj.material);
+        }
+      });
+      matSet.forEach((m) => {
         m.transparent = opacity < 1;
         m.opacity = opacity;
-      }
+        m.depthWrite = opacity >= 0.95;
+      });
+      shadowDisc.visible = opacity > 0.25;
       outlineMat.opacity = opacity * 0.94;
     },
     setTeamOutline: (colorHex: number | null) => {
@@ -1423,7 +1443,9 @@ export function createBossMonsterModel(
       for (const m of hitFlashMaterials) {
         m.transparent = opacity < 1;
         m.opacity = opacity;
+        m.depthWrite = opacity >= 0.95;
       }
+      shadowDisc.visible = opacity > 0.25;
       outlineMat.opacity = opacity * 0.96;
     },
     setTeamOutline: (colorHex: number | null) => {

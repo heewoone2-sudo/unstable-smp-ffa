@@ -1,4 +1,4 @@
-import type { ArenaBlock, CobwebZone, FighterStats, HazardPoolZone } from './types';
+import type { ArenaBlock, CobwebZone, FighterStats, HazardPoolZone, WeaponSlotId } from './types';
 
 export interface DamageResult {
   finalDamage: number;
@@ -39,18 +39,83 @@ export function computeMaceDamage(
   onGround: boolean
 ): { damage: number; isSmash: boolean; shockwaveRadius: number } {
   const effectiveFall = onGround ? 0 : Math.max(0, fallDistance);
-  const isSmash = effectiveFall >= 1.5;
+  const isSmash = effectiveFall >= 2.0;
   if (!isSmash) {
     return {
-      damage: Math.round(baseDamage * 1.6 * characterMult),
+      damage: Math.round(baseDamage * 1.55 * characterMult),
       isSmash: false,
       shockwaveRadius: 0,
     };
   }
-  const bonus = Math.min(240, Math.pow(effectiveFall, 1.3) * 16.0);
-  const damage = Math.round((baseDamage + bonus) * characterMult * 1.8);
-  const shockwaveRadius = Math.min(10.5, 4.2 + effectiveFall * 0.38);
+  const bonus = Math.min(130, Math.pow(effectiveFall, 1.15) * 11.5);
+  const damage = Math.round((baseDamage + bonus) * characterMult * 1.38);
+  const shockwaveRadius = Math.min(7.5, 3.8 + effectiveFall * 0.28);
   return { damage, isSmash: true, shockwaveRadius };
+}
+
+export type MaceSmashTier = 'ground' | 'charging' | 'ready' | 'overdrive' | 'max';
+
+export interface MaceSmashPreview {
+  fallDistance: number;
+  isAirborne: boolean;
+  isSmashReady: boolean;
+  groundDamage: number;
+  potentialDamage: number;
+  damageMultiplier: number;
+  shockwaveRadius: number;
+  progressPct: number;
+  thresholdPct: number;
+  tier: MaceSmashTier;
+}
+
+export const MACE_SMASH_THRESHOLD_METERS = 2.0;
+export const MACE_SMASH_CAP_METERS = 8.3;
+
+/**
+ * Computes real-time Mace Smash flight telemetry (fall distance, potential damage,
+ * multiplier vs grounded swing, shockwave radius, and threshold progress).
+ */
+export function computeMaceSmashPreview(
+  baseDamage: number,
+  characterMult: number,
+  fallDistance: number,
+  onGround: boolean
+): MaceSmashPreview {
+  const safeFall = onGround ? 0 : Math.floor(Math.max(0, fallDistance) * 10) / 10;
+  const groundRes = computeMaceDamage(baseDamage, characterMult, 0, true);
+  const currentRes = computeMaceDamage(baseDamage, characterMult, safeFall, onGround);
+  const damageMultiplier = Number(
+    (currentRes.damage / Math.max(1, groundRes.damage)).toFixed(1)
+  );
+  const progressPct = Math.min(
+    100,
+    Math.round((safeFall / MACE_SMASH_CAP_METERS) * 100)
+  );
+  const thresholdPct = Math.round(
+    (MACE_SMASH_THRESHOLD_METERS / MACE_SMASH_CAP_METERS) * 100
+  );
+  const tier: MaceSmashTier = onGround
+    ? 'ground'
+    : !currentRes.isSmash
+      ? 'charging'
+      : safeFall >= 8.2
+        ? 'max'
+        : safeFall >= 5.5
+          ? 'overdrive'
+          : 'ready';
+
+  return {
+    fallDistance: safeFall,
+    isAirborne: !onGround,
+    isSmashReady: currentRes.isSmash,
+    groundDamage: groundRes.damage,
+    potentialDamage: currentRes.damage,
+    damageMultiplier,
+    shockwaveRadius: Number(currentRes.shockwaveRadius.toFixed(1)),
+    progressPct,
+    thresholdPct,
+    tier,
+  };
 }
 
 /**
@@ -473,5 +538,103 @@ export function consumeSlotUse(
   if (cooldowns[idx] > 0) return false;
   cooldowns[idx] = maxCooldowns[idx];
   return true;
+}
+
+/**
+ * Resolves single ground jump (x1) and double mid-air jump (x2) state transitions.
+ */
+export function stepPlayerJump(params: {
+  jumpCount: number;
+  canDoubleJump: boolean;
+  canGroundJump: boolean;
+  isGliding: boolean;
+}): { jumped: boolean; isDoubleJump: boolean; nextJumpCount: number } {
+  if (params.isGliding) {
+    return { jumped: false, isDoubleJump: false, nextJumpCount: params.jumpCount };
+  }
+  if (params.canGroundJump) {
+    return { jumped: true, isDoubleJump: false, nextJumpCount: 1 };
+  }
+  if (params.canDoubleJump && params.jumpCount < 2) {
+    return {
+      jumped: true,
+      isDoubleJump: true,
+      nextJumpCount: 2,
+    };
+  }
+  return { jumped: false, isDoubleJump: false, nextJumpCount: params.jumpCount };
+}
+
+/**
+ * Computes vertical launch velocity for single and double jumps.
+ * Characters with double-jump loadouts (bow, crossbow, or mace) leap much higher.
+ */
+export function computeJumpVelocity(params: {
+  inWeb: boolean;
+  canDoubleJump: boolean;
+  isDoubleJump: boolean;
+}): number {
+  if (params.inWeb) return 4.8;
+  if (!params.canDoubleJump) return 11.2;
+  return params.isDoubleJump ? 20.4 : 16.2;
+}
+
+/**
+ * Prevents offensive attacks while phased/stealthed via Shadow Step.
+ */
+export function isStealthAttackRestricted(slotId: WeaponSlotId, attackerStealthed: boolean): boolean {
+  if (!attackerStealthed) return false;
+  return (
+    slotId === 'sword' ||
+    slotId === 'fire_sword' ||
+    slotId === 'spear' ||
+    slotId === 'axe' ||
+    slotId === 'mace' ||
+    slotId === 'trident' ||
+    slotId === 'bow' ||
+    slotId === 'crossbow' ||
+    slotId === 'tnt_charge' ||
+    slotId === 'lava_bucket' ||
+    slotId === 'cobweb'
+  );
+}
+
+/**
+ * Computes optical scope zoom FOV, sensitivity scale, and zoom factor when
+ * right-click blocking with a bow/crossbow character.
+ */
+export function computeBowScopeState(params: {
+  isBlocking: boolean;
+  hasBowLoadout: boolean;
+  isGliding: boolean;
+  isSpectating: boolean;
+  baseFov: number;
+}): {
+  isScoped: boolean;
+  targetFov: number;
+  sensitivityMult: number;
+  zoomFactor: number;
+} {
+  const active =
+    params.isBlocking &&
+    params.hasBowLoadout &&
+    !params.isGliding &&
+    !params.isSpectating;
+  if (!active) {
+    return {
+      isScoped: false,
+      targetFov: params.baseFov,
+      sensitivityMult: 1.0,
+      zoomFactor: 1.0,
+    };
+  }
+  const targetFov = Math.max(28, Math.round(params.baseFov * 0.42));
+  const zoomFactor = Number((params.baseFov / targetFov).toFixed(1));
+  return {
+    isScoped: true,
+    targetFov,
+    sensitivityMult: 0.48,
+    zoomFactor,
+  };
 }
 
