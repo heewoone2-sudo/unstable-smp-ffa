@@ -1,4 +1,4 @@
-import type { ArenaBlock, JumpPadZone, MapCategory, MapId, PlayerTeam, RoomMode } from './types';
+import type { ArenaBlock, HazardPoolZone, JumpPadZone, MapCategory, MapId, PlayerTeam, RoomMode } from './types';
 
 export interface MapDefinition {
   id: MapId;
@@ -7,6 +7,12 @@ export interface MapDefinition {
   badge: string;
   category: MapCategory;
   description: string;
+  traitName: string;
+  traitDesc: string;
+  gravityMult: number;
+  moveSpeedMult: number;
+  cooldownSpeedMult: number;
+  poolRegenPerSec: number;
   accentHex: string;
   groundStyle: 'grass' | 'asphalt';
   groundTint: number;
@@ -126,6 +132,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '항만',
     category: 'industrial',
     description: '2단 화물 컨테이너, 크레인 캣워크, 점프 패드가 교차하는 입체 전술 야적장',
+    traitName: '크레인 터보 하버',
+    traitDesc: '항만 갠트리 크레인 · 이동속도 +4% & 4방향 고속 컨테이너 점프 패드',
+    gravityMult: 1.0,
+    moveSpeedMult: 1.04,
+    cooldownSpeedMult: 1.0,
+    poolRegenPerSec: 0,
     accentHex: '#2563eb',
     groundStyle: 'asphalt',
     groundTint: 0xffffff,
@@ -149,6 +161,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '자연',
     category: 'nature',
     description: '이중 성채 램프와 공중 회랑, 흑요석·자수정 타워가 어우러진 입체 시타델',
+    traitName: '성소 치유 분수',
+    traitDesc: '에메랄드 왕관 성소 · 남북 성소 샘물 진입 시 초당 +3.5 HP 회복 & 화상 해제',
+    gravityMult: 1.0,
+    moveSpeedMult: 1.0,
+    cooldownSpeedMult: 1.0,
+    poolRegenPerSec: 3.5,
     accentHex: '#16a34a',
     groundStyle: 'grass',
     groundTint: 0xffffff,
@@ -172,6 +190,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '비행',
     category: 'industrial',
     description: '다층 활주로 브릿지와 도크 타워를 점프 패드·겉날개로 비행하는 공중 항구',
+    traitName: '제트 기류 활주로',
+    traitDesc: '부유 비행선 도크 · 체공 저중력(0.88x) & 장거리 전진 캐터펄트 점프 패드',
+    gravityMult: 0.88,
+    moveSpeedMult: 1.02,
+    cooldownSpeedMult: 1.0,
+    poolRegenPerSec: 0,
     accentHex: '#0284c7',
     groundStyle: 'asphalt',
     groundTint: 0xcbd5e1,
@@ -195,6 +219,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '용암',
     category: 'citadel',
     description: '고열 제련 브릿지와 2층 관제 데크, 용암 도가니 엄폐물이 배치된 요새',
+    traitName: '용광로 화염 도가니',
+    traitDesc: '쌍둥이 용암 도가니 함정 · 스킬 재충전 +12% 가속',
+    gravityMult: 1.0,
+    moveSpeedMult: 1.0,
+    cooldownSpeedMult: 1.12,
+    poolRegenPerSec: 0,
     accentHex: '#dc2626',
     groundStyle: 'asphalt',
     groundTint: 0x64545c,
@@ -218,6 +248,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '테크',
     category: 'industrial',
     description: '복층 네온 서버 캣워크와 대칭 점프 패드, 고속 우회 램프로 구성된 테크 아레나',
+    traitName: '하이퍼 데이터 가속',
+    traitDesc: '홀로그램 코어 공명 · 이동속도 +8% & 쿨타임 회복 +10% 오버클럭',
+    gravityMult: 1.0,
+    moveSpeedMult: 1.08,
+    cooldownSpeedMult: 1.1,
+    poolRegenPerSec: 0,
     accentHex: '#06b6d4',
     groundStyle: 'asphalt',
     groundTint: 0x475569,
@@ -241,6 +277,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '설원',
     category: 'nature',
     description: '계단식 빙벽 성채와 고지대 크리스탈 빙하 브릿지가 펼쳐진 설원 전장',
+    traitName: '빙하 설원 활주',
+    traitDesc: '빙벽 스케이팅 기동(+7%) · 남북 냉각 빙하샘 화상 즉시 치유(+2.5 HP/s)',
+    gravityMult: 1.0,
+    moveSpeedMult: 1.07,
+    cooldownSpeedMult: 1.0,
+    poolRegenPerSec: 2.5,
     accentHex: '#38bdf8',
     groundStyle: 'asphalt',
     groundTint: 0xdbeafe,
@@ -264,6 +306,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '유적',
     category: 'nature',
     description: '피라미드 단차 제단, 회랑 기둥 엄폐물, 황금 지구라트 상층부가 있는 유적',
+    traitName: '파라오 태양 오아시스',
+    traitDesc: '황금 피라미드 성역 · 신전 오아시스 물웅덩이에서 초당 +3 HP 치유',
+    gravityMult: 1.0,
+    moveSpeedMult: 1.0,
+    cooldownSpeedMult: 1.04,
+    poolRegenPerSec: 3.0,
     accentHex: '#d97706',
     groundStyle: 'grass',
     groundTint: 0xe2c792,
@@ -287,6 +335,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '우주',
     category: 'cosmic',
     description: '중앙 코어 링 브릿지와 4방향 플라즈마 냉각탑을 점프 패드로 넘나드는 복합 기지',
+    traitName: '제로-G 플라즈마 코어',
+    traitDesc: '우주 저중력(0.80x) 토카막 코어 · 스킬 쿨타임 +12% & 고공 도약전',
+    gravityMult: 0.8,
+    moveSpeedMult: 1.02,
+    cooldownSpeedMult: 1.12,
+    poolRegenPerSec: 0,
     accentHex: '#6366f1',
     groundStyle: 'asphalt',
     groundTint: 0x334155,
@@ -310,6 +364,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '화산',
     category: 'citadel',
     description: '현무암 계단 능선과 흑요석 분화구 림 브릿지가 겹치는 고열 전장',
+    traitName: '칼데라 마그마 분출',
+    traitDesc: '분화구 상승 기류(중력 0.92x) · 대각 마그마 웅덩이 & 고탄성 간헐천 패드',
+    gravityMult: 0.92,
+    moveSpeedMult: 1.0,
+    cooldownSpeedMult: 1.05,
+    poolRegenPerSec: 0,
     accentHex: '#ea580c',
     groundStyle: 'asphalt',
     groundTint: 0x57534e,
@@ -333,6 +393,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '성소',
     category: 'nature',
     description: '초록 계단식 정원과 목재 누각 브릿지가 교차하는 평화로운 고지대 사원',
+    traitName: '검선(劍仙) 대나무 풍림',
+    traitDesc: '경공술 질풍(+5% 이속) · 대나무 정원 연못에서 초당 +3.5 HP 치유',
+    gravityMult: 0.95,
+    moveSpeedMult: 1.05,
+    cooldownSpeedMult: 1.0,
+    poolRegenPerSec: 3.5,
     accentHex: '#15803d',
     groundStyle: 'grass',
     groundTint: 0xd9f99d,
@@ -356,6 +422,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '도시',
     category: 'industrial',
     description: '고층 빌딩 옥상 스카이브릿지와 시가지 컨테이너 골목이 이어진 도심 전장',
+    traitName: '루프탑 시티러너',
+    traitDesc: '마천루 네온 스트리트 · 도심 파쿠르(+8% 이속) & 전진형 환풍구 부스터',
+    gravityMult: 1.0,
+    moveSpeedMult: 1.08,
+    cooldownSpeedMult: 1.0,
+    poolRegenPerSec: 0,
     accentHex: '#0ea5e9',
     groundStyle: 'asphalt',
     groundTint: 0x64748b,
@@ -379,6 +451,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '해저',
     category: 'nature',
     description: '산호빛 빙정 신전과 대칭 아쿠아 다리, 황금 포세이돈 첨탑이 솟은 고대 수중 유적',
+    traitName: '포세이돈 삼지창 성역',
+    traitDesc: '해저 부력(중력 0.86x) · 아쿠아 성수 연못에서 초당 +3 HP & 심해 간헐천',
+    gravityMult: 0.86,
+    moveSpeedMult: 1.02,
+    cooldownSpeedMult: 1.0,
+    poolRegenPerSec: 3.0,
     accentHex: '#0d9488',
     groundStyle: 'asphalt',
     groundTint: 0x99f6e4,
@@ -402,6 +480,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '기계',
     category: 'industrial',
     description: '황동 대교와 다단 기어 데크, 상층부 펜듈럼 브릿지가 엇갈리는 스팀펑크 요새',
+    traitName: '크로노 대시계 태엽',
+    traitDesc: '시간 가속 톱니바퀴 · 모든 스킬/대쉬 쿨타임 회복 +22% 부스트!',
+    gravityMult: 1.0,
+    moveSpeedMult: 1.02,
+    cooldownSpeedMult: 1.22,
+    poolRegenPerSec: 0,
     accentHex: '#b45309',
     groundStyle: 'asphalt',
     groundTint: 0x78716c,
@@ -425,6 +509,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '사막',
     category: 'nature',
     description: '모래사암 오아시스 성벽과 쌍둥이 스핑크스 망루, 공중 사원 다리가 있는 사막 아레나',
+    traitName: '신기루 쌍둥이 오아시스',
+    traitDesc: '사막 열풍 기동(+4% 이속) · 남북 오아시스 샘물 초당 +3 HP 치유',
+    gravityMult: 1.0,
+    moveSpeedMult: 1.04,
+    cooldownSpeedMult: 1.0,
+    poolRegenPerSec: 3.0,
     accentHex: '#eab308',
     groundStyle: 'grass',
     groundTint: 0xfde68a,
@@ -448,6 +538,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '수정',
     category: 'cosmic',
     description: '거대 자수정 결정 기둥과 흑요석 단차 다리가 얽힌 빛나는 크리스탈 아레나',
+    traitName: '에코 크리스탈 공명',
+    traitDesc: '자수정 마력 공명 · 스킬 쿨타임 +15% 가속 & 크리스탈 프리즘 패드',
+    gravityMult: 0.96,
+    moveSpeedMult: 1.0,
+    cooldownSpeedMult: 1.15,
+    poolRegenPerSec: 0,
     accentHex: '#9333ea',
     groundStyle: 'asphalt',
     groundTint: 0x581c87,
@@ -471,6 +567,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '누각',
     category: 'nature',
     description: '목조 오층 누각 주변을 따라 도는 다층 회랑과 자수정 벚꽃 정원 아레나',
+    traitName: '천년 벚꽃 연못',
+    traitDesc: '만개한 사쿠라 정원 · 벚꽃 연못에서 초당 +4 HP 최고 수준 자연 치유',
+    gravityMult: 0.96,
+    moveSpeedMult: 1.02,
+    cooldownSpeedMult: 1.0,
+    poolRegenPerSec: 4.0,
     accentHex: '#ec4899',
     groundStyle: 'grass',
     groundTint: 0xfbcfe8,
@@ -494,6 +596,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '요새',
     category: 'citadel',
     description: '4면 성벽 보루와 중앙 공중 성채 다리로 겹겹이 방어된 중세 흑요석 성곽',
+    traitName: '엔드 드래곤 성채',
+    traitDesc: '엔더 크리스탈 탑(중력 0.90x) · 쿨타임 +10% & 성채 용암 해자 함정',
+    gravityMult: 0.9,
+    moveSpeedMult: 1.0,
+    cooldownSpeedMult: 1.1,
+    poolRegenPerSec: 0,
     accentHex: '#4f46e5',
     groundStyle: 'asphalt',
     groundTint: 0x312e81,
@@ -517,6 +625,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '천문',
     category: 'cosmic',
     description: '황금 천문 링 브릿지와 대리석 관측 타워가 웅장하게 솟은 고지대 관측소',
+    traitName: '천구의 성좌 관측',
+    traitDesc: '거대 황금 혼천의 궤도 · 성간 저중력(0.85x) & 태양 렌즈 도약 패드',
+    gravityMult: 0.85,
+    moveSpeedMult: 1.02,
+    cooldownSpeedMult: 1.05,
+    poolRegenPerSec: 0,
     accentHex: '#f59e0b',
     groundStyle: 'asphalt',
     groundTint: 0xe2e8f0,
@@ -540,6 +654,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '플랜트',
     category: 'industrial',
     description: '청록 정제 파이프 다리와 화학 저장 컨테이너 2층 통로가 얽힌 산업 플랜트',
+    traitName: '케미컬 가압 플랜트',
+    traitDesc: '반응로 촉진제(+5% 이속, +10% 쿨감) & 화학 고열 반응 웅덩이',
+    gravityMult: 1.0,
+    moveSpeedMult: 1.05,
+    cooldownSpeedMult: 1.1,
+    poolRegenPerSec: 0,
     accentHex: '#10b981',
     groundStyle: 'asphalt',
     groundTint: 0x3f6212,
@@ -563,6 +683,12 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     badge: '천공',
     category: 'cosmic',
     description: '구름 위 3단 공중 회랑과 순백의 스카이 첨탑을 넘나드는 최상위 공중전 아레나',
+    traitName: '천공 발할라 저중력',
+    traitDesc: '극한 저중력(0.76x) + 초고공 상승 패드(23.5) · 최강의 공중전 & 철퇴 스매시!',
+    gravityMult: 0.76,
+    moveSpeedMult: 1.03,
+    cooldownSpeedMult: 1.08,
+    poolRegenPerSec: 0,
     accentHex: '#7c3aed',
     groundStyle: 'asphalt',
     groundTint: 0xf1f5f9,
@@ -1376,10 +1502,10 @@ export function getJumpPadsForMap(mapId: MapId): JumpPadZone[] {
       ];
     case 'sky_dock':
       return [
-        { id: 'jp_sd_w', x: -18.5, y: 0, z: 0, radius: 1.9, boostY: 20.0, boostForward: 7, color: '#38bdf8' },
-        { id: 'jp_sd_e', x: 18.5, y: 0, z: 0, radius: 1.9, boostY: 20.0, boostForward: 7, color: '#38bdf8' },
-        { id: 'jp_sd_n', x: 0, y: 2.8, z: -17, radius: 1.8, boostY: 17.5, boostForward: 8, color: '#a855f7' },
-        { id: 'jp_sd_s', x: 0, y: 2.8, z: 17, radius: 1.8, boostY: 17.5, boostForward: 8, color: '#a855f7' },
+        { id: 'jp_sd_w', x: -18.5, y: 0, z: 0, radius: 1.9, boostY: 21.5, boostForward: 11.5, color: '#38bdf8' },
+        { id: 'jp_sd_e', x: 18.5, y: 0, z: 0, radius: 1.9, boostY: 21.5, boostForward: 11.5, color: '#38bdf8' },
+        { id: 'jp_sd_n', x: 0, y: 2.8, z: -17, radius: 1.8, boostY: 18.5, boostForward: 12.0, color: '#a855f7' },
+        { id: 'jp_sd_s', x: 0, y: 2.8, z: 17, radius: 1.8, boostY: 18.5, boostForward: 12.0, color: '#a855f7' },
       ];
     case 'nether_foundry':
       return [
@@ -1390,10 +1516,10 @@ export function getJumpPadsForMap(mapId: MapId): JumpPadZone[] {
       ];
     case 'cyber_nexus':
       return [
-        { id: 'jp_cn_w', x: -21, y: 0, z: 0, radius: 1.8, boostY: 18.5, boostForward: 7, color: '#06b6d4' },
-        { id: 'jp_cn_e', x: 21, y: 0, z: 0, radius: 1.8, boostY: 18.5, boostForward: 7, color: '#06b6d4' },
-        { id: 'jp_cn_n', x: 0, y: 0, z: -21, radius: 1.8, boostY: 17.0, boostForward: 6, color: '#a855f7' },
-        { id: 'jp_cn_s', x: 0, y: 0, z: 21, radius: 1.8, boostY: 17.0, boostForward: 6, color: '#a855f7' },
+        { id: 'jp_cn_w', x: -21, y: 0, z: 0, radius: 1.8, boostY: 19.5, boostForward: 10, color: '#06b6d4' },
+        { id: 'jp_cn_e', x: 21, y: 0, z: 0, radius: 1.8, boostY: 19.5, boostForward: 10, color: '#06b6d4' },
+        { id: 'jp_cn_n', x: 0, y: 0, z: -21, radius: 1.8, boostY: 18.0, boostForward: 9, color: '#a855f7' },
+        { id: 'jp_cn_s', x: 0, y: 0, z: 21, radius: 1.8, boostY: 18.0, boostForward: 9, color: '#a855f7' },
       ];
     case 'frost_bastion':
       return [
@@ -1411,13 +1537,97 @@ export function getJumpPadsForMap(mapId: MapId): JumpPadZone[] {
       ];
     case 'orbital_reactor':
       return [
-        { id: 'jp_or_nw', x: -17, y: 0, z: -17, radius: 1.8, boostY: 20.0, boostForward: 7, color: '#818cf8' },
-        { id: 'jp_or_ne', x: 17, y: 0, z: -17, radius: 1.8, boostY: 20.0, boostForward: 7, color: '#818cf8' },
-        { id: 'jp_or_sw', x: -17, y: 0, z: 17, radius: 1.8, boostY: 20.0, boostForward: 7, color: '#38bdf8' },
-        { id: 'jp_or_se', x: 17, y: 0, z: 17, radius: 1.8, boostY: 20.0, boostForward: 7, color: '#38bdf8' },
+        { id: 'jp_or_nw', x: -17, y: 0, z: -17, radius: 1.8, boostY: 22.0, boostForward: 8, color: '#818cf8' },
+        { id: 'jp_or_ne', x: 17, y: 0, z: -17, radius: 1.8, boostY: 22.0, boostForward: 8, color: '#818cf8' },
+        { id: 'jp_or_sw', x: -17, y: 0, z: 17, radius: 1.8, boostY: 22.0, boostForward: 8, color: '#38bdf8' },
+        { id: 'jp_or_se', x: 17, y: 0, z: 17, radius: 1.8, boostY: 22.0, boostForward: 8, color: '#38bdf8' },
+      ];
+    case 'volcanic_caldera':
+      return [
+        { id: 'jp_vc_w', x: -12.5, y: 0, z: 0, radius: 1.8, boostY: 21.0, boostForward: 7.5, color: '#f97316' },
+        { id: 'jp_vc_e', x: 12.5, y: 0, z: 0, radius: 1.8, boostY: 21.0, boostForward: 7.5, color: '#f97316' },
+        { id: 'jp_vc_nw', x: -18.5, y: 0, z: -17, radius: 1.8, boostY: 20.5, boostForward: 6.5, color: '#fb923c' },
+        { id: 'jp_vc_se', x: 18.5, y: 0, z: 17, radius: 1.8, boostY: 20.5, boostForward: 6.5, color: '#fb923c' },
+      ];
+    case 'bamboo_sanctuary':
+      return [
+        { id: 'jp_bs_w', x: -12, y: 0, z: -12, radius: 1.8, boostY: 18.5, boostForward: 7, color: '#22c55e' },
+        { id: 'jp_bs_e', x: 12, y: 0, z: 12, radius: 1.8, boostY: 18.5, boostForward: 7, color: '#22c55e' },
+        { id: 'jp_bs_n', x: 0, y: 0, z: -22, radius: 1.8, boostY: 19.0, boostForward: 6, color: '#84cc16' },
+        { id: 'jp_bs_s', x: 0, y: 0, z: 22, radius: 1.8, boostY: 19.0, boostForward: 6, color: '#84cc16' },
+      ];
+    case 'neon_downtown':
+      return [
+        { id: 'jp_nd_w', x: -14, y: 0, z: 0, radius: 1.8, boostY: 19.5, boostForward: 11, color: '#38bdf8' },
+        { id: 'jp_nd_e', x: 14, y: 0, z: 0, radius: 1.8, boostY: 19.5, boostForward: 11, color: '#38bdf8' },
+        { id: 'jp_nd_nw', x: -14, y: 0, z: -20, radius: 1.8, boostY: 20.0, boostForward: 9, color: '#ec4899' },
+        { id: 'jp_nd_se', x: 14, y: 0, z: 20, radius: 1.8, boostY: 20.0, boostForward: 9, color: '#ec4899' },
+      ];
+    case 'sunken_atlantis':
+      return [
+        { id: 'jp_sa_w', x: -11, y: 0, z: 0, radius: 1.8, boostY: 21.0, boostForward: 7, color: '#14b8a6' },
+        { id: 'jp_sa_e', x: 11, y: 0, z: 0, radius: 1.8, boostY: 21.0, boostForward: 7, color: '#14b8a6' },
+        { id: 'jp_sa_n', x: 0, y: 0, z: -14, radius: 1.8, boostY: 20.5, boostForward: 6, color: '#2dd4bf' },
+        { id: 'jp_sa_s', x: 0, y: 0, z: 14, radius: 1.8, boostY: 20.5, boostForward: 6, color: '#2dd4bf' },
+      ];
+    case 'clockwork_tower':
+      return [
+        { id: 'jp_ct_n', x: 0, y: 0, z: -14, radius: 1.8, boostY: 19.5, boostForward: 7.5, color: '#f59e0b' },
+        { id: 'jp_ct_s', x: 0, y: 0, z: 14, radius: 1.8, boostY: 19.5, boostForward: 7.5, color: '#f59e0b' },
+        { id: 'jp_ct_w', x: -13, y: 0, z: 0, radius: 1.8, boostY: 19.5, boostForward: 7.5, color: '#fbbf24' },
+        { id: 'jp_ct_e', x: 13, y: 0, z: 0, radius: 1.8, boostY: 19.5, boostForward: 7.5, color: '#fbbf24' },
+      ];
+    case 'desert_mirage':
+      return [
+        { id: 'jp_dm_nw', x: -18, y: 0, z: -11, radius: 1.8, boostY: 18.5, boostForward: 7, color: '#eab308' },
+        { id: 'jp_dm_se', x: 18, y: 0, z: 11, radius: 1.8, boostY: 18.5, boostForward: 7, color: '#eab308' },
+        { id: 'jp_dm_ne', x: 18, y: 0, z: -11, radius: 1.8, boostY: 18.5, boostForward: 7, color: '#facc15' },
+        { id: 'jp_dm_sw', x: -18, y: 0, z: 11, radius: 1.8, boostY: 18.5, boostForward: 7, color: '#facc15' },
+      ];
+    case 'crystal_cavern':
+      return [
+        { id: 'jp_cc_nw', x: -12, y: 0, z: -16, radius: 1.8, boostY: 20.0, boostForward: 7, color: '#c084fc' },
+        { id: 'jp_cc_se', x: 12, y: 0, z: 16, radius: 1.8, boostY: 20.0, boostForward: 7, color: '#c084fc' },
+        { id: 'jp_cc_ne', x: 12, y: 0, z: -16, radius: 1.8, boostY: 20.0, boostForward: 7, color: '#a855f7' },
+        { id: 'jp_cc_sw', x: -12, y: 0, z: 16, radius: 1.8, boostY: 20.0, boostForward: 7, color: '#a855f7' },
+      ];
+    case 'cherry_pagoda':
+      return [
+        { id: 'jp_cp_w', x: -12, y: 0, z: 0, radius: 1.8, boostY: 18.5, boostForward: 6.5, color: '#f472b6' },
+        { id: 'jp_cp_e', x: 12, y: 0, z: 0, radius: 1.8, boostY: 18.5, boostForward: 6.5, color: '#f472b6' },
+        { id: 'jp_cp_n', x: 0, y: 0, z: -12, radius: 1.8, boostY: 18.5, boostForward: 6.5, color: '#fb7185' },
+        { id: 'jp_cp_s', x: 0, y: 0, z: 12, radius: 1.8, boostY: 18.5, boostForward: 6.5, color: '#fb7185' },
+      ];
+    case 'obsidian_keep':
+      return [
+        { id: 'jp_ok_nw', x: -18, y: 0, z: -15, radius: 1.8, boostY: 20.5, boostForward: 7, color: '#818cf8' },
+        { id: 'jp_ok_se', x: 18, y: 0, z: 15, radius: 1.8, boostY: 20.5, boostForward: 7, color: '#818cf8' },
+        { id: 'jp_ok_ne', x: 18, y: 0, z: -15, radius: 1.8, boostY: 20.5, boostForward: 7, color: '#a855f7' },
+        { id: 'jp_ok_sw', x: -18, y: 0, z: 15, radius: 1.8, boostY: 20.5, boostForward: 7, color: '#a855f7' },
+      ];
+    case 'solar_observatory':
+      return [
+        { id: 'jp_so_n', x: 0, y: 0, z: -13, radius: 1.8, boostY: 21.5, boostForward: 7.5, color: '#fbbf24' },
+        { id: 'jp_so_s', x: 0, y: 0, z: 13, radius: 1.8, boostY: 21.5, boostForward: 7.5, color: '#fbbf24' },
+        { id: 'jp_so_w', x: -13, y: 0, z: 0, radius: 1.8, boostY: 21.5, boostForward: 7.5, color: '#f59e0b' },
+        { id: 'jp_so_e', x: 13, y: 0, z: 0, radius: 1.8, boostY: 21.5, boostForward: 7.5, color: '#f59e0b' },
+      ];
+    case 'toxic_refinery':
+      return [
+        { id: 'jp_tr_w', x: -12, y: 0, z: 0, radius: 1.8, boostY: 19.0, boostForward: 8, color: '#34d399' },
+        { id: 'jp_tr_e', x: 12, y: 0, z: 0, radius: 1.8, boostY: 19.0, boostForward: 8, color: '#34d399' },
+        { id: 'jp_tr_n', x: 0, y: 0, z: -13, radius: 1.8, boostY: 19.0, boostForward: 7, color: '#10b981' },
+        { id: 'jp_tr_s', x: 0, y: 0, z: 13, radius: 1.8, boostY: 19.0, boostForward: 7, color: '#10b981' },
+      ];
+    case 'aether_spire':
+      return [
+        { id: 'jp_as_n', x: 0, y: 0, z: -12, radius: 1.9, boostY: 23.5, boostForward: 8.5, color: '#a78bfa' },
+        { id: 'jp_as_s', x: 0, y: 0, z: 12, radius: 1.9, boostY: 23.5, boostForward: 8.5, color: '#a78bfa' },
+        { id: 'jp_as_w', x: -13, y: 0, z: 0, radius: 1.9, boostY: 23.5, boostForward: 8.5, color: '#38bdf8' },
+        { id: 'jp_as_e', x: 13, y: 0, z: 0, radius: 1.9, boostY: 23.5, boostForward: 8.5, color: '#38bdf8' },
       ];
     default: {
-      const def = MAP_DEFINITIONS[mapId] ?? MAP_DEFINITIONS.emerald_citadel;
+      const def: MapDefinition = MAP_DEFINITIONS[mapId] ?? MAP_DEFINITIONS.emerald_citadel;
       return [
         { id: `jp_${mapId}_nw`, x: -18.5, y: 0, z: -18.5, radius: 1.8, boostY: 19.0, boostForward: 6, color: def.accentHex },
         { id: `jp_${mapId}_ne`, x: 18.5, y: 0, z: -18.5, radius: 1.8, boostY: 19.0, boostForward: 6, color: def.accentHex },
@@ -1425,6 +1635,72 @@ export function getJumpPadsForMap(mapId: MapId): JumpPadZone[] {
         { id: `jp_${mapId}_se`, x: 18.5, y: 0, z: 18.5, radius: 1.8, boostY: 19.0, boostForward: 6, color: '#38bdf8' },
       ];
     }
+  }
+}
+
+/**
+ * Returns built-in signature water springs (sanctum heal/extinguish) or
+ * lava/magma crucible hazards tailored to each map's theme (never blocking origin spawn).
+ */
+export function getMapSignaturePools(mapId: MapId): HazardPoolZone[] {
+  switch (mapId) {
+    case 'emerald_citadel':
+      return [
+        { id: 'mp_ec_n', kind: 'water', x: 0, y: 0.02, z: -29, radius: 2.8 },
+        { id: 'mp_ec_s', kind: 'water', x: 0, y: 0.02, z: 29, radius: 2.8 },
+      ];
+    case 'nether_foundry':
+      return [
+        { id: 'mp_nf_w', kind: 'lava', x: -14, y: 0.02, z: -14, radius: 2.5 },
+        { id: 'mp_nf_e', kind: 'lava', x: 14, y: 0.02, z: 14, radius: 2.5 },
+      ];
+    case 'frost_bastion':
+      return [
+        { id: 'mp_fb_n', kind: 'water', x: 0, y: 0.02, z: -29, radius: 2.8 },
+        { id: 'mp_fb_s', kind: 'water', x: 0, y: 0.02, z: 29, radius: 2.8 },
+      ];
+    case 'ancient_temple':
+      return [
+        { id: 'mp_at_n', kind: 'water', x: 0, y: 0.02, z: -29, radius: 2.8 },
+        { id: 'mp_at_s', kind: 'water', x: 0, y: 0.02, z: 29, radius: 2.8 },
+      ];
+    case 'volcanic_caldera':
+      return [
+        { id: 'mp_vc_ne', kind: 'lava', x: 13, y: 0.02, z: -13, radius: 2.5 },
+        { id: 'mp_vc_sw', kind: 'lava', x: -13, y: 0.02, z: 13, radius: 2.5 },
+      ];
+    case 'bamboo_sanctuary':
+      return [
+        { id: 'mp_bs_ne', kind: 'water', x: 13, y: 0.02, z: -13, radius: 2.7 },
+        { id: 'mp_bs_sw', kind: 'water', x: -13, y: 0.02, z: 13, radius: 2.7 },
+      ];
+    case 'sunken_atlantis':
+      return [
+        { id: 'mp_sa_w', kind: 'water', x: -24, y: 0.02, z: 0, radius: 2.8 },
+        { id: 'mp_sa_e', kind: 'water', x: 24, y: 0.02, z: 0, radius: 2.8 },
+      ];
+    case 'desert_mirage':
+      return [
+        { id: 'mp_dm_n', kind: 'water', x: 0, y: 0.02, z: -26, radius: 2.8 },
+        { id: 'mp_dm_s', kind: 'water', x: 0, y: 0.02, z: 26, radius: 2.8 },
+      ];
+    case 'cherry_pagoda':
+      return [
+        { id: 'mp_cp_n', kind: 'water', x: 0, y: 0.02, z: -25, radius: 2.8 },
+        { id: 'mp_cp_s', kind: 'water', x: 0, y: 0.02, z: 25, radius: 2.8 },
+      ];
+    case 'obsidian_keep':
+      return [
+        { id: 'mp_ok_w', kind: 'lava', x: -24, y: 0.02, z: 0, radius: 2.4 },
+        { id: 'mp_ok_e', kind: 'lava', x: 24, y: 0.02, z: 0, radius: 2.4 },
+      ];
+    case 'toxic_refinery':
+      return [
+        { id: 'mp_tr_w', kind: 'lava', x: -23, y: 0.02, z: 0, radius: 2.4 },
+        { id: 'mp_tr_e', kind: 'lava', x: 23, y: 0.02, z: 0, radius: 2.4 },
+      ];
+    default:
+      return [];
   }
 }
 

@@ -2,20 +2,29 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CHARACTER_LIST, GAME_MODES, ITEM_CATALOG, hasDoubleJumpLoadout, hasRangedBowLoadout } from './characters';
 import {
+  addUltimateCharge,
   applyCombatDamage,
   computeBlockPlacement,
   computeBowScopeState,
+  computeDamageIndicatorAngle,
+  computeDashVelocity,
   computeJumpVelocity,
   computeMaceDamage,
   computeMaceSmashPreview,
+  computeMatchGrade,
+  computeRangedAimAssist,
   computeSwordDamage,
   consumeSlotUse,
   createArenaBlocks,
+  DASH_COOLDOWN_SEC,
   getSupportHeightAt,
   isInsideCobweb,
   isInsideHazardPool,
+  isPerfectParryActive,
   isStealthAttackRestricted,
+  PARRY_WINDOW_SEC,
   resolveHorizontalCollision,
+  resolveUltimatePreset,
   stepPlayerJump,
   tickCooldowns,
   tickSlotRecharge,
@@ -28,6 +37,7 @@ import {
   getArenaBlocksForMap,
   getJumpPadsForMap,
   getMapForElapsedTime,
+  getMapSignaturePools,
   getNextMapId,
   getRotationWindow,
   tallyMapVotes,
@@ -697,5 +707,131 @@ test('MAX_KNOCKOUT_ROUNDS and resolveKnockoutFinalShowdown guarantee Round 3 alw
   assert.deepEqual([...resBotWins.eliminatedIds], ['local']);
 });
 
+test('isPerfectParryActive triggers only inside 0.24s block window when grounded/unstealthed', () => {
+  assert.equal(isPerfectParryActive(0.05, true, false, false), true);
+  assert.equal(isPerfectParryActive(PARRY_WINDOW_SEC, true, false, false), true);
+  assert.equal(isPerfectParryActive(PARRY_WINDOW_SEC + 0.05, true, false, false), false);
+  assert.equal(isPerfectParryActive(0.05, false, false, false), false);
+  assert.equal(isPerfectParryActive(0.05, true, true, false), false);
+  assert.equal(isPerfectParryActive(0.05, true, false, true), false);
+});
 
+test('computeDashVelocity normalizes diagonal input and falls back to forward yaw direction', () => {
+  assert.equal(DASH_COOLDOWN_SEC, 2.8);
+  const fwd = computeDashVelocity(0, 0, 0, 24);
+  assert.ok(Math.abs(fwd.vx) < 1e-6);
+  assert.ok(Math.abs(fwd.vz - -24) < 1e-6);
 
+  const right = computeDashVelocity(0, 1, 0, 24);
+  assert.ok(Math.abs(right.vx - 24) < 1e-6);
+  assert.ok(Math.abs(right.vz) < 1e-6);
+
+  const diag = computeDashVelocity(1, 1, 0, 24);
+  assert.ok(Math.abs(Math.hypot(diag.vx, diag.vz) - 24) < 1e-6);
+  assert.ok(diag.vx > 0 && diag.vz < 0);
+});
+
+test('Overdrive Ultimate clamps charge 0..100 and resolves distinct archetype presets', () => {
+  assert.equal(addUltimateCharge(0, 35), 35);
+  assert.equal(addUltimateCharge(85, 30), 100);
+  assert.equal(addUltimateCharge(10, -25), 0);
+
+  assert.equal(resolveUltimatePreset('mace_diver').kind, 'sky_meteor');
+  assert.equal(resolveUltimatePreset('ranged_sniper').kind, 'arrow_barrage');
+  assert.equal(resolveUltimatePreset('ranged_skirmisher').kind, 'arrow_barrage');
+  assert.equal(resolveUltimatePreset('pyromancer').kind, 'inferno_nova');
+  assert.equal(resolveUltimatePreset('spear_master').kind, 'chrono_surge');
+});
+
+test('computeDamageIndicatorAngle and computeMatchGrade calculate accurate bearings and ratings', () => {
+  // Player facing -Z (yaw = 0)
+  assert.equal(computeDamageIndicatorAngle(0, -10, 0, 0, 0), 0);
+  assert.equal(computeDamageIndicatorAngle(10, 0, 0, 0, 0), 90);
+  assert.equal(computeDamageIndicatorAngle(-10, 0, 0, 0, 0), -90);
+  assert.equal(Math.abs(computeDamageIndicatorAngle(0, 10, 0, 0, 0)), 180);
+
+  const sPlus = computeMatchGrade({
+    kills: 8,
+    deaths: 1,
+    damageDealt: 500,
+    maxCombo: 4,
+    parryCount: 2,
+    won: true,
+  });
+  assert.equal(sPlus.grade, 'S+');
+  assert.ok(sPlus.score >= 1150);
+
+  const low = computeMatchGrade({
+    kills: 0,
+    deaths: 3,
+    damageDealt: 60,
+    maxCombo: 0,
+    parryCount: 0,
+    won: false,
+  });
+  assert.equal(low.grade, 'C');
+});
+
+test('computeRangedAimAssist softly bends aim toward nearby cone targets and ignores out-of-cone enemies', () => {
+  // Aiming straight -Z (0, 0, -1), enemy slightly right at x=2.2, z=-20 (~6.3 deg off-axis)
+  const assisted = computeRangedAimAssist({
+    originX: 0,
+    originY: 1.5,
+    originZ: 0,
+    dirX: 0,
+    dirY: 0,
+    dirZ: -1,
+    targets: [
+      { id: 'far-off', x: 18, y: 0, z: -10 }, // ~60 deg off-axis (outside 11.5 deg cone)
+      { id: 'in-cone', x: 2.2, y: 0.32, z: -20 },
+    ],
+    projectileSpeed: 56,
+    gravityAccel: -4.48,
+  });
+  assert.equal(assisted.lockedTargetId, 'in-cone');
+  assert.ok(assisted.x > 0.03 && assisted.x < 0.11, `expected gentle positive X pull, got ${assisted.x}`);
+  assert.ok(assisted.z < -0.98);
+  assert.ok(Math.abs(Math.hypot(assisted.x, assisted.y, assisted.z) - 1) < 1e-5);
+
+  // Out of cone -> raw direction preserved untouched
+  const miss = computeRangedAimAssist({
+    originX: 0,
+    originY: 1.5,
+    originZ: 0,
+    dirX: 0,
+    dirY: 0,
+    dirZ: -1,
+    targets: [{ id: 'side', x: 12, y: 0, z: -12 }],
+  });
+  assert.equal(miss.lockedTargetId, null);
+  assert.equal(miss.x, 0);
+  assert.equal(miss.z, -1);
+});
+
+test('all 20 maps define distinct GOAT traits, valid multipliers, and clear jump pads & signature pools', () => {
+  const traitNames = new Set<string>();
+  for (const mapId of MAP_ORDER) {
+    const def = MAP_DEFINITIONS[mapId];
+    assert.ok(def.traitName.trim().length >= 3, `${mapId} needs traitName`);
+    assert.ok(def.traitDesc.trim().length >= 10, `${mapId} needs traitDesc`);
+    traitNames.add(def.traitName);
+    assert.ok(def.gravityMult >= 0.7 && def.gravityMult <= 1.05, `${mapId} gravityMult out of bounds`);
+    assert.ok(def.moveSpeedMult >= 1.0 && def.moveSpeedMult <= 1.15, `${mapId} moveSpeedMult out of bounds`);
+    assert.ok(def.cooldownSpeedMult >= 1.0 && def.cooldownSpeedMult <= 1.3, `${mapId} cooldownSpeedMult out of bounds`);
+
+    const blocks = getArenaBlocksForMap(mapId);
+    const pads = getJumpPadsForMap(mapId);
+    for (const pad of pads) {
+      const sup = getSupportHeightAt(pad.x, pad.z, pad.y + 0.5, 0.35, blocks);
+      assert.ok(sup <= pad.y + 0.1, `${mapId} jump pad ${pad.id} blocked at (${pad.x},${pad.z}), sup=${sup}`);
+    }
+
+    const pools = getMapSignaturePools(mapId);
+    for (const pool of pools) {
+      assert.ok(Math.hypot(pool.x, pool.z) >= 8, `${mapId} signature pool too close to center spawn`);
+      const sup = getSupportHeightAt(pool.x, pool.z, 2.0, 0.35, blocks);
+      assert.ok(sup <= 0.1, `${mapId} signature pool ${pool.id} overlapped block at (${pool.x},${pool.z}), sup=${sup}`);
+    }
+  }
+  assert.equal(traitNames.size, 20, 'all 20 maps must have unique GOAT trait names');
+});

@@ -50,6 +50,8 @@ interface GameHudProps {
   onSendChat?: (text: string) => void;
   onToggleMobileSprint?: () => void;
   onMobileElytra?: () => void;
+  onMobileDash?: () => void;
+  onMobileUltimate?: () => void;
   onMobileAttack?: () => void;
   onMobileAttackHold?: (pressed: boolean) => void;
   onMobileJump?: (pressed: boolean) => void;
@@ -77,6 +79,8 @@ export function GameHud({
   onSendChat,
   onToggleMobileSprint,
   onMobileElytra,
+  onMobileDash,
+  onMobileUltimate,
   onMobileAttack,
   onMobileAttackHold,
   onMobileJump,
@@ -321,6 +325,31 @@ export function GameHud({
         />
       )}
 
+      {hud.floatingDamageNumbers && hud.floatingDamageNumbers.length > 0 && (
+        <div
+          data-testid="floating-damage-layer"
+          className="fixed inset-0 pointer-events-none overflow-hidden z-15"
+        >
+          {hud.floatingDamageNumbers.map((fd) => (
+            <div
+              key={fd.id}
+              className={`absolute font-display font-mono-num font-black hud-text-stroke whitespace-nowrap ${
+                fd.isCrit ? 'text-base sm:text-lg' : 'text-xs sm:text-sm'
+              }`}
+              style={{
+                left: `${fd.xPct}%`,
+                top: `${fd.yPct}%`,
+                color: fd.color,
+                opacity: fd.opacity,
+                transform: 'translate(-50%, -50%)',
+              }}
+            >
+              {fd.text}
+            </div>
+          ))}
+        </div>
+      )}
+
       {isPracticeOffline && (
         <div
           data-testid="practice-switcher-left"
@@ -385,6 +414,13 @@ export function GameHud({
             <MapPin className="w-3 h-3 text-blue-600 shrink-0" />
             <span className="font-display font-bold text-slate-900 truncate" data-testid="hud-map-name">
               {mapDef.name}
+            </span>
+            <span
+              data-testid="hud-map-trait"
+              title={mapDef.traitDesc}
+              className="hidden sm:inline-block px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-[9.5px] font-semibold text-slate-700 truncate max-w-[122px]"
+            >
+              {mapDef.traitName}
             </span>
             {hud.roomMode === 'team' && (hud.playerTeam === 'red' || hud.playerTeam === 'blue') && (
               <span
@@ -672,7 +708,7 @@ export function GameHud({
         (hud.mode === 'ffa' && hud.partyMode !== 'classic')) && (
         <div
           data-testid="top-center-score-banner"
-          className="fixed top-[128px] sm:top-3 left-1/2 -translate-x-1/2 pointer-events-none z-15 bg-zinc-950/92 border border-white/15 rounded-xl px-3 sm:px-5 py-1.5 sm:py-2 shadow-lg flex items-center gap-3 sm:gap-4 text-white whitespace-nowrap"
+          className="fixed top-[128px] sm:top-3 left-1/2 -translate-x-1/2 pointer-events-none z-15 bg-zinc-950/92 border border-white/15 rounded-xl px-3 sm:px-3.5 py-1.5 sm:py-2 shadow-lg flex items-center gap-2.5 sm:gap-3 text-white whitespace-nowrap"
         >
           {(hud.mode === 'multiplayer' || hud.mode === 'ffa') && hud.partyMode === 'boss_raid' ? (
             <div className="flex flex-col items-center gap-1 min-w-[200px] sm:min-w-[280px]">
@@ -897,9 +933,58 @@ export function GameHud({
         </div>
       )}
 
-      {/* Center Crosshair + Hitmarker + 3s Cobweb Break Progress (hidden while spectating) */}
+      {/* Center Crosshair + Hitmarker + Directional Hit Arcs + Parry Flash (hidden while spectating) */}
       {!hud.isSpectating && (
       <div className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none flex items-center justify-center">
+        {hud.damageIndicators && hud.damageIndicators.length > 0 && (
+          <div data-testid="directional-damage-indicators" className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            {hud.damageIndicators.map((ind) => (
+              <svg
+                key={ind.id}
+                width="160"
+                height="160"
+                viewBox="0 0 160 160"
+                aria-hidden="true"
+                className="absolute pointer-events-none"
+                style={{
+                  transform: `rotate(${ind.angleDeg}deg)`,
+                  opacity: ind.opacity,
+                }}
+              >
+                <path
+                  d="M 54 14 A 72 72 0 0 1 106 14 L 98 24 A 60 60 0 0 0 62 24 Z"
+                  fill="#ef4444"
+                  stroke="#fca5a5"
+                  strokeWidth="1"
+                />
+              </svg>
+            ))}
+          </div>
+        )}
+
+        {hud.parryFlashTimer > 0 && (
+          <div
+            data-testid="parry-flash-ring"
+            className="absolute flex items-center justify-center pointer-events-none"
+            style={{ opacity: Math.min(1, hud.parryFlashTimer * 2.5) }}
+          >
+            <svg width="76" height="76" viewBox="0 0 76 76" aria-hidden="true">
+              <circle
+                cx="38"
+                cy="38"
+                r="30"
+                fill="none"
+                stroke="#22d3ee"
+                strokeWidth="3"
+                strokeOpacity="0.9"
+              />
+            </svg>
+            <span className="absolute -top-9 font-display text-xs font-black tracking-wider text-cyan-300 hud-text-stroke whitespace-nowrap">
+              PARRY!
+            </span>
+          </div>
+        )}
+
         <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
           <line x1="13" y1="3" x2="13" y2="9" stroke="#0f172a" strokeWidth="2.5" strokeOpacity="0.65" />
           <line x1="13" y1="17" x2="13" y2="23" stroke="#0f172a" strokeWidth="2.5" strokeOpacity="0.65" />
@@ -950,7 +1035,7 @@ export function GameHud({
             </svg>
             <div
               data-testid="bow-scope-readout"
-              className="absolute -top-11 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-950/80 border border-sky-400/35 px-2 py-0.5 font-mono-num text-[10px] font-bold text-sky-300 shadow-sm"
+              className="absolute -top-11 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-950/90 border border-sky-400/35 px-2 py-0.5 font-mono-num text-[10px] font-bold text-sky-300 shadow-sm"
             >
               {hud.scopeZoomFactor.toFixed(1)}x · 방패 스코프
             </div>
@@ -1032,7 +1117,7 @@ export function GameHud({
 
               <div
                 data-testid="mace-smash-hud"
-                className={`absolute left-1/2 -translate-x-1/2 pointer-events-none min-w-[224px] rounded-xl bg-slate-950/84 backdrop-blur-sm border px-3 py-2 text-white shadow-lg transition-opacity duration-150 ${
+                className={`absolute left-1/2 -translate-x-1/2 pointer-events-none min-w-[224px] rounded-xl bg-slate-950/92 border px-3 py-2 text-white shadow-lg transition-opacity duration-150 ${
                   hud.cobwebBreakProgress > 0 || hud.isInCobweb ? 'top-24' : 'top-10'
                 } ${
                   macePreview.tier === 'max' || macePreview.tier === 'overdrive'
@@ -1436,19 +1521,40 @@ export function GameHud({
               </div>
             </div>
 
-            {/* Action Buttons (Elytra, Block, Jump, Attack) */}
+            {/* Action Buttons (Ultimate, Dash, Elytra, Block, Jump, Attack) */}
             <div className="pointer-events-auto flex flex-col items-end gap-2 touch-none">
-              <button
-                type="button"
-                data-testid="mobile-elytra-btn"
-                onClick={() => onMobileElytra?.()}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/95 border border-slate-300 text-slate-900 font-bold text-[11px] shadow-sm cursor-pointer active:scale-95"
-              >
-                <Feather className="w-3.5 h-3.5 text-sky-600" />
-                {hud.isGliding
-                  ? `비행 ${(hud.elytraFlightRemaining ?? 10).toFixed(1)}s`
-                  : `겉날개 ${hud.elytraCooldown > 0.05 ? `${hud.elytraCooldown.toFixed(1)}s` : 'READY'}`}
-              </button>
+              <div className="flex items-center gap-1.5">
+                {hud.ultimateReady && (
+                  <button
+                    type="button"
+                    data-testid="mobile-ultimate-btn"
+                    onClick={() => onMobileUltimate?.()}
+                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500 border border-amber-300 text-slate-950 font-bold text-[11px] shadow-sm cursor-pointer active:scale-95"
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    {hud.ultimateLabel} [X]
+                  </button>
+                )}
+                <button
+                  type="button"
+                  data-testid="mobile-dash-btn"
+                  onClick={() => onMobileDash?.()}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/95 border border-slate-300 text-slate-900 font-bold text-[11px] shadow-sm cursor-pointer active:scale-95"
+                >
+                  대쉬 {hud.dashCooldown > 0.05 ? `${hud.dashCooldown.toFixed(1)}s` : 'READY'}
+                </button>
+                <button
+                  type="button"
+                  data-testid="mobile-elytra-btn"
+                  onClick={() => onMobileElytra?.()}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/95 border border-slate-300 text-slate-900 font-bold text-[11px] shadow-sm cursor-pointer active:scale-95"
+                >
+                  <Feather className="w-3.5 h-3.5 text-sky-600" />
+                  {hud.isGliding
+                    ? `비행 ${(hud.elytraFlightRemaining ?? 10).toFixed(1)}s`
+                    : `겉날개 ${hud.elytraCooldown > 0.05 ? `${hud.elytraCooldown.toFixed(1)}s` : 'READY'}`}
+                </button>
+              </div>
 
               <div className="flex items-end gap-2">
                 <button
@@ -1601,7 +1707,8 @@ export function GameHud({
           )}
         </div>
 
-        <div className="flex items-center gap-1 sm:gap-1.5 bg-white/95 border border-slate-200 rounded-xl p-1.5 pointer-events-auto shadow-sm max-w-full">
+        <div className="flex flex-wrap sm:flex-nowrap items-center justify-center gap-1 sm:gap-1.5 bg-white/95 border border-slate-200 rounded-xl p-1.5 pointer-events-auto shadow-sm max-w-full">
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
           {hud.loadout.map((slot, idx) => {
             if (!slot) {
               return (
@@ -1609,7 +1716,7 @@ export function GameHud({
                   key={`empty-${idx}`}
                   data-slot-index={idx}
                   aria-label={`${idx + 1}번 빈 슬롯`}
-                  className="relative w-9 h-9 sm:w-12 sm:h-12 rounded-lg border border-dashed border-slate-200 bg-slate-50/50 flex flex-col items-center justify-center text-slate-300 select-none"
+                  className="relative shrink-0 w-10 h-10 sm:w-12 sm:h-12 rounded-lg border border-dashed border-slate-200 bg-slate-50/50 flex flex-col items-center justify-center text-slate-300 select-none"
                 >
                   <span className="absolute top-0.5 left-1 sm:left-1.5 font-mono-num text-[9px] sm:text-[10px]">
                     {idx + 1}
@@ -1641,7 +1748,7 @@ export function GameHud({
                   e.currentTarget.blur();
                   onSelectSlot(idx);
                 }}
-                className={`relative w-9 h-9 sm:w-12 sm:h-12 rounded-lg border flex flex-col items-center justify-center transition-colors cursor-pointer overflow-hidden ${
+                className={`relative shrink-0 w-10 h-10 sm:w-12 sm:h-12 rounded-lg border flex flex-col items-center justify-center transition-colors cursor-pointer overflow-hidden ${
                   active
                     ? 'bg-slate-900 border-slate-900 text-white'
                     : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-slate-400'
@@ -1691,13 +1798,15 @@ export function GameHud({
               </button>
             );
           })}
+          </div>
 
-          <div className="w-px h-8 bg-slate-200 mx-0.5" aria-hidden="true" />
+          <div className="hidden sm:block w-px h-8 bg-slate-200 mx-0.5" aria-hidden="true" />
 
+          <div className="flex items-center justify-center gap-1 sm:gap-1.5 shrink-0">
           {hud.canDoubleJump && (
             <div
               data-testid="hud-double-jump-status"
-              className={`px-2 py-1 rounded-lg border text-center min-w-14 ${
+              className={`px-2 py-1 rounded-lg border text-center min-w-12 sm:min-w-14 whitespace-nowrap ${
                 (hud.jumpCount ?? 0) >= 2
                   ? 'bg-slate-100 border-slate-300'
                   : (hud.jumpCount ?? 0) === 1
@@ -1720,9 +1829,76 @@ export function GameHud({
             </div>
           )}
 
+          <button
+            type="button"
+            tabIndex={-1}
+            data-testid="hud-dash-status"
+            title="방향 회피 대쉬 (Z)"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onMobileDash?.();
+            }}
+            className={`px-2 py-1 rounded-lg border text-center min-w-13 sm:min-w-14 whitespace-nowrap cursor-pointer transition-colors ${
+              hud.dashCooldown <= 0.05
+                ? 'bg-cyan-50 border-cyan-300 hover:bg-cyan-100'
+                : 'bg-slate-50 border-slate-200'
+            }`}
+          >
+            <div className="text-[10px] font-medium text-slate-500">대쉬 [Z]</div>
+            <div
+              className={`font-mono-num text-xs font-bold ${
+                hud.dashCooldown <= 0.05 ? 'text-cyan-700' : 'text-slate-700'
+              }`}
+            >
+              {hud.dashCooldown > 0.05 ? `${hud.dashCooldown.toFixed(1)}s` : 'READY'}
+            </div>
+          </button>
+
+          <button
+            type="button"
+            tabIndex={-1}
+            data-testid="hud-ultimate-status"
+            title={`오버드라이브 필살기: ${hud.ultimateLabel} (X)`}
+            onClick={(e) => {
+              e.currentTarget.blur();
+              onMobileUltimate?.();
+            }}
+            className={`relative px-2 py-1 rounded-lg border text-center min-w-16 sm:min-w-18 whitespace-nowrap overflow-hidden cursor-pointer transition-colors ${
+              hud.ultimateReady
+                ? 'bg-slate-950 border-amber-400 text-white'
+                : 'bg-slate-50 border-slate-200 text-slate-900'
+            }`}
+          >
+            <div
+              className={`text-[10px] font-medium whitespace-nowrap ${
+                hud.ultimateReady ? 'text-amber-300' : 'text-slate-500'
+              }`}
+            >
+              {hud.ultimateLabel} [X]
+            </div>
+            <div
+              className={`font-mono-num text-xs font-bold ${
+                hud.ultimateReady ? 'text-white' : 'text-slate-900'
+              }`}
+            >
+              {hud.ultimateReady ? 'READY' : `${hud.ultimateCharge}%`}
+            </div>
+            {!hud.ultimateReady && (
+              <div className="absolute inset-x-0 bottom-0 h-1 bg-slate-200">
+                <div
+                  className="h-full transition-all duration-100"
+                  style={{
+                    width: `${Math.min(100, Math.max(0, hud.ultimateCharge))}%`,
+                    backgroundColor: hud.ultimateAccent || '#f59e0b',
+                  }}
+                />
+              </div>
+            )}
+          </button>
+
           <div
             data-testid="hud-elytra-status"
-            className={`px-2 py-1 rounded-lg border text-center min-w-16 ${
+            className={`px-2 py-1 rounded-lg border text-center min-w-14 sm:min-w-16 whitespace-nowrap ${
               hud.isGliding
                 ? (hud.elytraFlightRemaining ?? 10) <= 2.5
                   ? 'bg-rose-50 border-rose-300'
@@ -1735,7 +1911,7 @@ export function GameHud({
               className={`font-mono-num text-xs font-bold ${
                 hud.isGliding
                   ? (hud.elytraFlightRemaining ?? 10) <= 2.5
-                    ? 'text-rose-600 animate-pulse'
+                    ? 'text-rose-600'
                     : 'text-sky-700'
                   : 'text-slate-900'
               }`}
@@ -1746,6 +1922,7 @@ export function GameHud({
                   ? `${hud.elytraCooldown.toFixed(1)}s`
                   : 'READY'}
             </div>
+          </div>
           </div>
         </div>
       </div>

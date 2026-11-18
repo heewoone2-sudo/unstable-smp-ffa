@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { MAP_DEFINITIONS, getArenaBlocksForMap, getJumpPadsForMap } from '../game/maps';
+import { MAP_DEFINITIONS, getArenaBlocksForMap, getJumpPadsForMap, getMapSignaturePools } from '../game/maps';
+import { buildMapSignatureProps, type AnimatedMapProp } from '../game/mapProps';
 import type { ArenaBlockKind, MapId } from '../game/types';
 
 interface MapPreview3DProps {
@@ -75,6 +76,7 @@ export function MapPreview3D({ mapId, className = '' }: MapPreview3DProps) {
     kindMaterials: Map<ArenaBlockKind, THREE.MeshStandardMaterial>;
     transientMaterials: THREE.Material[];
     transientGeometries: THREE.BufferGeometry[];
+    animatedProps: AnimatedMapProp[];
     orbitRadius: number;
     orbitHeight: number;
     isSoftwareGl: boolean;
@@ -182,6 +184,7 @@ export function MapPreview3D({ mapId, className = '' }: MapPreview3DProps) {
       kindMaterials,
       transientMaterials: [],
       transientGeometries: [],
+      animatedProps: [],
       orbitRadius: 42,
       orbitHeight: 26,
       isSoftwareGl,
@@ -218,6 +221,14 @@ export function MapPreview3D({ mapId, className = '' }: MapPreview3DProps) {
 
       if (!document.hidden) {
         angle += dt * 0.28;
+        const timeSec = now * 0.001;
+        for (let i = 0; i < state.animatedProps.length; i++) {
+          const p = state.animatedProps[i];
+          if (p.kind === 'spinY') p.obj.rotation.y += dt * p.speed;
+          else if (p.kind === 'spinZ') p.obj.rotation.z += dt * p.speed;
+          else if (p.kind === 'spinX') p.obj.rotation.x += dt * p.speed;
+          else if (p.kind === 'bob') p.obj.position.y = p.baseY + Math.sin(timeSec * p.speed + p.phase) * 0.65;
+        }
         state.camera.position.set(
           Math.cos(angle) * state.orbitRadius,
           state.orbitHeight + Math.sin(angle * 0.7) * 1.6,
@@ -279,6 +290,7 @@ export function MapPreview3D({ mapId, className = '' }: MapPreview3DProps) {
     for (const g of state.transientGeometries) g.dispose();
     state.transientMaterials = [];
     state.transientGeometries = [];
+    state.animatedProps = [];
 
     const mapDef = MAP_DEFINITIONS[mapId] ?? MAP_DEFINITIONS.container_yard;
     state.scene.background = new THREE.Color(mapDef.fogColor);
@@ -370,6 +382,33 @@ export function MapPreview3D({ mapId, className = '' }: MapPreview3DProps) {
       ring.position.set(pad.x, pad.y + 0.65, pad.z);
       state.mapGroup.add(ring);
     }
+
+    const sigPools = getMapSignaturePools(mapId);
+    for (const pool of sigPools) {
+      const pGeo = new THREE.CircleGeometry(pool.radius, 20);
+      const pColor = pool.kind === 'lava' ? 0xf97316 : 0x38bdf8;
+      const pMat = new THREE.MeshStandardMaterial({
+        color: pColor,
+        emissive: pool.kind === 'lava' ? 0xea580c : 0x0284c7,
+        emissiveIntensity: pool.kind === 'lava' ? 1.1 : 0.45,
+        roughness: 0.2,
+      });
+      state.transientGeometries.push(pGeo);
+      state.transientMaterials.push(pMat);
+      const pm = new THREE.Mesh(pGeo, pMat);
+      pm.rotation.x = -Math.PI / 2;
+      pm.position.set(pool.x, 0.06, pool.z);
+      state.mapGroup.add(pm);
+    }
+
+    const sig = buildMapSignatureProps(mapId, mapDef, radius, true);
+    sig.group.traverse((obj) => {
+      const mesh = obj as THREE.Mesh;
+      if (mesh.geometry) state.transientGeometries.push(mesh.geometry);
+    });
+    state.transientMaterials.push(...sig.materials);
+    state.animatedProps = sig.animatedProps;
+    state.mapGroup.add(sig.group);
 
     state.renderer.render(state.scene, state.camera);
   }, [mapId]);

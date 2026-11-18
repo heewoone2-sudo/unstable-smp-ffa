@@ -1762,6 +1762,14 @@ export function TitleScreen({
                           >
                             {previewMapDef.description}
                           </p>
+                          <div
+                            data-testid="preview-map-trait"
+                            className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-amber-50 border border-amber-200 text-[10.5px] font-bold text-amber-900 max-w-full truncate"
+                            title={previewMapDef.traitDesc}
+                          >
+                            <span className="shrink-0">⚡ {previewMapDef.traitName}</span>
+                            <span className="text-amber-700 font-medium truncate">{previewMapDef.traitDesc}</span>
+                          </div>
                         </div>
 
                         <div className="space-y-1.5">
@@ -1979,7 +1987,10 @@ export function TitleScreen({
                           <div className="font-display text-sm sm:text-base font-black text-slate-900 truncate">
                             {def.name}
                           </div>
-                          <div className="mt-1.5 h-1 w-8 rounded-full" style={{ backgroundColor: def.accentHex }} />
+                          <div className="text-[11px] font-semibold text-slate-600 truncate mt-0.5">
+                            {def.traitName}
+                          </div>
+                          <div className="mt-1 h-1 w-8 rounded-full" style={{ backgroundColor: def.accentHex }} />
                         </div>
                       </button>
                     );

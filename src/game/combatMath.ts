@@ -1,4 +1,11 @@
-import type { ArenaBlock, CobwebZone, FighterStats, HazardPoolZone, WeaponSlotId } from './types';
+import type {
+  ArenaBlock,
+  CharacterProfile,
+  CobwebZone,
+  FighterStats,
+  HazardPoolZone,
+  WeaponSlotId,
+} from './types';
 
 export interface DamageResult {
   finalDamage: number;
@@ -638,3 +645,297 @@ export function computeBowScopeState(params: {
   };
 }
 
+export const PARRY_WINDOW_SEC = 0.24;
+export const DASH_COOLDOWN_SEC = 2.8;
+
+/**
+ * Returns true when shield block was raised within the 0.24s Perfect Parry window.
+ */
+export function isPerfectParryActive(
+  blockHeldSec: number,
+  isBlocking: boolean,
+  isGliding: boolean,
+  isStealthed: boolean
+): boolean {
+  return (
+    isBlocking &&
+    !isGliding &&
+    !isStealthed &&
+    blockHeldSec >= 0 &&
+    blockHeldSec <= PARRY_WINDOW_SEC
+  );
+}
+
+/**
+ * Computes horizontal dash velocity vector from WASD movement input and player yaw.
+ * Falls back to forward direction along yaw when stationary.
+ */
+export function computeDashVelocity(
+  moveForward: number,
+  moveRight: number,
+  yaw: number,
+  dashSpeed = 24
+): { vx: number; vz: number } {
+  const fx = -Math.sin(yaw);
+  const fz = -Math.cos(yaw);
+  const rx = Math.cos(yaw);
+  const rz = -Math.sin(yaw);
+
+  let dx = fx * moveForward + rx * moveRight;
+  let dz = fz * moveForward + rz * moveRight;
+  const len = Math.hypot(dx, dz);
+  if (len < 0.01) {
+    dx = fx;
+    dz = fz;
+  } else {
+    dx /= len;
+    dz /= len;
+  }
+  return {
+    vx: dx * dashSpeed,
+    vz: dz * dashSpeed,
+  };
+}
+
+/**
+ * Accumulates and clamps Overdrive Ultimate gauge in [0, 100].
+ */
+export function addUltimateCharge(currentCharge: number, delta: number): number {
+  return Math.max(0, Math.min(100, Math.round(currentCharge + delta)));
+}
+
+export type UltimateKind = 'sky_meteor' | 'arrow_barrage' | 'inferno_nova' | 'chrono_surge';
+
+export interface UltimatePreset {
+  kind: UltimateKind;
+  label: string;
+  shortLabel: string;
+  accent: string;
+  description: string;
+}
+
+/**
+ * Resolves the character's Overdrive Ultimate burst based on combat archetype.
+ */
+export function resolveUltimatePreset(archetype: CharacterProfile['archetype']): UltimatePreset {
+  switch (archetype) {
+    case 'mace_diver':
+      return {
+        kind: 'sky_meteor',
+        label: '스카이 메테오',
+        shortLabel: '메테오',
+        accent: '#f59e0b',
+        description: '수직 고도 급상승 + 흡수 보호막 15 획득',
+      };
+    case 'ranged_sniper':
+    case 'ranged_skirmisher':
+      return {
+        kind: 'arrow_barrage',
+        label: '폭풍 일제사격',
+        shortLabel: '일제사격',
+        accent: '#0ea5e9',
+        description: '전방 부채꼴 5연발 관통 사격 발사',
+      };
+    case 'pyromancer':
+    case 'heavy_tank':
+    case 'brawler':
+    case 'assassin':
+      return {
+        kind: 'inferno_nova',
+        label: '키네틱 노바',
+        shortLabel: '노바 폭발',
+        accent: '#f97316',
+        description: '반경 6.8m 광역 충격파 폭발 + 보호막 20',
+      };
+    default:
+      return {
+        kind: 'chrono_surge',
+        label: '크로노 서지',
+        shortLabel: '쿨초기화',
+        accent: '#a855f7',
+        description: '모든 스킬 쿨타임 즉시 초기화 + HP 30 회복',
+      };
+  }
+}
+
+/**
+ * Computes relative bearing angle in degrees [-180, 180] from player forward to attacker:
+ * 0 = straight ahead, +90 = right, -90 = left, +/-180 = behind.
+ */
+export function computeDamageIndicatorAngle(
+  attackerX: number,
+  attackerZ: number,
+  playerX: number,
+  playerZ: number,
+  playerYaw: number
+): number {
+  const tx = attackerX - playerX;
+  const tz = attackerZ - playerZ;
+  if (Math.hypot(tx, tz) < 0.01) return 180;
+
+  const fx = -Math.sin(playerYaw);
+  const fz = -Math.cos(playerYaw);
+  const rx = Math.cos(playerYaw);
+  const rz = -Math.sin(playerYaw);
+
+  const dotF = tx * fx + tz * fz;
+  const dotR = tx * rx + tz * rz;
+  return Number((Math.atan2(dotR, dotF) * (180 / Math.PI)).toFixed(1));
+}
+
+/**
+ * Computes post-match combat rating and score summary for the Match MVP report.
+ */
+export function computeMatchGrade(params: {
+  kills: number;
+  deaths: number;
+  damageDealt: number;
+  maxCombo: number;
+  parryCount: number;
+  won: boolean;
+}): { grade: 'S+' | 'S' | 'A' | 'B' | 'C'; score: number } {
+  const score = Math.max(
+    0,
+    Math.round(
+      params.kills * 120 +
+        params.damageDealt * 0.45 +
+        params.maxCombo * 65 +
+        params.parryCount * 90 -
+        params.deaths * 45 +
+        (params.won ? 200 : 0)
+    )
+  );
+  const grade =
+    score >= 1150
+      ? 'S+'
+      : score >= 850
+        ? 'S'
+        : score >= 550
+          ? 'A'
+          : score >= 300
+            ? 'B'
+            : 'C';
+  return { grade, score };
+}
+
+export interface AimAssistTarget {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  vx?: number;
+  vz?: number;
+}
+
+export interface AimAssistResult {
+  x: number;
+  y: number;
+  z: number;
+  lockedTargetId: string | null;
+  angleDeg: number;
+}
+
+/**
+ * Applies subtle spherical aim assist ("slight auto-aim") toward the closest-angle
+ * hostile target inside a narrow crosshair cone, with optional lead/gravity compensation.
+ */
+export function computeRangedAimAssist(params: {
+  originX: number;
+  originY: number;
+  originZ: number;
+  dirX: number;
+  dirY: number;
+  dirZ: number;
+  targets: readonly AimAssistTarget[];
+  maxConeDeg?: number;
+  maxRange?: number;
+  assistStrength?: number;
+  maxPullDeg?: number;
+  projectileSpeed?: number;
+  gravityAccel?: number;
+  targetChestOffset?: number;
+}): AimAssistResult {
+  const dirLen = Math.hypot(params.dirX, params.dirY, params.dirZ);
+  if (dirLen < 1e-6) {
+    return { x: 0, y: 0, z: -1, lockedTargetId: null, angleDeg: 0 };
+  }
+  const rx = params.dirX / dirLen;
+  const ry = params.dirY / dirLen;
+  const rz = params.dirZ / dirLen;
+
+  const maxConeRad = ((params.maxConeDeg ?? 11.5) * Math.PI) / 180;
+  const cosThreshold = Math.cos(maxConeRad);
+  const maxRange = params.maxRange ?? 64;
+  const assistStrength = Math.max(0, Math.min(1, params.assistStrength ?? 0.62));
+  const maxPullRad = ((params.maxPullDeg ?? 7.5) * Math.PI) / 180;
+  const chestOff = params.targetChestOffset ?? 1.18;
+
+  let bestTarget: AimAssistTarget | null = null;
+  let bestDot = cosThreshold;
+  let bestDist = 0;
+
+  for (let i = 0; i < params.targets.length; i++) {
+    const t = params.targets[i];
+    const dx = t.x - params.originX;
+    const dy = t.y + chestOff - params.originY;
+    const dz = t.z - params.originZ;
+    const dist = Math.hypot(dx, dy, dz);
+    if (dist < 1.2 || dist > maxRange) continue;
+
+    const dot = (dx * rx + dy * ry + dz * rz) / dist;
+    if (dot >= bestDot) {
+      bestDot = dot;
+      bestTarget = t;
+      bestDist = dist;
+    }
+  }
+
+  if (!bestTarget || assistStrength <= 0) {
+    return { x: rx, y: ry, z: rz, lockedTargetId: null, angleDeg: 0 };
+  }
+
+  const speed = params.projectileSpeed ?? 0;
+  const grav = params.gravityAccel ?? 0;
+  const flightT = speed > 0 ? Math.min(0.85, bestDist / speed) : 0;
+  const leadX = (bestTarget.vx ?? 0) * flightT * 0.45;
+  const leadZ = (bestTarget.vz ?? 0) * flightT * 0.45;
+  const gravDropComp = grav < 0 ? 0.5 * -grav * flightT * flightT * 0.55 : 0;
+
+  const tx = bestTarget.x + leadX - params.originX;
+  const ty = bestTarget.y + chestOff + gravDropComp - params.originY;
+  const tz = bestTarget.z + leadZ - params.originZ;
+  const tLen = Math.hypot(tx, ty, tz);
+  if (tLen < 1e-6) {
+    return { x: rx, y: ry, z: rz, lockedTargetId: null, angleDeg: 0 };
+  }
+
+  const ux = tx / tLen;
+  const uy = ty / tLen;
+  const uz = tz / tLen;
+  const cosAngle = Math.max(-1, Math.min(1, rx * ux + ry * uy + rz * uz));
+  const angle = Math.acos(cosAngle);
+  const angleDeg = Number(((angle * 180) / Math.PI).toFixed(2));
+
+  if (angle < 1e-4) {
+    return { x: ux, y: uy, z: uz, lockedTargetId: bestTarget.id, angleDeg: 0 };
+  }
+
+  const pullAngle = Math.min(angle * assistStrength, maxPullRad);
+  const frac = pullAngle / angle;
+  const sinA = Math.sin(angle);
+  const w0 = Math.sin((1 - frac) * angle) / sinA;
+  const w1 = Math.sin(frac * angle) / sinA;
+
+  const ax = w0 * rx + w1 * ux;
+  const ay = w0 * ry + w1 * uy;
+  const az = w0 * rz + w1 * uz;
+  const aLen = Math.hypot(ax, ay, az) || 1;
+
+  return {
+    x: ax / aLen,
+    y: ay / aLen,
+    z: az / aLen,
+    lockedTargetId: bestTarget.id,
+    angleDeg,
+  };
+}

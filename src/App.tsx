@@ -11,6 +11,7 @@ import {
   type PlayerAccountProfile,
 } from './firebase';
 import { CHARACTERS, DEFAULT_GAME_SETTINGS, hasDoubleJumpLoadout } from './game/characters';
+import { DASH_COOLDOWN_SEC, resolveUltimatePreset } from './game/combatMath';
 import { UnstableArenaEngine } from './game/engine';
 import { createEmptyMapVotes, getRotationWindow } from './game/maps';
 import type { BotDifficulty, CharacterId, GameModeId, HudSnapshot } from './game/types';
@@ -98,6 +99,17 @@ const INITIAL_HUD: HudSnapshot = {
   elytraCooldown: 0,
   elytraMaxCooldown: 3.8,
   elytraFlightRemaining: 0,
+  dashCooldown: 0,
+  dashMaxCooldown: DASH_COOLDOWN_SEC,
+  ultimateCharge: 0,
+  ultimateLabel: resolveUltimatePreset(CHARACTERS.wemmbu.archetype).shortLabel,
+  ultimateAccent: resolveUltimatePreset(CHARACTERS.wemmbu.archetype).accent,
+  ultimateReady: false,
+  parryCount: 0,
+  parryFlashTimer: 0,
+  maxComboStreak: 0,
+  damageIndicators: [],
+  floatingDamageNumbers: [],
   jumpCount: 0,
   canDoubleJump: hasDoubleJumpLoadout(CHARACTERS.wemmbu.loadout),
   isGliding: false,
@@ -372,6 +384,8 @@ export default function App() {
           onSendChat={(text) => engineRef.current?.sendChatMessage(text)}
           onToggleMobileSprint={() => engineRef.current?.toggleMobileSprint()}
           onMobileElytra={() => engineRef.current?.mobileElytra()}
+          onMobileDash={() => engineRef.current?.mobileDash()}
+          onMobileUltimate={() => engineRef.current?.mobileUltimate()}
           onMobileAttack={() => engineRef.current?.mobileAttack()}
           onMobileAttackHold={(pressed) => engineRef.current?.mobileAttackHold(pressed)}
           onMobileJump={(pressed) => engineRef.current?.mobileJump(pressed)}

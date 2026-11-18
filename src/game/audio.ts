@@ -734,4 +734,69 @@ export class GameAudio {
     }
     this.triggerDullThud(ctx, now + 0.12, 620, 150, 38, 0.38, 0.18);
   }
+
+  public playParry(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const notes = [880, 1318.51, 1760];
+    for (let i = 0; i < notes.length; i++) {
+      const t = now + i * 0.028;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(notes[i], t);
+      osc.frequency.exponentialRampToValueAtTime(notes[i] * 1.08, t + 0.14);
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(i === 2 ? 0.28 : 0.22, t + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
+      osc.connect(g).connect(this.masterGain ?? ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.26);
+    }
+    this.triggerDullThud(ctx, now, 780, 185, 48, 0.42, 0.09);
+  }
+
+  public playDash(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    if (this.noiseBuffer) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuffer;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(1400, now);
+      bp.frequency.exponentialRampToValueAtTime(420, now + 0.14);
+      bp.Q.setValueAtTime(1.1, now);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.28, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+      src.connect(bp).connect(g).connect(this.masterGain ?? ctx.destination);
+      src.start(now);
+      src.stop(now + 0.16);
+    }
+    this.triggerDullThud(ctx, now, 520, 155, 62, 0.26, 0.08);
+  }
+
+  public playUltimate(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const notes = [440, 659.25, 880, 1318.51];
+    for (let i = 0; i < notes.length; i++) {
+      const t = now + i * 0.042;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = i % 2 === 0 ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(notes[i], t);
+      g.gain.setValueAtTime(0.001, t);
+      g.gain.linearRampToValueAtTime(0.28, t + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.36);
+      osc.connect(g).connect(this.masterGain ?? ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.38);
+    }
+    this.triggerDullThud(ctx, now, 860, 170, 34, 0.52, 0.18);
+  }
 }

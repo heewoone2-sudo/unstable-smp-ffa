@@ -11,30 +11,40 @@ import {
   hasRangedBowLoadout,
 } from './characters';
 import {
+  addUltimateCharge,
   applyCombatDamage,
   computeBlockPlacement,
   computeBowScopeState,
+  computeDamageIndicatorAngle,
+  computeDashVelocity,
   computeJumpVelocity,
   computeMaceDamage,
+  computeRangedAimAssist,
   computeSwordDamage,
   consumeSlotUse,
+  DASH_COOLDOWN_SEC,
   getSupportHeightAt,
   isInsideCobweb,
   isInsideHazardPool,
+  isPerfectParryActive,
   isStealthAttackRestricted,
   resolveHorizontalCollision,
+  resolveUltimatePreset,
   stepPlayerJump,
   tickSlotRecharge,
+  type AimAssistTarget,
 } from './combatMath';
 import {
   canDamageTarget,
   createEmptyMapVotes,
   getArenaBlocksForMap,
   getJumpPadsForMap,
+  getMapSignaturePools,
   getRotationWindow,
   MAP_DEFINITIONS,
   MAP_ORDER,
 } from './maps';
+import { buildMapSignatureProps, type AnimatedMapProp } from './mapProps';
 import {
   createArrowProjectileMesh,
   createBossMonsterModel,
@@ -125,6 +135,7 @@ const MAX_PLACED_BLOCKS = 96;
 // Pre-allocated scratch math objects (Zero-GC render loop)
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _v3 = new THREE.Vector3();
 const _forward = new THREE.Vector3();
 const _right = new THREE.Vector3();
 const _aimDir = new THREE.Vector3();
@@ -136,6 +147,7 @@ const _mat4 = new THREE.Matrix4();
 const _quat = new THREE.Quaternion();
 const _scaleVec = new THREE.Vector3();
 const _color = new THREE.Color();
+const _projVec = new THREE.Vector3();
 
 interface Projectile {
   active: boolean;
@@ -386,6 +398,10 @@ export class UnstableArenaEngine {
   private elytraHealSyncTimer = 0;
   private elytraHealParticleTimer = 0;
   private isBlocking = false;
+  private blockHeldTimer = 0;
+  private parryFlashTimer = 0;
+  private dashCooldown = 0;
+  private ultimateCharge = 0;
   private stealthTimer = 0;
   private playerInCobweb = false;
   private cobwebBreakProgress = 0;
@@ -415,6 +431,8 @@ export class UnstableArenaEngine {
   private deaths = 0;
   private wave = 1;
   private comboStreak = 0;
+  private maxComboStreak = 0;
+  private parryCount = 0;
   private maxSmashHeight = 0;
   private damageDealt = 0;
   private elapsedTime = 0;
@@ -429,6 +447,20 @@ export class UnstableArenaEngine {
   private killFeed: KillFeedEntry[] = [];
   private chatMessages: ChatEntry[] = [];
   private nextFeedId = 1;
+  private nextCombatFxId = 1;
+  private damageIndicators: Array<{ id: number; angleDeg: number; life: number; maxLife: number }> = [];
+  private floatingDamages: Array<{
+    id: number;
+    worldX: number;
+    worldY: number;
+    worldZ: number;
+    vy: number;
+    text: string;
+    color: string;
+    isCrit: boolean;
+    life: number;
+    maxLife: number;
+  }> = [];
 
   // Custom Party Mode & Difficulty
   private customPartyMode: CustomPartyMode = 'knockout';
@@ -516,6 +548,11 @@ export class UnstableArenaEngine {
   private cobwebCursor = 0;
   private hazardPools: ActiveHazardPool[] = [];
   private hazardCursor = 0;
+  private mapSignaturePools: HazardPoolZone[] = [];
+  private mapAnimatedProps: AnimatedMapProp[] = [];
+  private mapSignatureMaterials: THREE.Material[] = [];
+  private mapWaterRegenAccum = 0;
+  private aimAssistTargetsBuf: AimAssistTarget[] = [];
   private particles: Particle[] = [];
   private particleMesh!: THREE.InstancedMesh;
   private particleCursor = 0;
@@ -934,6 +971,13 @@ export class UnstableArenaEngine {
         });
       }
     }
+    for (const m of this.mapSignatureMaterials) {
+      m.dispose();
+    }
+    this.mapSignatureMaterials = [];
+    this.mapAnimatedProps = [];
+    this.mapWaterRegenAccum = 0;
+    this.mapSignaturePools = getMapSignaturePools(mapId);
     this.envMeshes = [];
     this.crystalMeshes = [];
     this.jumpPadMeshes = [];
@@ -1018,6 +1062,19 @@ export class UnstableArenaEngine {
         cap.castShadow = !this.isSoftwareGl;
         cap.receiveShadow = !this.isSoftwareGl;
         this.mapGroup.add(cap);
+      }
+    }
+
+    // Built-in map signature water sanctums & magma hazards
+    for (const pool of this.mapSignaturePools) {
+      const poolMesh = createHazardPoolMesh(pool.kind, pool.radius, this.materials.lavaTex);
+      poolMesh.position.set(pool.x, pool.y, pool.z);
+      this.mapGroup.add(poolMesh);
+      for (const child of poolMesh.children) {
+        const mat = (child as THREE.Mesh).material;
+        if (mat && !Array.isArray(mat)) {
+          this.mapSignatureMaterials.push(mat);
+        }
       }
     }
 
@@ -1202,66 +1259,13 @@ export class UnstableArenaEngine {
       canopies.instanceMatrix.needsUpdate = true;
       if (canopies.instanceColor) canopies.instanceColor.needsUpdate = true;
       this.mapGroup.add(trunks, canopies);
-    } else if (mapId === 'container_yard' || mapId === 'cyber_nexus' || mapId === 'orbital_reactor' || mapDef.category === 'industrial') {
-      const mastGeo = new THREE.CylinderGeometry(0.28, 0.42, 16, 10);
-      const lampGeo = new THREE.BoxGeometry(2.6, 0.6, 0.9);
-      const lampMat = new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        emissive: mapDef.ringPrimary,
-        emissiveIntensity: 0.95,
-        roughness: 0.22,
-      });
-      const mOff = this.currentArenaRadius + 3;
-      for (const [mx, mz] of [
-        [-mOff, -mOff],
-        [mOff, -mOff],
-        [-mOff, mOff],
-        [mOff, mOff],
-      ]) {
-        const mast = new THREE.Mesh(mastGeo, this.materials.deepslate);
-        mast.position.set(mx, 8, mz);
-        const lamp = new THREE.Mesh(lampGeo, lampMat);
-        lamp.position.set(mx, 16.2, mz);
-        lamp.lookAt(0, 0, 0);
-        this.mapGroup.add(mast, lamp);
-      }
-    } else if (mapId === 'frost_bastion' || mapId === 'ancient_temple' || mapDef.category === 'citadel' || mapDef.category === 'cosmic') {
-      const spireGeo = new THREE.ConeGeometry(3.2, 18, 6);
-      const spireMat =
-        mapId === 'frost_bastion' || mapId === 'aether_spire'
-          ? this.materials.ice_brick
-          : mapDef.category === 'citadel'
-            ? this.materials.basalt
-            : this.materials.sandstone;
-      const spireR = this.currentArenaRadius + 6;
-      for (let i = 0; i < 8; i++) {
-        const ang = (i / 8) * Math.PI * 2;
-        const spire = new THREE.Mesh(spireGeo, spireMat);
-        spire.position.set(Math.cos(ang) * spireR, 9, Math.sin(ang) * spireR);
-        this.mapGroup.add(spire);
-      }
-    } else {
-      const pillarGeo = new THREE.CylinderGeometry(0.9, 1.35, 14, 8);
-      const haloGeo = new THREE.TorusGeometry(1.4, 0.14, 8, 20);
-      const haloMat = new THREE.MeshStandardMaterial({
-        color: mapDef.ringPrimary,
-        emissive: mapDef.ringEmissive,
-        emissiveIntensity: 0.7,
-        roughness: 0.25,
-      });
-      const pillarR = this.currentArenaRadius + 5;
-      for (let i = 0; i < 6; i++) {
-        const ang = (i / 6) * Math.PI * 2;
-        const px = Math.cos(ang) * pillarR;
-        const pz = Math.sin(ang) * pillarR;
-        const pillar = new THREE.Mesh(pillarGeo, this.materials.stone);
-        pillar.position.set(px, 7, pz);
-        const halo = new THREE.Mesh(haloGeo, haloMat);
-        halo.position.set(px, 14.5, pz);
-        halo.rotation.x = Math.PI / 2;
-        this.mapGroup.add(pillar, halo);
-      }
     }
+
+    // Bespoke 3D GOAT Signature Landmarks & Animated Monuments for ALL 20 Maps
+    const sigProps = buildMapSignatureProps(mapId, mapDef, this.currentArenaRadius, this.isSoftwareGl);
+    this.mapGroup.add(sigProps.group);
+    this.mapAnimatedProps = sigProps.animatedProps;
+    this.mapSignatureMaterials.push(...sigProps.materials);
 
     // Volumetric Clouds
     const puffGeo = new THREE.SphereGeometry(3.4, 12, 9);
@@ -1306,7 +1310,7 @@ export class UnstableArenaEngine {
     }
 
     if (announce) {
-      this.pushCallout(`맵 변경 · ${mapDef.name} (${mapDef.englishName})`, mapDef.accentHex);
+      this.pushCallout(`맵 변경 · ${mapDef.name} — ${mapDef.traitName}`, mapDef.accentHex);
     }
   }
 
@@ -2240,7 +2244,10 @@ export class UnstableArenaEngine {
     this.elytraHealAccum = 0;
     this.elytraHealSyncTimer = 0;
     this.elytraHealParticleTimer = 0;
-    this.isBlocking = false;
+    this.setBlockingState(false);
+    this.parryFlashTimer = 0;
+    this.dashCooldown = 0;
+    this.ultimateCharge = 0;
     this.stealthTimer = 0;
     this.playerInCobweb = false;
     this.cobwebBreakProgress = 0;
@@ -2265,6 +2272,8 @@ export class UnstableArenaEngine {
     this.deaths = 0;
     this.wave = 1;
     this.comboStreak = 0;
+    this.maxComboStreak = 0;
+    this.parryCount = 0;
     this.maxSmashHeight = 0;
     this.damageDealt = 0;
     this.elapsedTime = 0;
@@ -2275,6 +2284,8 @@ export class UnstableArenaEngine {
     this.hitmarkerTimer = 0;
     this.lastHitText = '';
     this.killFeed = [];
+    this.damageIndicators = [];
+    this.floatingDamages = [];
     this.ceremonyActive = false;
     this.ceremonyTimer = 0;
     this.ceremonyTitle = '';
@@ -2977,6 +2988,7 @@ export class UnstableArenaEngine {
     this.keys.clear();
     this.mouseDownLeft = false;
     this.mouseDownRight = false;
+    this.setBlockingState(false);
     this.lastMouseX = null;
     this.lastMouseY = null;
     this.edgeTurnDir = 0;
@@ -3023,10 +3035,10 @@ export class UnstableArenaEngine {
     } else if (e.button === 2) {
       this.mouseDownRight = true;
       if (this.isGliding) {
-        this.isBlocking = false;
+        this.setBlockingState(false);
         this.triggerFireworkBoost();
       } else {
-        this.isBlocking = true;
+        this.setBlockingState(true);
         this.emitHud(true);
       }
     }
@@ -3037,10 +3049,21 @@ export class UnstableArenaEngine {
       this.mouseDownLeft = false;
     } else if (e.button === 2) {
       this.mouseDownRight = false;
-      this.isBlocking = false;
-      this.emitHud(true);
+      if (!this.keys.has('KeyC')) {
+        this.setBlockingState(false);
+        this.emitHud(true);
+      }
     }
   };
+
+  private setBlockingState(active: boolean): void {
+    if (active && !this.isBlocking) {
+      this.blockHeldTimer = 0;
+    } else if (!active) {
+      this.blockHeldTimer = 0;
+    }
+    this.isBlocking = active;
+  }
 
   private getScopeState() {
     return computeBowScopeState({
@@ -3203,13 +3226,21 @@ export class UnstableArenaEngine {
       this.triggerElytraBoost();
     }
 
+    if (e.code === 'KeyZ' && !wasHeld) {
+      this.triggerDash();
+    }
+
+    if (e.code === 'KeyX' && !wasHeld) {
+      this.triggerUltimate();
+    }
+
     if ((e.code === 'KeyJ' || e.code === 'KeyK') && !wasHeld) {
       this.attackBuffer = 0.12;
       this.triggerPrimaryAction();
     }
 
     if (e.code === 'KeyC') {
-      this.isBlocking = true;
+      this.setBlockingState(true);
     }
   };
 
@@ -3219,7 +3250,7 @@ export class UnstableArenaEngine {
       this.playerVel.y *= 0.52;
     }
     if (e.code === 'KeyC' && !this.mouseDownRight) {
-      this.isBlocking = false;
+      this.setBlockingState(false);
     }
   };
 
@@ -3736,6 +3767,7 @@ export class UnstableArenaEngine {
         this.playerPos.y + 1.45,
         this.playerPos.z - Math.cos(this.playerYaw) * 0.7
       );
+      this.applyRangedAimAssist(slot.pos, _aimDir, 18.5, 0);
       slot.ownerId = this.mpState.selfId ?? 'player';
       slot.ownerTeam = this.getLocalPlayerTeam();
     }
@@ -3943,9 +3975,18 @@ export class UnstableArenaEngine {
     weaponId?: WeaponSlotId
   ): void {
     this.damageDealt += damage;
+    this.ultimateCharge = addUltimateCharge(this.ultimateCharge, Math.max(2, Math.round(damage * 0.4)));
     this.hitmarkerTimer = 0.2;
     this.hitmarkerCrit = isCrit || isSmash;
     this.lastHitText = isSmash ? `${damage} SMASH!` : isCrit ? `${damage} CRIT!` : `${damage}`;
+    this.spawnFloatingDamage(
+      peer.pos.x + (Math.random() - 0.5) * 0.45,
+      peer.pos.y + 2.0,
+      peer.pos.z + (Math.random() - 0.5) * 0.45,
+      isSmash ? `${damage}!` : isCrit ? `${damage}` : `${damage}`,
+      isSmash ? '#38bdf8' : isCrit ? '#facc15' : '#ffffff',
+      isCrit || isSmash
+    );
 
     if (!isSmash) {
       this.audio.playHit(isCrit);
@@ -4031,6 +4072,10 @@ export class UnstableArenaEngine {
     enemy.onGround = false;
 
     this.damageDealt += res.finalDamage;
+    this.ultimateCharge = addUltimateCharge(
+      this.ultimateCharge,
+      Math.max(2, Math.round(res.finalDamage * 0.4))
+    );
     this.hitmarkerTimer = 0.2;
     this.hitmarkerCrit = isCrit || isMaceSmash;
     this.lastHitText = isMaceSmash
@@ -4040,6 +4085,15 @@ export class UnstableArenaEngine {
         : isCrit
           ? `${res.finalDamage} CRIT!`
           : `${res.finalDamage}`;
+
+    this.spawnFloatingDamage(
+      enemy.pos.x + (Math.random() - 0.5) * 0.45,
+      enemy.pos.y + 2.0,
+      enemy.pos.z + (Math.random() - 0.5) * 0.45,
+      isMaceSmash ? `${res.finalDamage}!` : res.blocked ? `방어 ${res.finalDamage}` : `${res.finalDamage}`,
+      isMaceSmash ? '#38bdf8' : res.blocked ? '#cbd5e1' : isCrit ? '#facc15' : '#ffffff',
+      isCrit || isMaceSmash
+    );
 
     if (res.blocked) {
       this.audio.playShieldBlock();
@@ -4084,6 +4138,8 @@ export class UnstableArenaEngine {
   private registerLocalPlayerKill(victimName: string, _weaponId?: WeaponSlotId, isBountyKill = false): void {
     this.multiKillStreak = this.multiKillWindowTimer > 0 ? this.multiKillStreak + 1 : 1;
     this.multiKillWindowTimer = 5.5;
+    this.maxComboStreak = Math.max(this.maxComboStreak, this.comboStreak);
+    this.ultimateCharge = addUltimateCharge(this.ultimateCharge, isBountyKill ? 35 : 25);
 
     // Adrenaline Kill Bonus + Surge Event Bounty Rush + Bounty King Reward
     const surgeMods = computeSurgeModifiers(this.activeArenaEvent);
@@ -4358,6 +4414,20 @@ export class UnstableArenaEngine {
         .addScaledVector(_aimDir, 0.75);
 
       _v2.copy(_v1).sub(slot.pos).normalize();
+      if (kind !== 'ender_pearl') {
+        const assistSpeed =
+          kind === 'arrow'
+            ? 56
+            : kind === 'bolt'
+              ? 48
+              : kind === 'wind_charge'
+                ? 35
+                : kind === 'trident'
+                  ? 38
+                  : 28;
+        const assistGrav = kind === 'arrow' || kind === 'bolt' ? GRAVITY * 0.16 : 0;
+        this.applyRangedAimAssist(slot.pos, _v2, assistSpeed, assistGrav);
+      }
       slot.ownerId = this.mpState.selfId ?? 'player';
       slot.ownerTeam = this.getLocalPlayerTeam();
     }
@@ -4425,6 +4495,69 @@ export class UnstableArenaEngine {
       }
       slot.mesh.position.copy(slot.pos);
     }
+  }
+
+  /**
+   * Subtle spherical aim assist ("slight auto-aim") for all offensive ranged attacks.
+   * Skips targets obstructed by arena blocks/walls so shots never magnetize through cover.
+   */
+  private applyRangedAimAssist(
+    origin: THREE.Vector3,
+    dir: THREE.Vector3,
+    projectileSpeed: number,
+    gravityAccel: number
+  ): void {
+    const effMode = this.getEffectiveRoomMode();
+    const localTeam = this.getLocalPlayerTeam();
+    const targets = this.aimAssistTargetsBuf;
+    targets.length = 0;
+
+    for (const e of this.enemies) {
+      if (!e.alive || e.koTimer > 0 || e.stealthTimer > 0) continue;
+      if (!canDamageTarget(effMode, localTeam, e.team)) continue;
+      targets.push({ id: e.id, x: e.pos.x, y: e.pos.y, z: e.pos.z, vx: e.vel.x, vz: e.vel.z });
+    }
+    for (const peer of this.remotePeers.values()) {
+      if (!peer.alive || peer.isStealthed) continue;
+      if (!canDamageTarget(effMode, localTeam, peer.team)) continue;
+      targets.push({ id: peer.id, x: peer.pos.x, y: peer.pos.y, z: peer.pos.z });
+    }
+    if (targets.length === 0) return;
+
+    const res = computeRangedAimAssist({
+      originX: origin.x,
+      originY: origin.y,
+      originZ: origin.z,
+      dirX: dir.x,
+      dirY: dir.y,
+      dirZ: dir.z,
+      targets,
+      maxConeDeg: 11.5,
+      maxRange: 64,
+      assistStrength: 0.62,
+      maxPullDeg: 7.5,
+      projectileSpeed,
+      gravityAccel,
+    });
+    if (!res.lockedTargetId) return;
+
+    const locked = targets.find((t) => t.id === res.lockedTargetId);
+    if (locked) {
+      _rayOrigin.copy(origin);
+      _rayDir.set(locked.x - origin.x, locked.y + 1.15 - origin.y, locked.z - origin.z);
+      const dist = _rayDir.length();
+      if (dist > 1.2) {
+        _rayDir.divideScalar(dist);
+        this.raycaster.set(_rayOrigin, _rayDir);
+        this.raycaster.far = Math.max(0.5, dist - 0.65);
+        const wallHits = this.raycaster.intersectObjects(this.envMeshes, false);
+        if (wallHits.length > 0) {
+          return;
+        }
+      }
+    }
+
+    dir.set(res.x, res.y, res.z).normalize();
   }
 
   private detonateWindCharge(pos: THREE.Vector3, ownerId: string, broadcast: boolean, ownerTeam: PlayerTeam = 'ffa'): void {
@@ -4980,6 +5113,19 @@ export class UnstableArenaEngine {
       }
     }
 
+    for (let i = 0; i < this.mapAnimatedProps.length; i++) {
+      const prop = this.mapAnimatedProps[i];
+      if (prop.kind === 'spinY') {
+        prop.obj.rotation.y += dt * prop.speed;
+      } else if (prop.kind === 'spinZ') {
+        prop.obj.rotation.z += dt * prop.speed;
+      } else if (prop.kind === 'spinX') {
+        prop.obj.rotation.x += dt * prop.speed;
+      } else if (prop.kind === 'bob') {
+        prop.obj.position.y = prop.baseY + Math.sin(timeSec * prop.speed + prop.phase) * 0.65;
+      }
+    }
+
     if (this.screen === 'title') {
       for (const orb of this.supplyOrbs) {
         orb.mesh.visible = false;
@@ -5367,10 +5513,12 @@ export class UnstableArenaEngine {
     const surgeMods = computeSurgeModifiers(this.activeArenaEvent);
     const koMutatorMods =
       this.customPartyMode === 'knockout' ? pickKnockoutMutator(this.knockoutRound) : null;
+    const currentMapDef = MAP_DEFINITIONS[this.currentMapId] ?? MAP_DEFINITIONS.container_yard;
     const cdStepDt =
       dt *
       buffMults.cooldownRateMult *
       surgeMods.cooldownRateMult *
+      currentMapDef.cooldownSpeedMult *
       (koMutatorMods ? koMutatorMods.cooldownRateMult : 1.0);
 
     const loadout = this.getCurrentLoadout();
@@ -5385,6 +5533,28 @@ export class UnstableArenaEngine {
     );
 
     if (this.elytraCooldown > 0) this.elytraCooldown = Math.max(0, this.elytraCooldown - cdStepDt);
+    if (this.dashCooldown > 0) this.dashCooldown = Math.max(0, this.dashCooldown - cdStepDt);
+    if (this.parryFlashTimer > 0) this.parryFlashTimer = Math.max(0, this.parryFlashTimer - dt);
+    if (this.isBlocking && !this.isGliding && this.stealthTimer <= 0) {
+      this.blockHeldTimer += dt;
+    } else {
+      this.blockHeldTimer = 0;
+    }
+    for (let i = this.damageIndicators.length - 1; i >= 0; i--) {
+      this.damageIndicators[i].life -= dt;
+      if (this.damageIndicators[i].life <= 0) {
+        this.damageIndicators.splice(i, 1);
+      }
+    }
+    for (let i = this.floatingDamages.length - 1; i >= 0; i--) {
+      const fd = this.floatingDamages[i];
+      fd.life -= dt;
+      fd.worldY += fd.vy * dt;
+      fd.vy = Math.max(0.2, fd.vy * (1 - dt * 2.2));
+      if (fd.life <= 0) {
+        this.floatingDamages.splice(i, 1);
+      }
+    }
     if (this.fireworkCooldown > 0) this.fireworkCooldown = Math.max(0, this.fireworkCooldown - cdStepDt);
     if (this.fireworkBoostTimer > 0) this.fireworkBoostTimer = Math.max(0, this.fireworkBoostTimer - dt);
     if (this.stealthTimer > 0) {
@@ -5435,7 +5605,10 @@ export class UnstableArenaEngine {
     }
 
     const hudInterval =
-      !this.playerOnGround && this.getCurrentLoadout().some((i) => i?.id === 'mace')
+      this.floatingDamages.length > 0 ||
+      this.damageIndicators.length > 0 ||
+      this.parryFlashTimer > 0 ||
+      (!this.playerOnGround && this.getCurrentLoadout().some((i) => i?.id === 'mace'))
         ? 0.04
         : 0.08;
     this.hudThrottle += wallDt;
@@ -5663,17 +5836,22 @@ export class UnstableArenaEngine {
 
     const selfOwnerId = this.mpState.selfId ?? 'player';
     const localTeam = this.getLocalPlayerTeam();
-    const activePools = this.hazardPools.filter((h) => h.active);
-    const hostilePools = activePools.filter(
-      (h) =>
-        h.kind !== 'lava' ||
-        (h.ownerId !== selfOwnerId && canDamageTarget(this.getEffectiveRoomMode(), h.ownerTeam, localTeam))
-    );
+    const activeDynamicPools = this.hazardPools.filter((h) => h.active);
+    const activePools: HazardPoolZone[] = [...activeDynamicPools, ...this.mapSignaturePools];
+    const hostilePools = [
+      ...activeDynamicPools.filter(
+        (h) =>
+          h.kind !== 'lava' ||
+          (h.ownerId !== selfOwnerId && canDamageTarget(this.getEffectiveRoomMode(), h.ownerTeam, localTeam))
+      ),
+      ...this.mapSignaturePools.filter((h) => h.kind === 'lava'),
+    ];
     const inLava = isInsideHazardPool(this.playerPos.x, this.playerPos.y, this.playerPos.z, hostilePools, 'lava');
     const inWater = isInsideHazardPool(this.playerPos.x, this.playerPos.y, this.playerPos.z, activePools, 'water');
     this.playerInLava = inLava;
     this.playerInWater = inWater;
 
+    const activeMapDef = MAP_DEFINITIONS[this.currentMapId] ?? MAP_DEFINITIONS.container_yard;
     if (inWater) {
       if (this.playerBurnTimer > 0) {
         const waterHeal = computeWaterBurnHealing(true, true, this.playerHp, this.playerMaxHp, 28);
@@ -5684,6 +5862,13 @@ export class UnstableArenaEngine {
         this.pushCallout('물에 들어가 화상 치유! (+28 HP)', '#38bdf8');
         if (this.isNetworkedMode()) {
           this.net.send({ type: 'heal_sync', hp: this.playerHp, absorption: this.playerAbsorption });
+        }
+      } else if (activeMapDef.poolRegenPerSec > 0 && this.playerHp > 0 && this.playerHp < this.playerMaxHp) {
+        this.mapWaterRegenAccum += activeMapDef.poolRegenPerSec * dt;
+        if (this.mapWaterRegenAccum >= 1) {
+          const healPts = Math.floor(this.mapWaterRegenAccum);
+          this.mapWaterRegenAccum -= healPts;
+          this.playerHp = Math.min(this.playerMaxHp, this.playerHp + healPts);
         }
       }
       this.playerBurnTimer = 0;
@@ -5757,6 +5942,7 @@ export class UnstableArenaEngine {
     const baseSpeed =
       (this.isBlocking ? 5.2 : sprinting ? 11.4 : 8.8) *
       prof.speedMult *
+      activeMapDef.moveSpeedMult *
       stealthMult *
       terrainMult *
       buffMults.speedMult;
@@ -5795,7 +5981,7 @@ export class UnstableArenaEngine {
         this.elytraCooldown = Math.max(this.elytraCooldown, 3.8);
         this.pushCallout('겉날개 10초 비행 한도 종료 — 착지 준비!', '#38bdf8');
       } else {
-        this.isBlocking = false;
+        this.setBlockingState(false);
         _aimDir
           .set(
             -Math.sin(this.playerYaw) * Math.cos(this.playerPitch),
@@ -5880,7 +6066,12 @@ export class UnstableArenaEngine {
     }
 
     if (!this.isGliding) {
-      this.playerVel.y += GRAVITY * surgeMods.gravityMult * (koMutator ? koMutator.gravityMult : 1.0) * dt;
+      this.playerVel.y +=
+        GRAVITY *
+        activeMapDef.gravityMult *
+        surgeMods.gravityMult *
+        (koMutator ? koMutator.gravityMult : 1.0) *
+        dt;
     }
     if (inWeb) {
       this.playerVel.y = Math.max(-1.6, this.playerVel.y * 0.85);
@@ -6923,6 +7114,71 @@ export class UnstableArenaEngine {
       return;
     }
 
+    const attackerX = attackerBot ? attackerBot.pos.x : this.playerPos.x - dirX * 4;
+    const attackerZ = attackerBot ? attackerBot.pos.z : this.playerPos.z - dirZ * 4;
+
+    if (
+      isPerfectParryActive(
+        this.blockHeldTimer,
+        this.isBlocking,
+        this.isGliding,
+        this.stealthTimer > 0
+      )
+    ) {
+      this.parryCount += 1;
+      this.parryFlashTimer = 0.45;
+      this.ultimateCharge = addUltimateCharge(this.ultimateCharge, 20);
+      this.audio.playParry();
+      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.3, this.playerPos.z, 3.8, 0x22d3ee);
+      this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.25, this.playerPos.z, 18, 0x67e8f9, 8.5);
+      this.hitstopTimer = Math.max(this.hitstopTimer, 0.048);
+      this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.28);
+
+      if (attackerBot && attackerBot.alive) {
+        const distToBot = Math.hypot(attackerBot.pos.x - this.playerPos.x, attackerBot.pos.z - this.playerPos.z);
+        if (distToBot <= 6.2) {
+          attackerBot.vel.x -= dirX * 11;
+          attackerBot.vel.z -= dirZ * 11;
+          attackerBot.vel.y = Math.max(attackerBot.vel.y, 4.5);
+          attackerBot.onGround = false;
+        }
+        attackerBot.telegraphTimer = 0;
+        attackerBot.attackCooldown = Math.max(attackerBot.attackCooldown, 1.35);
+        attackerBot.hitFlashTimer = 0.14;
+        attackerBot.recoilTilt = 0.48;
+        attackerBot.rig.setHitFlash(true, 0x22d3ee);
+      }
+
+      this.spawnFloatingDamage(
+        this.playerPos.x - dirX * 0.9,
+        this.playerPos.y + 1.9,
+        this.playerPos.z - dirZ * 0.9,
+        'PARRY!',
+        '#22d3ee',
+        true
+      );
+      this.pushCallout('⚡ 퍼펙트 패링! 피해 무효 · 궁극기 +20%', '#22d3ee');
+      this.emitHud(true);
+      return;
+    }
+
+    const angleDeg = computeDamageIndicatorAngle(
+      attackerX,
+      attackerZ,
+      this.playerPos.x,
+      this.playerPos.z,
+      this.playerYaw
+    );
+    this.damageIndicators.push({
+      id: ++this.nextCombatFxId,
+      angleDeg,
+      life: 0.7,
+      maxLife: 0.7,
+    });
+    if (this.damageIndicators.length > 6) {
+      this.damageIndicators.shift();
+    }
+
     const resolvedDmg = computeOneShotDamage(rawDmg, this.customPartyMode === 'one_shot');
     const res = applyCombatDamage(
       {
@@ -7376,6 +7632,26 @@ export class UnstableArenaEngine {
       Array.from(this.remotePeers.values()).filter((p) => p.alive).length;
 
     const scopeState = this.getScopeState();
+    const ultPreset = resolveUltimatePreset(prof.archetype);
+
+    const projectedDamages: HudSnapshot['floatingDamageNumbers'] = [];
+    for (let i = 0; i < this.floatingDamages.length; i++) {
+      const fd = this.floatingDamages[i];
+      _projVec.set(fd.worldX, fd.worldY, fd.worldZ).project(this.camera);
+      if (_projVec.z >= 1) continue;
+      const xPct = (_projVec.x * 0.5 + 0.5) * 100;
+      const yPct = (-_projVec.y * 0.5 + 0.5) * 100;
+      if (xPct < 4 || xPct > 96 || yPct < 6 || yPct > 92) continue;
+      projectedDamages.push({
+        id: fd.id,
+        xPct,
+        yPct,
+        text: fd.text,
+        color: fd.color,
+        isCrit: fd.isCrit,
+        opacity: Math.max(0, Math.min(1, fd.life / Math.max(0.15, fd.maxLife * 0.5))),
+      });
+    }
 
     this.onHudChange({
       screen: this.screen,
@@ -7400,6 +7676,21 @@ export class UnstableArenaEngine {
       elytraCooldown: this.elytraCooldown,
       elytraMaxCooldown: 3.8,
       elytraFlightRemaining: this.isGliding ? this.elytraFlightRemaining : 0,
+      dashCooldown: this.dashCooldown,
+      dashMaxCooldown: DASH_COOLDOWN_SEC,
+      ultimateCharge: this.ultimateCharge,
+      ultimateLabel: ultPreset.shortLabel,
+      ultimateAccent: ultPreset.accent,
+      ultimateReady: this.ultimateCharge >= 100,
+      parryCount: this.parryCount,
+      parryFlashTimer: this.parryFlashTimer,
+      maxComboStreak: this.maxComboStreak,
+      damageIndicators: this.damageIndicators.map((d) => ({
+        id: d.id,
+        angleDeg: d.angleDeg,
+        opacity: Math.max(0, Math.min(1, d.life / d.maxLife)),
+      })),
+      floatingDamageNumbers: projectedDamages,
       jumpCount: this.playerJumpCount,
       canDoubleJump: hasDoubleJumpLoadout(loadout),
       isGliding: this.isGliding,
@@ -7920,7 +8211,7 @@ export class UnstableArenaEngine {
   private triggerLocalKnockoutElimination(reasonCallout: string): void {
     const spec = pickKnockoutEliminationAnim();
     const angle = Math.atan2(this.playerPos.z, this.playerPos.x);
-    this.isBlocking = false;
+    this.setBlockingState(false);
     this.isGliding = false;
     this.localEliminationAnim = {
       kind: spec.kind,
@@ -8159,18 +8450,201 @@ export class UnstableArenaEngine {
   public mobileBlock(pressed: boolean): void {
     if (pressed) {
       if (this.isGliding) {
-        this.isBlocking = false;
+        this.setBlockingState(false);
         this.triggerFireworkBoost();
       } else {
         this.keys.add('KeyB');
         this.mouseDownRight = true;
-        this.isBlocking = true;
+        this.setBlockingState(true);
       }
     } else {
       this.keys.delete('KeyB');
       this.mouseDownRight = false;
-      this.isBlocking = false;
+      this.setBlockingState(false);
     }
+  }
+
+  public mobileDash(): void {
+    this.triggerDash();
+  }
+
+  public mobileUltimate(): void {
+    this.triggerUltimate();
+  }
+
+  private spawnFloatingDamage(
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+    text: string,
+    color: string,
+    isCrit: boolean
+  ): void {
+    this.floatingDamages.push({
+      id: ++this.nextCombatFxId,
+      worldX,
+      worldY,
+      worldZ,
+      vy: isCrit ? 2.1 : 1.5,
+      text,
+      color,
+      isCrit,
+      life: 0.78,
+      maxLife: 0.78,
+    });
+    if (this.floatingDamages.length > 14) {
+      this.floatingDamages.shift();
+    }
+  }
+
+  private triggerDash(): void {
+    if (
+      this.screen !== 'playing' ||
+      this.isSpectating ||
+      this.localRespawnTimer > 0 ||
+      this.playerInCobweb ||
+      this.dashCooldown > 0
+    ) {
+      return;
+    }
+    let moveForward = 0;
+    let moveRight = 0;
+    if (this.keys.has('KeyW')) moveForward += 1;
+    if (this.keys.has('KeyS')) moveForward -= 1;
+    if (this.keys.has('KeyD')) moveRight += 1;
+    if (this.keys.has('KeyA')) moveRight -= 1;
+
+    const { vx, vz } = computeDashVelocity(moveForward, moveRight, this.playerYaw, 24);
+    this.playerVel.x = vx;
+    this.playerVel.z = vz;
+    if (!this.playerOnGround && !this.isGliding) {
+      this.playerVel.y = Math.max(this.playerVel.y, 3.2);
+    }
+    this.dashCooldown = DASH_COOLDOWN_SEC;
+    this.squashY = 0.84;
+    this.audio.playDash();
+    this.spawnParticles(this.playerPos.x, this.playerPos.y + 0.85, this.playerPos.z, 16, 0x38bdf8, 6.5);
+    this.emitHud(true);
+  }
+
+  private triggerUltimate(): void {
+    if (
+      this.screen !== 'playing' ||
+      this.isSpectating ||
+      this.localRespawnTimer > 0 ||
+      this.ultimateCharge < 100
+    ) {
+      return;
+    }
+    const prof = CHARACTERS[this.selectedCharId];
+    const preset = resolveUltimatePreset(prof.archetype);
+    this.ultimateCharge = 0;
+    this.audio.playUltimate();
+    this.shakeTrauma = Math.min(1, this.shakeTrauma + 0.45);
+    const hexColor = Number(preset.accent.replace('#', '0x')) || 0xf59e0b;
+
+    if (preset.kind === 'sky_meteor') {
+      this.isGliding = false;
+      this.playerVel.y = 22.5;
+      this.playerOnGround = false;
+      this.playerFallStartY = Math.max(this.playerFallStartY, this.playerPos.y + 1.5);
+      this.playerAbsorption = Math.min(40, this.playerAbsorption + 15);
+      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.12, this.playerPos.z, 5.2, hexColor);
+      this.spawnParticles(this.playerPos.x, this.playerPos.y + 0.9, this.playerPos.z, 26, hexColor, 10);
+    } else if (preset.kind === 'arrow_barrage') {
+      const isCrossbow = this.getCurrentLoadout().some((s) => s?.id === 'crossbow');
+      const kind = isCrossbow ? 'bolt' : 'arrow';
+      _v3.set(this.playerPos.x, this.playerPos.y + 1.45, this.playerPos.z);
+      _v2
+        .set(
+          -Math.sin(this.playerYaw) * Math.cos(this.playerPitch),
+          Math.sin(this.playerPitch),
+          -Math.cos(this.playerYaw) * Math.cos(this.playerPitch)
+        )
+        .normalize();
+      this.applyRangedAimAssist(_v3, _v2, isCrossbow ? 48 : 56, GRAVITY * 0.16);
+      const centerYaw = Math.atan2(-_v2.x, -_v2.z);
+      const centerPitch = Math.asin(THREE.MathUtils.clamp(_v2.y, -0.95, 0.95));
+      const offsets = [-0.18, -0.09, 0, 0.09, 0.18];
+      for (const yawOff of offsets) {
+        const y = centerYaw + yawOff;
+        _aimDir
+          .set(
+            -Math.sin(y) * Math.cos(centerPitch),
+            Math.sin(centerPitch),
+            -Math.cos(y) * Math.cos(centerPitch)
+          )
+          .normalize();
+        _v1.copy(_v3).addScaledVector(_aimDir, 0.8);
+        this.fireProjectile(kind, {
+          ownerId: this.mpState.selfId ?? 'player',
+          ownerTeam: this.getLocalPlayerTeam(),
+          origin: _v1,
+          dir: _aimDir,
+          damage: Math.round((isCrossbow ? 18 : 24) * prof.damageMult),
+        });
+      }
+      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.2, this.playerPos.z, 3.8, hexColor);
+    } else if (preset.kind === 'inferno_nova') {
+      const radius = 6.8;
+      const novaDmg = Math.round(32 * prof.damageMult);
+      const ignite = prof.archetype === 'pyromancer';
+      const effMode = this.getEffectiveRoomMode();
+      const localTeam = this.getLocalPlayerTeam();
+      this.playerAbsorption = Math.min(40, this.playerAbsorption + 20);
+      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.15, this.playerPos.z, radius, hexColor);
+      this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.0, this.playerPos.z, 32, hexColor, 11);
+
+      for (const e of this.enemies) {
+        if (!e.alive || e.koTimer > 0 || e.stealthTimer > 0) continue;
+        if (!canDamageTarget(effMode, localTeam, e.team)) continue;
+        const dx = e.pos.x - this.playerPos.x;
+        const dz = e.pos.z - this.playerPos.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist <= radius && Math.abs(e.pos.y - this.playerPos.y) <= 3.0) {
+          const nx = dist > 0.05 ? dx / dist : 0;
+          const nz = dist > 0.05 ? dz / dist : -1;
+          if (ignite) {
+            e.burnTimer = 3.0;
+            e.burnTickTimer = 0.5;
+          }
+          this.applyHitToEnemy(e, novaDmg, true, false, true, nx, nz, 14.5, preset.label, 'fire_sword');
+        }
+      }
+      for (const peer of this.remotePeers.values()) {
+        if (!peer.alive || peer.isStealthed) continue;
+        if (!canDamageTarget(effMode, localTeam, peer.team)) continue;
+        const dx = peer.pos.x - this.playerPos.x;
+        const dz = peer.pos.z - this.playerPos.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist <= radius && Math.abs(peer.pos.y - this.playerPos.y) <= 3.0) {
+          const nx = dist > 0.05 ? dx / dist : 0;
+          const nz = dist > 0.05 ? dz / dist : -1;
+          this.applyHitToRemotePeer(peer, novaDmg, true, false, nx, nz, 14.5, ignite, 'fire_sword');
+        }
+      }
+    } else {
+      // chrono_surge: instant cooldown reset + dash/elytra refresh + HP heal
+      for (let i = 0; i < 6; i++) {
+        this.slotCooldowns[i] = 0;
+        this.slotUseDelays[i] = 0;
+        if (this.slotMaxCharges[i] > 0) {
+          this.slotCharges[i] = this.slotMaxCharges[i];
+        }
+      }
+      this.elytraCooldown = 0;
+      this.dashCooldown = 0;
+      this.playerHp = Math.min(this.playerMaxHp, this.playerHp + 30);
+      this.playerAbsorption = Math.min(40, this.playerAbsorption + 10);
+      this.spawnShockwave(this.playerPos.x, this.playerPos.y + 0.15, this.playerPos.z, 4.6, hexColor);
+      this.spawnParticles(this.playerPos.x, this.playerPos.y + 1.1, this.playerPos.z, 24, hexColor, 9);
+    }
+
+    if (this.isNetworkedMode()) {
+      this.net.send({ type: 'heal_sync', hp: this.playerHp, absorption: this.playerAbsorption });
+    }
+    this.pushCallout(`🔥 오버드라이브 발동: ${preset.label}!`, preset.accent);
+    this.emitHud(true);
   }
 
   public mobileMove(forward: number, right: number): void {
@@ -8208,7 +8682,7 @@ export class UnstableArenaEngine {
   private startSpectating(): void {
     this.isSpectating = true;
     this.spectatorMode = 'follow';
-    this.isBlocking = false;
+    this.setBlockingState(false);
     this.isGliding = false;
     this.spectatorFreePos.copy(this.playerPos).add(new THREE.Vector3(0, 6, 10));
     const aliveBot = this.enemies.find((e) => e.alive && !e.eliminated);
@@ -8366,6 +8840,10 @@ export class UnstableArenaEngine {
         }
       }
     });
+    for (const m of this.mapSignatureMaterials) {
+      m.dispose();
+    }
+    this.mapSignatureMaterials = [];
     for (const tex of this.materials.textures) {
       tex.dispose();
     }

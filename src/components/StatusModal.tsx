@@ -1,5 +1,6 @@
 import type { PlayerAccountProfile } from '../firebase';
 import { CHARACTER_LIST } from '../game/characters';
+import { computeMatchGrade } from '../game/combatMath';
 import { MAP_DEFINITIONS, MAP_ORDER } from '../game/maps';
 import type { CharacterId, HudSnapshot, MapId } from '../game/types';
 
@@ -58,6 +59,15 @@ export function StatusModal({
         : '모든 목표를 달성했습니다.'
       : '상대의 공격에 쓰러졌습니다.';
 
+  const matchRating = computeMatchGrade({
+    kills: hud.kills,
+    deaths: hud.deaths,
+    damageDealt: hud.damageDealt,
+    maxCombo: hud.maxComboStreak ?? hud.comboStreak ?? 0,
+    parryCount: hud.parryCount ?? 0,
+    won: isVictory,
+  });
+
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-950/60 p-4">
       <div
@@ -66,19 +76,32 @@ export function StatusModal({
         aria-labelledby="modal-title"
         className="w-full max-w-md bg-white border border-slate-200 rounded-xl shadow-lg p-6 space-y-5 text-slate-900"
       >
-        <div>
-          <h2
-            id="modal-title"
-            className={`font-display text-2xl font-bold ${
-              isPause ? 'text-slate-950' : isVictory ? 'text-emerald-700' : 'text-red-600'
-            }`}
-          >
-            {heading}
-          </h2>
-          <p className="text-sm text-slate-600 mt-1">{subtitle}</p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2
+              id="modal-title"
+              className={`font-display text-2xl font-bold ${
+                isPause ? 'text-slate-950' : isVictory ? 'text-emerald-700' : 'text-red-600'
+              }`}
+            >
+              {heading}
+            </h2>
+            <p className="text-sm text-slate-600 mt-1">{subtitle}</p>
+          </div>
+          {!isPause && (
+            <div
+              data-testid="match-combat-grade"
+              className="shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-right"
+            >
+              <div className="text-[10px] font-semibold text-slate-500">전투 등급</div>
+              <div className="font-display font-mono-num text-xl font-black text-slate-950 leading-tight">
+                {matchRating.grade}
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="grid grid-cols-3 gap-4 py-3 border-y border-slate-200">
+        <div className="grid grid-cols-3 gap-x-4 gap-y-3 py-3 border-y border-slate-200">
           <div>
             <div className="text-xs text-slate-500">처치 수</div>
             <div className="font-display font-mono-num text-2xl font-bold text-slate-950 mt-0.5">
@@ -95,6 +118,24 @@ export function StatusModal({
             <div className="text-xs text-slate-500">총 피해량</div>
             <div className="font-display font-mono-num text-2xl font-bold text-slate-950 mt-0.5">
               {hud.damageDealt}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-slate-500">최고 콤보</div>
+            <div className="font-display font-mono-num text-lg font-bold text-slate-900 mt-0.5">
+              {hud.maxComboStreak ?? hud.comboStreak ?? 0}연속
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-slate-500">퍼펙트 패링</div>
+            <div className="font-display font-mono-num text-lg font-bold text-cyan-700 mt-0.5">
+              {hud.parryCount ?? 0}회
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-slate-500">전투 점수</div>
+            <div className="font-display font-mono-num text-lg font-bold text-slate-900 mt-0.5">
+              {matchRating.score}
             </div>
           </div>
         </div>

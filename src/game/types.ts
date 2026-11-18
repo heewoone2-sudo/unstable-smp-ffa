@@ -231,6 +231,22 @@ export type EliminationAnimKind =
   | 'kraken_tentacle_drag'
   | 'anvil_yeet_pancake';
 
+export interface DamageIndicatorItem {
+  id: number;
+  angleDeg: number;
+  opacity: number;
+}
+
+export interface FloatingDamageItem {
+  id: number;
+  xPct: number;
+  yPct: number;
+  text: string;
+  color: string;
+  isCrit: boolean;
+  opacity: number;
+}
+
 export interface HudSnapshot {
   screen: ScreenState;
   mode: GameModeId;
@@ -276,6 +292,17 @@ export interface HudSnapshot {
   elytraCooldown: number;
   elytraMaxCooldown: number;
   elytraFlightRemaining?: number;
+  dashCooldown: number;
+  dashMaxCooldown: number;
+  ultimateCharge: number;
+  ultimateLabel: string;
+  ultimateAccent: string;
+  ultimateReady: boolean;
+  parryCount: number;
+  parryFlashTimer: number;
+  maxComboStreak: number;
+  damageIndicators: DamageIndicatorItem[];
+  floatingDamageNumbers: FloatingDamageItem[];
   jumpCount: number;
   canDoubleJump: boolean;
   isGliding: boolean;
