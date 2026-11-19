@@ -3,6 +3,7 @@ import type {
   ActiveBuffState,
   ArenaBuffKind,
   ArenaEventKind,
+  BossVariantId,
   BotDifficulty,
   CustomBotSlot,
   CustomPartyMode,
@@ -113,7 +114,14 @@ export function getKnockoutRoundInfo(round: number): KnockoutRoundInfo {
 
 export function shouldEndMatchOnKillLimit(partyMode: CustomPartyMode, mode: GameModeId): boolean {
   if (mode === 'online_world' || mode === 'link_duel') return false;
-  if (partyMode === 'knockout' || partyMode === 'boss_raid' || partyMode === 'spike_defuse') return false;
+  if (
+    partyMode === 'knockout' ||
+    partyMode === 'boss_raid' ||
+    partyMode === 'spike_defuse' ||
+    partyMode === 'battle_royale'
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -457,7 +465,171 @@ export function resolveEffectiveRoomMode(
 ): RoomMode {
   if (mode !== 'multiplayer') return 'ffa';
   if (partyMode === 'spike_defuse') return 'team';
+  if (partyMode === 'battle_royale') return 'ffa';
   return roomMode === 'team' ? 'team' : 'ffa';
+}
+
+export interface BossProfileDefinition {
+  id: BossVariantId;
+  name: string;
+  subtitle: string;
+  maxHp: number;
+  speedMult: number;
+  damageMult: number;
+  accent: string;
+  hex: number;
+  bodyHex: string;
+  armorHex: string;
+  coreHex: number;
+  hornHex: string;
+  abilityKind: 'meteor_rain' | 'frost_nova' | 'chain_storm' | 'void_singularity';
+  abilityCallout: string;
+}
+
+export const BOSS_VARIANT_ORDER: BossVariantId[] = [
+  'molten_behemoth',
+  'frost_leviathan',
+  'storm_archon',
+  'void_colossus',
+];
+
+export const BOSS_ROSTER: Record<BossVariantId, BossProfileDefinition> = {
+  molten_behemoth: {
+    id: 'molten_behemoth',
+    name: '[BOSS] 흑요석 용암 베히모스',
+    subtitle: '화염 마그마 대괴수 · 용암 운석 폭격 & 대지 분쇄',
+    maxHp: 900,
+    speedMult: 1.0,
+    damageMult: 1.0,
+    accent: '#f97316',
+    hex: 0xf97316,
+    bodyHex: '#1f1a29',
+    armorHex: '#2e293a',
+    coreHex: 0xf97316,
+    hornHex: '#fbbf24',
+    abilityKind: 'meteor_rain',
+    abilityCallout: '🌋 베히모스가 마그마 운석 폭격과 용암 장판을 분출합니다!',
+  },
+  frost_leviathan: {
+    id: 'frost_leviathan',
+    name: '[BOSS] 심연의 서리 리바이어던',
+    subtitle: '절대영도 빙하 거신 · 혹한의 블리자드 노바 & 빙결 감옥',
+    maxHp: 950,
+    speedMult: 1.06,
+    damageMult: 0.96,
+    accent: '#38bdf8',
+    hex: 0x38bdf8,
+    bodyHex: '#0c2340',
+    armorHex: '#1e3a5f',
+    coreHex: 0x38bdf8,
+    hornHex: '#e0f2fe',
+    abilityKind: 'frost_nova',
+    abilityCallout: '❄️ 서리 리바이어던이 절대영도 블리자드와 빙결 거미줄을 전개합니다!',
+  },
+  storm_archon: {
+    id: 'storm_archon',
+    name: '[BOSS] 천공의 폭풍 아콘',
+    subtitle: '초전도 뇌전 타이탄 · 연쇄 낙뢰 심판 & 반중력 태풍',
+    maxHp: 880,
+    speedMult: 1.16,
+    damageMult: 1.08,
+    accent: '#facc15',
+    hex: 0xfacc15,
+    bodyHex: '#1e1b4b',
+    armorHex: '#312e81',
+    coreHex: 0xfacc15,
+    hornHex: '#fef08a',
+    abilityKind: 'chain_storm',
+    abilityCallout: '⚡ 폭풍 아콘이 연쇄 낙뢰와 반중력 폭풍 충격파를 방출합니다!',
+  },
+  void_colossus: {
+    id: 'void_colossus',
+    name: '[BOSS] 공허의 기계 콜로서스',
+    subtitle: '차원 병기 메카닉 · 블랙홀 중력장 흡입 & 플라즈마 과부하',
+    maxHp: 1020,
+    speedMult: 0.96,
+    damageMult: 1.12,
+    accent: '#c084fc',
+    hex: 0xc084fc,
+    bodyHex: '#090d16',
+    armorHex: '#1e293b',
+    coreHex: 0xc084fc,
+    hornHex: '#22d3ee',
+    abilityKind: 'void_singularity',
+    abilityCallout: '🌌 공허 콜로서스가 블랙홀 중력장으로 전원을 끌어당깁니다!',
+  },
+};
+
+export function getBossProfile(variantOrIndex?: BossVariantId | number): BossProfileDefinition {
+  if (typeof variantOrIndex === 'number') {
+    const id = BOSS_VARIANT_ORDER[Math.abs(Math.floor(variantOrIndex)) % BOSS_VARIANT_ORDER.length];
+    return BOSS_ROSTER[id];
+  }
+  if (variantOrIndex && BOSS_ROSTER[variantOrIndex]) {
+    return BOSS_ROSTER[variantOrIndex];
+  }
+  return BOSS_ROSTER.molten_behemoth;
+}
+
+export interface BattleRoyalePhaseConfig {
+  phase: number;
+  label: string;
+  startSec: number;
+  endSec: number;
+  startRadius: number;
+  endRadius: number;
+  dps: number;
+}
+
+export const BR_PHASES: BattleRoyalePhaseConfig[] = [
+  { phase: 1, label: 'PHASE 1 · 1차 자기장 축소', startSec: 0, endSec: 28, startRadius: 82, endRadius: 54, dps: 4 },
+  { phase: 2, label: 'PHASE 2 · 2차 자기장 축소', startSec: 28, endSec: 56, startRadius: 54, endRadius: 32, dps: 7 },
+  { phase: 3, label: 'PHASE 3 · 3차 고압 자기장', startSec: 56, endSec: 84, startRadius: 32, endRadius: 15, dps: 12 },
+  { phase: 4, label: 'FINAL · 최후의 결전 자기장', startSec: 84, endSec: 115, startRadius: 15, endRadius: 3.5, dps: 18 },
+];
+
+export function computeBattleRoyaleZoneState(
+  elapsedSec: number,
+  playerX: number,
+  playerZ: number
+): {
+  phase: number;
+  phaseLabel: string;
+  currentRadius: number;
+  targetRadius: number;
+  timerSec: number;
+  dps: number;
+  isOutsideZone: boolean;
+  distToSafeZone: number;
+} {
+  const safeT = Math.max(0, elapsedSec);
+  let active = BR_PHASES[BR_PHASES.length - 1];
+  for (const p of BR_PHASES) {
+    if (safeT <= p.endSec) {
+      active = p;
+      break;
+    }
+  }
+  const span = Math.max(1, active.endSec - active.startSec);
+  const frac = Math.max(0, Math.min(1, (safeT - active.startSec) / span));
+  const currentRadius = Number(
+    (active.startRadius + (active.endRadius - active.startRadius) * frac).toFixed(1)
+  );
+  const timerSec = Math.max(0, Math.ceil(active.endSec - safeT));
+  const distFromCenter = Math.hypot(playerX, playerZ);
+  const isOutsideZone = distFromCenter > currentRadius;
+  const distToSafeZone = isOutsideZone ? Math.ceil(distFromCenter - currentRadius) : 0;
+
+  return {
+    phase: active.phase,
+    phaseLabel: active.label,
+    currentRadius,
+    targetRadius: active.endRadius,
+    timerSec,
+    dps: active.dps,
+    isOutsideZone,
+    distToSafeZone,
+  };
 }
 
 export const SPIKE_PLANT_TIME_SEC = 3.2;

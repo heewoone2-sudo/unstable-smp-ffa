@@ -49,6 +49,7 @@ export const MAP_ROTATION_MS = MAP_ROTATION_SECONDS * 1000;
 export const OPEN_WORLD_ROTATION_COUNT = 4;
 
 export const MAP_ORDER: MapId[] = [
+  'duel_arena',
   'container_yard',
   'emerald_citadel',
   'sky_dock',
@@ -73,6 +74,7 @@ export const MAP_ORDER: MapId[] = [
 
 export function createEmptyMapVotes(): Record<MapId, number> {
   return {
+    duel_arena: 0,
     container_yard: 0,
     emerald_citadel: 0,
     sky_dock: 0,
@@ -168,7 +170,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfff8eb,
     ambientSky: 0xdbeafe,
     ambientGround: 0x475569,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   emerald_citadel: {
     id: 'emerald_citadel',
@@ -199,7 +201,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfff7e6,
     ambientSky: 0xdbeafe,
     ambientGround: 0x3f6b35,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   sky_dock: {
     id: 'sky_dock',
@@ -230,7 +232,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffffff,
     ambientSky: 0xe0f2fe,
     ambientGround: 0x64748b,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   nether_foundry: {
     id: 'nether_foundry',
@@ -261,7 +263,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffedd5,
     ambientSky: 0xfed7aa,
     ambientGround: 0x451a03,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   cyber_nexus: {
     id: 'cyber_nexus',
@@ -292,7 +294,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xe0f2fe,
     ambientSky: 0x7dd3fc,
     ambientGround: 0x1e293b,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   frost_bastion: {
     id: 'frost_bastion',
@@ -323,7 +325,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffffff,
     ambientSky: 0xe0f2fe,
     ambientGround: 0x64748b,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   ancient_temple: {
     id: 'ancient_temple',
@@ -354,7 +356,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfffbeb,
     ambientSky: 0xfef3c7,
     ambientGround: 0x78350f,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   orbital_reactor: {
     id: 'orbital_reactor',
@@ -385,7 +387,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xeef2ff,
     ambientSky: 0xc7d2fe,
     ambientGround: 0x1e1b4b,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   volcanic_caldera: {
     id: 'volcanic_caldera',
@@ -416,7 +418,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffedd5,
     ambientSky: 0xfdba74,
     ambientGround: 0x292524,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   bamboo_sanctuary: {
     id: 'bamboo_sanctuary',
@@ -447,7 +449,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfefce8,
     ambientSky: 0xecfccb,
     ambientGround: 0x365314,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   neon_downtown: {
     id: 'neon_downtown',
@@ -478,7 +480,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xf0f9ff,
     ambientSky: 0x93c5fd,
     ambientGround: 0x1e293b,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   sunken_atlantis: {
     id: 'sunken_atlantis',
@@ -509,7 +511,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xf0fdfa,
     ambientSky: 0x99f6e4,
     ambientGround: 0x134e4a,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   clockwork_tower: {
     id: 'clockwork_tower',
@@ -540,7 +542,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfffbeb,
     ambientSky: 0xfef3c7,
     ambientGround: 0x451a03,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   desert_mirage: {
     id: 'desert_mirage',
@@ -571,7 +573,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffffff,
     ambientSky: 0xfef9c3,
     ambientGround: 0x854d0e,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   crystal_cavern: {
     id: 'crystal_cavern',
@@ -602,7 +604,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfaf5ff,
     ambientSky: 0xd8b4fe,
     ambientGround: 0x2e1065,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   cherry_pagoda: {
     id: 'cherry_pagoda',
@@ -633,7 +635,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xfff1f2,
     ambientSky: 0xfbcfe8,
     ambientGround: 0x831843,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   obsidian_keep: {
     id: 'obsidian_keep',
@@ -664,7 +666,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xe0e7ff,
     ambientSky: 0xa5b4fc,
     ambientGround: 0x1e1b4b,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   solar_observatory: {
     id: 'solar_observatory',
@@ -695,7 +697,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffffff,
     ambientSky: 0xfef3c7,
     ambientGround: 0x64748b,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   toxic_refinery: {
     id: 'toxic_refinery',
@@ -726,7 +728,7 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xecfdf5,
     ambientSky: 0xa7f3d0,
     ambientGround: 0x14532d,
-    worldRadius: 70,
+    worldRadius: 84,
   },
   aether_spire: {
     id: 'aether_spire',
@@ -757,7 +759,38 @@ export const MAP_DEFINITIONS: Record<MapId, MapDefinition> = {
     sunColor: 0xffffff,
     ambientSky: 0xddd6fe,
     ambientGround: 0x64748b,
-    worldRadius: 70,
+    worldRadius: 84,
+  },
+  duel_arena: {
+    id: 'duel_arena',
+    name: '1v1·2v2 듀얼 아레나',
+    englishName: 'TACTICAL DUEL & SPIKE ARENA',
+    badge: '듀얼·스파이크',
+    category: 'citadel',
+    description: '1대1 · 2대2 교전과 스파이크 폭파전(A/B 사이트)에 최적화된 완벽 대칭형 전술 콜로세움',
+    traitName: '발로란트 택티컬 콜로세움',
+    traitDesc: '1v1·2v2 & 스파이크 전용 대칭 설계 · 이속 +6% & 재사용 대기시간 +10% 가속',
+    gravityMult: 1.0,
+    moveSpeedMult: 1.06,
+    cooldownSpeedMult: 1.1,
+    poolRegenPerSec: 3.0,
+    accentHex: '#f43f5e',
+    groundStyle: 'marble',
+    ringStyle: 'double',
+    isFloatingSky: false,
+    groundTint: 0xf8fafc,
+    ringPrimary: 0xf43f5e,
+    ringEmissive: 0xe11d48,
+    groundColor: 0x334155,
+    skyTop: '#0f172a',
+    skyMid: '#1e3a8a',
+    skyHorizon: '#e2e8f0',
+    skyBottom: '#1e293b',
+    fogColor: 0xcbd5e1,
+    sunColor: 0xffffff,
+    ambientSky: 0xe2e8f0,
+    ambientGround: 0x334155,
+    worldRadius: 84,
   },
 };
 
@@ -1855,7 +1888,44 @@ function buildAetherSpireBlocks(): ArenaBlock[] {
   return blocks;
 }
 
-export const ARENA_HORIZONTAL_SCALE = 1.45;
+/**
+ * 21. Tactical Duel & Spike Arena (1v1 / 2v2 / Spike Defuse Dedicated Symmetrical Colosseum)
+ * Ultra-clean sightlines, zero overlapping blocks, distinct West A-Site (-34,0) and East B-Site (+34,0),
+ * plus a central Aim-Duel Mid Plaza and climbable 2F Heaven overlooks.
+ */
+function buildDuelArenaBlocks(): ArenaBlock[] {
+  return [
+    // Central Aim-Duel Mid Plaza cover pillars (leaves (0,0) wide open!)
+    { id: 'da_mid_nw', x: -7.5, y: 0, z: -7.5, w: 3.2, h: 2.6, d: 3.2, kind: 'cyber_panel' },
+    { id: 'da_mid_ne', x: 7.5, y: 0, z: -7.5, w: 3.2, h: 2.6, d: 3.2, kind: 'cyber_panel' },
+    { id: 'da_mid_sw', x: -7.5, y: 0, z: 7.5, w: 3.2, h: 2.6, d: 3.2, kind: 'cyber_panel' },
+    { id: 'da_mid_se', x: 7.5, y: 0, z: 7.5, w: 3.2, h: 2.6, d: 3.2, kind: 'cyber_panel' },
+
+    // Mid Head-Level Peek Boxes (1.3m height so players can jump right up)
+    { id: 'da_peek_n', x: 0, y: 0, z: -11.5, w: 4.8, h: 1.3, d: 2.2, kind: 'gold' },
+    { id: 'da_peek_s', x: 0, y: 0, z: 11.5, w: 4.8, h: 1.3, d: 2.2, kind: 'gold' },
+
+    // North & South 2F Sniper Overlook Decks (y=0..3.6m) with clean 1.2m -> 2.4m step stairs
+    { id: 'da_hev_n', x: 0, y: 0, z: -24, w: 14, h: 3.6, d: 6.0, kind: 'deepslate' },
+    { id: 'da_hev_n_st1', x: -10.5, y: 0, z: -24, w: 2.8, h: 1.2, d: 3.6, kind: 'wood_crate' },
+    { id: 'da_hev_n_st2', x: -8.1, y: 0, z: -24, w: 2.0, h: 2.4, d: 3.6, kind: 'gold' },
+    { id: 'da_hev_s', x: 0, y: 0, z: 24, w: 14, h: 3.6, d: 6.0, kind: 'deepslate' },
+    { id: 'da_hev_s_st1', x: 10.5, y: 0, z: 24, w: 2.8, h: 1.2, d: 3.6, kind: 'wood_crate' },
+    { id: 'da_hev_s_st2', x: 8.1, y: 0, z: 24, w: 2.0, h: 2.4, d: 3.6, kind: 'gold' },
+
+    // West A-SITE Tactical Bomb Zone Framing (keeps (-34, 0) plant pad open and clear!)
+    { id: 'da_asite_back', x: -30, y: 0, z: 0, w: 2.8, h: 3.4, d: 9.0, kind: 'container_red' },
+    { id: 'da_asite_n', x: -21, y: 0, z: -11, w: 7.0, h: 2.6, d: 3.2, kind: 'stone' },
+    { id: 'da_asite_s', x: -21, y: 0, z: 11, w: 7.0, h: 2.6, d: 3.2, kind: 'stone' },
+
+    // East B-SITE Tactical Bomb Zone Framing (keeps (+34, 0) plant pad open and clear!)
+    { id: 'da_bsite_back', x: 30, y: 0, z: 0, w: 2.8, h: 3.4, d: 9.0, kind: 'container_blue' },
+    { id: 'da_bsite_n', x: 21, y: 0, z: -11, w: 7.0, h: 2.6, d: 3.2, kind: 'stone' },
+    { id: 'da_bsite_s', x: 21, y: 0, z: 11, w: 7.0, h: 2.6, d: 3.2, kind: 'stone' },
+  ];
+}
+
+export const ARENA_HORIZONTAL_SCALE = 1.65;
 
 function getRawJumpPadsForMap(mapId: MapId): JumpPadZone[] {
   switch (mapId) {
@@ -1999,6 +2069,13 @@ function getRawJumpPadsForMap(mapId: MapId): JumpPadZone[] {
         { id: 'jp_as_sw', x: -12, y: 0, z: 9, radius: 1.9, boostY: 22.0, boostForward: 8.5, color: '#38bdf8' },
         { id: 'jp_as_se', x: 12, y: 0, z: 9, radius: 1.9, boostY: 22.0, boostForward: 8.5, color: '#38bdf8' },
       ];
+    case 'duel_arena':
+      return [
+        { id: 'jp_da_nw', x: -14, y: 0, z: -15, radius: 1.8, boostY: 19.5, boostForward: 7.5, color: '#f43f5e' },
+        { id: 'jp_da_ne', x: 14, y: 0, z: -15, radius: 1.8, boostY: 19.5, boostForward: 7.5, color: '#38bdf8' },
+        { id: 'jp_da_sw', x: -14, y: 0, z: 15, radius: 1.8, boostY: 19.5, boostForward: 7.5, color: '#f43f5e' },
+        { id: 'jp_da_se', x: 14, y: 0, z: 15, radius: 1.8, boostY: 19.5, boostForward: 7.5, color: '#38bdf8' },
+      ];
     default: {
       const def: MapDefinition = MAP_DEFINITIONS[mapId] ?? MAP_DEFINITIONS.emerald_citadel;
       return [
@@ -2136,6 +2213,8 @@ function getRawArenaBlocksForMap(mapId: MapId): ArenaBlock[] {
       return buildToxicRefineryBlocks();
     case 'aether_spire':
       return buildAetherSpireBlocks();
+    case 'duel_arena':
+      return buildDuelArenaBlocks();
     case 'emerald_citadel':
     default:
       return buildEmeraldCitadelBlocks();
@@ -2498,18 +2577,63 @@ function buildUrbanCoverAndHighGroundForMap(
   });
 }
 
+/**
+ * Returns true if two 3D ArenaBlocks overlap within the specified horizontal & vertical clearance margin.
+ */
+function blocksOverlap3D(a: ArenaBlock, b: ArenaBlock, horizGap = 0.75, vertGap = 0.05): boolean {
+  const overlapX = Math.abs(a.x - b.x) < (a.w + b.w) * 0.5 + horizGap;
+  const overlapZ = Math.abs(a.z - b.z) < (a.d + b.d) * 0.5 + horizGap;
+  if (!overlapX || !overlapZ) return false;
+  const aTop = a.y + a.h;
+  const bTop = b.y + b.h;
+  const overlapY = a.y < bTop - vertGap && aTop > b.y + vertGap;
+  return overlapY;
+}
+
 export function getArenaBlocksForMap(mapId: MapId): ArenaBlock[] {
-  const baseScaled = getRawArenaBlocksForMap(mapId).map((b) => ({
-    ...b,
-    x: Number((b.x * ARENA_HORIZONTAL_SCALE).toFixed(2)),
-    z: Number((b.z * ARENA_HORIZONTAL_SCALE).toFixed(2)),
-    w: Number((b.w * ARENA_HORIZONTAL_SCALE).toFixed(2)),
-    d: Number((b.d * ARENA_HORIZONTAL_SCALE).toFixed(2)),
-  }));
+  // Position scales by ARENA_HORIZONTAL_SCALE (1.65x -> 168m spacious arena),
+  // while footprint width/depth scales gently (1.14x, or full span for high overhead bridges)
+  // so lanes, courtyards, and sightlines open up without fat overlapping models!
+  const rawBase = getRawArenaBlocksForMap(mapId);
+  const baseScaled: ArenaBlock[] = [];
+  for (const b of rawBase) {
+    const isLongOverheadSpan = b.y >= 2.2 && (b.w >= 14 || b.d >= 14);
+    const sizeScaleW = isLongOverheadSpan && b.w >= 14 ? ARENA_HORIZONTAL_SCALE : 1.14;
+    const sizeScaleD = isLongOverheadSpan && b.d >= 14 ? ARENA_HORIZONTAL_SCALE : 1.14;
+    const scaled: ArenaBlock = {
+      ...b,
+      x: Number((b.x * ARENA_HORIZONTAL_SCALE).toFixed(2)),
+      z: Number((b.z * ARENA_HORIZONTAL_SCALE).toFixed(2)),
+      w: Number((b.w * sizeScaleW).toFixed(2)),
+      d: Number((b.d * sizeScaleD).toFixed(2)),
+    };
+    // Prevent any duplicate/overlapping ground blocks inside base map definitions
+    const clashesWithBase = baseScaled.some((existing) => blocksOverlap3D(scaled, existing, 0.15, 0.12));
+    if (!clashesWithBase) {
+      baseScaled.push(scaled);
+    }
+  }
+
   const pads = getJumpPadsForMap(mapId);
   const pools = getMapSignaturePools(mapId);
-  const urbanExtra = buildUrbanCoverAndHighGroundForMap(mapId, pads, pools);
-  return [...baseScaled, ...urbanExtra];
+  const urbanCandidates = buildUrbanCoverAndHighGroundForMap(mapId, pads, pools);
+
+  // Strict 3D AABB De-Overlapping Pass:
+  // Only accept urban cover / step-boxes / towers that have zero 3D intersection with base structures!
+  const accepted: ArenaBlock[] = [...baseScaled];
+  for (const cand of urbanCandidates) {
+    // Allow intentional stair-to-tower adjacency within the same cluster tag (e.g. ug_con_nw_*)
+    const candCluster = cand.id.split('_').slice(0, 3).join('_');
+    const collides = accepted.some((existing) => {
+      const exCluster = existing.id.split('_').slice(0, 3).join('_');
+      const gap = candCluster === exCluster && cand.id.startsWith('ug_') ? -0.05 : 0.85;
+      return blocksOverlap3D(cand, existing, gap, 0.08);
+    });
+    if (!collides) {
+      accepted.push(cand);
+    }
+  }
+  return accepted;
 }
 
 export interface CombatScoreEntry {

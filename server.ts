@@ -46,7 +46,8 @@ type MapId =
   | 'obsidian_keep'
   | 'solar_observatory'
   | 'toxic_refinery'
-  | 'aether_spire';
+  | 'aether_spire'
+  | 'duel_arena';
 const MAP_ORDER: MapId[] = [
   'container_yard',
   'emerald_citadel',
@@ -68,6 +69,7 @@ const MAP_ORDER: MapId[] = [
   'solar_observatory',
   'toxic_refinery',
   'aether_spire',
+  'duel_arena',
 ];
 const MAP_ROTATION_MS = 900_000;
 
@@ -161,7 +163,7 @@ interface RoomState {
   includeBots: boolean;
   customBots?: CustomBotSlotRecord[];
   botDifficulty?: 'easy' | 'medium' | 'hard';
-  partyMode?: 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot' | 'spike_defuse';
+  partyMode?: 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot' | 'spike_defuse' | 'battle_royale';
   targetKills: number;
   selectedMap: MapId;
   mapVotes: Map<string, MapId>;
@@ -183,7 +185,7 @@ interface QueueEntry {
   ws: WebSocket;
   name: string;
   characterId: CharacterId;
-  partyMode?: 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot' | 'spike_defuse';
+  partyMode?: 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot' | 'spike_defuse' | 'battle_royale';
   selectedMap?: MapId;
 }
 
@@ -804,18 +806,24 @@ async function startServer() {
         const roomMode = msg.roomMode === 'team' ? 'team' : 'ffa';
         const team = (msg.team === 'red' || msg.team === 'blue' || msg.team === 'ffa') ? msg.team : (roomMode === 'team' ? 'red' : 'ffa');
         const botDifficulty = msg.botDifficulty === 'easy' || msg.botDifficulty === 'hard' ? msg.botDifficulty : 'medium';
-        const partyMode = ['classic', 'knockout', 'boss_raid', 'random_arsenal', 'one_shot', 'spike_defuse'].includes(String(msg.partyMode))
-          ? (msg.partyMode as 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot' | 'spike_defuse')
+        const partyMode = ['classic', 'knockout', 'boss_raid', 'random_arsenal', 'one_shot', 'spike_defuse', 'battle_royale'].includes(String(msg.partyMode))
+          ? (msg.partyMode as 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot' | 'spike_defuse' | 'battle_royale')
           : 'classic';
-        const effectiveRoomMode = partyMode === 'spike_defuse' ? 'team' : roomMode;
+        const effectiveRoomMode = partyMode === 'spike_defuse' ? 'team' : partyMode === 'battle_royale' ? 'ffa' : roomMode;
         const rawCustomBots = sanitizeCustomBots(msg.customBots);
         const normalizedCustomBots =
-          roomMode === 'team'
+          effectiveRoomMode === 'team'
             ? rawCustomBots.map((b, i) => ({
                 ...b,
                 team: b.team === 'red' || b.team === 'blue' ? b.team : ((i % 2 === 0 ? 'red' : 'blue') as 'red' | 'blue' | 'ffa'),
               }))
             : rawCustomBots.map((b) => ({ ...b, team: 'ffa' as 'red' | 'blue' | 'ffa' }));
+        const defaultSelectedMap: MapId =
+          typeof msg.selectedMap === 'string' && MAP_ORDER.includes(msg.selectedMap as MapId)
+            ? (msg.selectedMap as MapId)
+            : partyMode === 'spike_defuse'
+              ? 'duel_arena'
+              : 'container_yard';
         const room: RoomState = {
           code,
           kind: 'private',
@@ -827,7 +835,7 @@ async function startServer() {
           botDifficulty,
           partyMode,
           targetKills: 15,
-          selectedMap: 'container_yard',
+          selectedMap: defaultSelectedMap,
           mapVotes: new Map(),
           mapStartedAt: Date.now(),
           peers: new Map(),
@@ -977,10 +985,15 @@ async function startServer() {
         if (typeof msg.botDifficulty === 'string' && (msg.botDifficulty === 'easy' || msg.botDifficulty === 'medium' || msg.botDifficulty === 'hard') && room.hostId === clientId) {
           room.botDifficulty = msg.botDifficulty;
         }
-        if (typeof msg.partyMode === 'string' && ['classic', 'knockout', 'boss_raid', 'random_arsenal', 'one_shot', 'spike_defuse'].includes(msg.partyMode) && room.hostId === clientId) {
-          room.partyMode = msg.partyMode as 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot' | 'spike_defuse';
+        if (typeof msg.partyMode === 'string' && ['classic', 'knockout', 'boss_raid', 'random_arsenal', 'one_shot', 'spike_defuse', 'battle_royale'].includes(msg.partyMode) && room.hostId === clientId) {
+          room.partyMode = msg.partyMode as 'classic' | 'knockout' | 'boss_raid' | 'random_arsenal' | 'one_shot' | 'spike_defuse' | 'battle_royale';
           if (room.partyMode === 'spike_defuse') {
             room.roomMode = 'team';
+            if (room.selectedMap === 'container_yard') {
+              room.selectedMap = 'duel_arena';
+            }
+          } else if (room.partyMode === 'battle_royale') {
+            room.roomMode = 'ffa';
           }
         }
         if (typeof msg.selectedMap === 'string' && MAP_ORDER.includes(msg.selectedMap as MapId) && room.hostId === clientId) {

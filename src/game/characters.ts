@@ -88,8 +88,8 @@ export const ITEM_CATALOG: Record<WeaponSlotId, Omit<LoadoutItemConfig, 'keyHint
     cooldown: 0.55,
     maxCharges: 1,
     damage: 13,
-    range: 42,
-    description: '0.55초 시위 당김 후 장거리 화살 발사. 헤드샷·공중 명중 시 1.2x 크리티컬!',
+    range: 64,
+    description: '조준점 100% 일치 완전 무낙차 직선 사격! 헤드샷·공중 명중 시 1.2x 크리티컬!',
     accent: '#0ea5e9',
   },
   crossbow: {
@@ -100,8 +100,8 @@ export const ITEM_CATALOG: Record<WeaponSlotId, Omit<LoadoutItemConfig, 'keyHint
     maxCharges: 1,
     startCharges: 1,
     damage: 9,
-    range: 32,
-    description: '0.38초 재장전 중거리 볼트 발사',
+    range: 54,
+    description: '0.38초 고속 재장전 · 조준점 정중앙 무낙차 직선 볼트 사격',
     accent: '#8b5cf6',
   },
   wind_charge: {
@@ -451,7 +451,7 @@ export const GAME_MODES: GameModeConfig[] = [
     id: 'ffa',
     label: '빠른 대전',
     subtitle: '1분 녹아웃 · 단일 통합 서버',
-    description: '단일 통합 서버에서 실제 플레이어들과 20종 랜덤 맵 1분 녹아웃 서바이벌을 펼칩니다.',
+    description: '단일 통합 서버에서 실제 플레이어들과 21종 랜덤 맵 1분 녹아웃 서바이벌을 펼칩니다.',
     targetKills: 15,
   },
   {
@@ -463,16 +463,16 @@ export const GAME_MODES: GameModeConfig[] = [
   },
   {
     id: 'link_duel',
-    label: '랭킹전',
-    subtitle: '랭크 1대1 대결',
-    description: '초대 코드 또는 실시간 빠른 매칭으로 라이벌과 1v1 랭크 대결을 펼칩니다.',
-    targetKills: 3,
+    label: '배틀로얄',
+    subtitle: '생존 자기장 · 최후의 1인',
+    description: '고고도 글라이더 강하 후 4단계로 좁혀오는 블루존 전기 자기장에서 최후의 1인이 될 때까지 생존하세요!',
+    targetKills: 1,
   },
   {
     id: 'multiplayer',
     label: '사용자 설정 게임',
-    subtitle: '팀 배치 · 맵 투표',
-    description: '팀전·개인전 커스텀 규칙, 팀 배치, 20종 맵 투표를 자유롭게 구성합니다.',
+    subtitle: '사설방 · 배틀로얄 · 스파이크 · 1v1/2v2',
+    description: '배틀로얄, 스파이크 폭파전, 4종 보스 레이드, 1v1·2v2 듀얼 아레나 등 21종 맵을 자유롭게 구성합니다.',
     targetKills: 15,
   },
 ];

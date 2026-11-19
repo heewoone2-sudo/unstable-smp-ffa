@@ -74,7 +74,7 @@ export function buildMapSignatureProps(
   const hScale = arenaRadius / 48;
   group.scale.set(hScale, 1, hScale);
   arenaRadius = 48;
-  const outerR = arenaRadius + 6.5;
+  const outerR = arenaRadius + 8.5;
 
   // Helper: cardinal / radial glowing beacon banners
   const addBannerRow = (bannerColor: number, count: number, radius: number, height: number) => {
@@ -106,7 +106,7 @@ export function buildMapSignatureProps(
 
   switch (mapId) {
     case 'container_yard': {
-      // Colossal Harbor Gantry Crane arching over the whole port yard!
+      // Colossal Harbor Gantry Crane arching cleanly from outer perimeter!
       const yellowMat = trackMat(
         new THREE.MeshStandardMaterial({
           color: 0xf59e0b,
@@ -114,20 +114,20 @@ export function buildMapSignatureProps(
           metalness: 0.65,
         })
       );
-      const legGeo = new THREE.BoxGeometry(1.8, 22, 1.8);
-      const beamGeo = new THREE.BoxGeometry(74, 2.2, 3.0);
+      const legGeo = new THREE.BoxGeometry(1.8, 24, 1.8);
+      const beamGeo = new THREE.BoxGeometry(outerR * 2 + 4, 2.2, 3.0);
       const trolleyGeo = new THREE.BoxGeometry(4.8, 1.8, 4.2);
-      const cableGeo = new THREE.CylinderGeometry(0.08, 0.08, 7.5, 6);
+      const cableGeo = new THREE.CylinderGeometry(0.08, 0.08, 6.5, 6);
 
-      for (const lx of [-34, 34]) {
-        for (const lz of [-2.2, 2.2]) {
+      for (const lx of [-outerR, outerR]) {
+        for (const lz of [-2.4, 2.4]) {
           const leg = new THREE.Mesh(legGeo, yellowMat);
-          leg.position.set(lx, 11, lz);
+          leg.position.set(lx, 12, lz);
           group.add(leg);
         }
       }
       const gantryBeam = new THREE.Mesh(beamGeo, yellowMat);
-      gantryBeam.position.set(0, 22.5, 0);
+      gantryBeam.position.set(0, 24.5, 0);
       group.add(gantryBeam);
 
       const trolley = new THREE.Group();
@@ -663,6 +663,37 @@ export function buildMapSignatureProps(
       pipeCross.rotation.z = Math.PI / 2;
       pipeCross.position.set(0, 14.5, 0);
       group.add(pipeCross);
+      break;
+    }
+
+    case 'duel_arena': {
+      // Colosseum Championship Victory Pylons + Overhead Floating Duel Crown Ring
+      addBannerRow(0xf43f5e, 8, outerR + 1.5, 13.5);
+      const redBeaconMat = trackMat(
+        new THREE.MeshStandardMaterial({ color: 0xf43f5e, emissive: 0xe11d48, emissiveIntensity: 1.2 })
+      );
+      const blueBeaconMat = trackMat(
+        new THREE.MeshStandardMaterial({ color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 1.2 })
+      );
+      for (const side of [-1, 1]) {
+        const pylon = new THREE.Group();
+        pylon.position.set(side * (outerR + 2.5), 0, 0);
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.8, 16, 8), darkSteelMat);
+        base.position.y = 8;
+        const crystal = new THREE.Mesh(
+          new THREE.OctahedronGeometry(2.0, 0),
+          side < 0 ? redBeaconMat : blueBeaconMat
+        );
+        crystal.position.y = 18.5;
+        pylon.add(base, crystal);
+        group.add(pylon);
+        animatedProps.push({ obj: crystal, kind: 'spinY', speed: 1.4 * side, baseY: 18.5, phase: 0 });
+      }
+      const crownRing = new THREE.Mesh(new THREE.TorusGeometry(5.8, 0.26, 12, 40), goldMat);
+      crownRing.rotation.x = Math.PI / 2;
+      crownRing.position.set(0, 19.5, 0);
+      group.add(crownRing);
+      animatedProps.push({ obj: crownRing, kind: 'spinZ', speed: 0.65, baseY: 19.5, phase: 0 });
       break;
     }
 

@@ -69,10 +69,28 @@ const ARENA_RULE_LIST: Array<{
   shortDesc: string;
 }> = [
   {
+    id: 'battle_royale',
+    label: '배틀로얄 (생존 자기장)',
+    badge: '자기장',
+    shortDesc: '고고도 낙하 · 4단계 축소 블루존 자기장 · 부활 없는 최후의 1인 생존',
+  },
+  {
     id: 'knockout',
     label: '1분 녹아웃 서바이벌',
     badge: '1:00',
     shortDesc: '1분마다 킬 할당 미달자 탈락',
+  },
+  {
+    id: 'spike_defuse',
+    label: '스파이크 폭파전 (전용맵)',
+    badge: '5선승',
+    shortDesc: 'A/B 사이트 스파이크 설치 · 45초 폭파 · 50% 하프 해체',
+  },
+  {
+    id: 'boss_raid',
+    label: '4종 거대 보스 레이드',
+    badge: '4보스',
+    shortDesc: '마그마 베히모스 · 혹한 레비아탄 · 폭풍 아콘 · 공허 콜로서스 토벌',
   },
   {
     id: 'random_arsenal',
@@ -87,22 +105,10 @@ const ARENA_RULE_LIST: Array<{
     shortDesc: '원거리 명중 시 즉시 일격 처치',
   },
   {
-    id: 'boss_raid',
-    label: '거대 괴수 레이드',
-    badge: '보스',
-    shortDesc: '거대 보스 및 호위병 집중 격파',
-  },
-  {
-    id: 'spike_defuse',
-    label: '스파이크 폭파전 (발로란트)',
-    badge: '5선승',
-    shortDesc: 'A/B 사이트 스파이크 설치 · 45초 폭파 · 50% 하프 해체',
-  },
-  {
     id: 'classic',
-    label: '클래식 난타전',
+    label: '클래식 난타전 (1v1/2v2/FFA)',
     badge: '15킬',
-    shortDesc: '6슬롯 풀무장 정통 아레나',
+    shortDesc: '6슬롯 풀무장 정통 아레나 (1v1·2v2·개인전·팀전)',
   },
 ];
 
@@ -145,6 +151,7 @@ interface TitleScreenProps {
   onSelectPracticeMap: (mapId: MapId) => void;
   onPlayUiSound?: (kind: 'vote' | 'tick' | 'lock', step?: number) => void;
   onStart: () => void;
+  onStartBattleRoyale?: (mapId?: MapId) => void;
   onLaunchMatchedGame?: (skillDifficulty?: BotDifficulty) => void;
   onSetPlayerName: (name: string) => void;
   onOpenAuth: (tab: 'auth' | 'leaderboard' | 'friends') => void;
@@ -177,21 +184,21 @@ interface TitleScreenProps {
 
 const PATCH_NOTES = [
   {
-    version: 'v3.7 — 실시간 매칭 대기열 & 실력 기반 매칭',
+    version: 'v3.8 — 배틀로얄 자기장 & 1v1·2v2 듀얼 아레나 & 4종 보스',
     date: '최신 업데이트',
     highlights: [
-      '빠른 대전·랭킹전 실시간 매칭 대기열(00:00~00:30 대형 타이머) 및 30초 자동 성사 적용',
-      '플레이어 ELO·전적·최근 K/D·연승/연패 기반 실시간 랭크 매칭 및 밸런스 보정 적용',
-      '데스매치 오픈월드 및 연습장 즉시 입장, 3라운드 결승 녹아웃 개편',
+      '배틀로얄 모드 추가(고고도 활공 낙하, 4단계 블루존 전기 자기장, 최후의 1인 치킨 우승) 및 사설방 지원',
+      '활·석궁 조준점 100% 일치 무낙차 직선 총알 탄도 개편 및 방패 방어 피해 감소량 85% 대폭 상향',
+      '전 맵 168m 광활화 및 겹침 모델 완벽 제거 + 신규 21번째 맵 [1v1·2v2 듀얼 아레나 (스파이크 전용)] 추가',
+      '보스 레이드 4종 보스(마그마 베히모스·혹한 레비아탄·폭풍 아콘·공허 콜로서스) 및 멀티 동기화 완비',
     ],
   },
   {
-    version: 'v3.6 — 화이트 아레나 로비 & 사용자 설정 게임 개편',
+    version: 'v3.7 — 실시간 매칭 대기열 & 실력 기반 매칭',
     date: '이전 업데이트',
     highlights: [
-      '전체 로비를 밝은 화이트 스튜디오 테마로 통일하고 빠른 대전을 상단 정중앙(50%)에 배치',
-      '가로 드래그 없는 11명 전체 캐릭터 격자 선택 + 대칭 랜덤 버튼 적용',
-      '3분 녹아웃 라운드 종료 시 9종 스펙터클 탈락 연출(희귀 잭팟 4종 포함) 추가',
+      '빠른 대전 실시간 매칭 대기열 및 플레이어 ELO·전적 기반 밸런스 보정 적용',
+      '데스매치 오픈월드 및 연습장 즉시 입장, 3라운드 결승 녹아웃 개편',
     ],
   },
 ];
@@ -217,6 +224,7 @@ export function TitleScreen({
   onSelectPracticeMap,
   onPlayUiSound,
   onStart,
+  onStartBattleRoyale,
   onLaunchMatchedGame,
   onSetPlayerName,
   onOpenAuth,
@@ -628,10 +636,14 @@ export function TitleScreen({
       setHeroSelectLaunching(false);
       setHeroSelectMode('quick_launch');
     } else if (selectedMode === 'link_duel') {
-      if (queueActiveMode === 'link_duel') {
-        handleTriggerMatchFoundAndLaunch();
+      if (queueActiveMode) {
+        handleCancelMatchmakingQueue();
+      }
+      onSetPracticeMode(false);
+      if (onStartBattleRoyale) {
+        onStartBattleRoyale(currentMapId);
       } else {
-        handleStartMatchmakingQueue('link_duel');
+        onStart();
       }
     } else {
       if (queueActiveMode) {
@@ -655,9 +667,7 @@ export function TitleScreen({
           : selectedMode === 'online_world'
             ? 'PLAY · 데스매치'
             : selectedMode === 'link_duel'
-              ? queueActiveMode === 'link_duel'
-                ? `매칭 중 (${formatRotationTimer(queueElapsedSec)}) · 즉시 시작`
-                : 'PLAY · 랭킹전'
+              ? 'PLAY · 배틀로얄'
               : '방 만들기';
 
   if (heroSelectMode !== null) {
@@ -721,9 +731,9 @@ export function TitleScreen({
                 : 'bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100 hover:border-slate-300'
             }`}
           >
-            <Swords className="hidden sm:block w-4 h-4 shrink-0" />
-            <span className="font-display text-xs sm:text-sm lg:text-base font-black truncate">랭킹전</span>
-            <span className="hidden 2xl:inline text-[11px] font-semibold opacity-85">· 1:1 대결</span>
+            <Flame className="hidden sm:block w-4 h-4 shrink-0" />
+            <span className="font-display text-xs sm:text-sm lg:text-base font-black truncate">배틀로얄</span>
+            <span className="hidden 2xl:inline text-[11px] font-semibold opacity-85">· 생존 자기장</span>
           </button>
 
           <button
@@ -1021,6 +1031,14 @@ export function TitleScreen({
                               partyMode: nextMode,
                               roomMode: 'team',
                               team: 'red',
+                              includeBots: true,
+                            });
+                            onVoteMap('duel_arena');
+                          } else if (nextMode === 'battle_royale') {
+                            onUpdateLobby({
+                              partyMode: nextMode,
+                              roomMode: 'ffa',
+                              team: 'ffa',
                               includeBots: true,
                             });
                           } else {
@@ -2015,56 +2033,70 @@ export function TitleScreen({
               </div>
             )}
 
-            {/* 3C. 랭킹전 (랭크 1대1 대결) */}
+            {/* 3C. 배틀로얄 (생존 자기장 · 솔로 강하 & 사설방 지원) */}
             {selectedMode === 'link_duel' && (
-              <div className="flex-1 min-h-0 flex flex-col justify-between gap-2.5" data-testid="link-duel-panel">
-                <div className="space-y-2 bg-slate-50 border border-slate-200 rounded-xl p-2.5 shrink-0">
-                  <div className="text-[11px] font-bold text-slate-600">
-                    내 방 코드 직접 만들기 (선택 · 미입력 시 자동 생성)
+              <div className="flex-1 min-h-0 flex flex-col justify-between gap-2.5" data-testid="battle-royale-panel">
+                <div className="bg-sky-50 border border-sky-200 rounded-xl p-2.5 space-y-1 shrink-0">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-sky-900">
+                      ⚡ 배틀로얄 · 블루존 생존 자기장
+                    </span>
+                    <span className="px-2 py-0.5 rounded bg-sky-600 text-white text-[10px] font-black">
+                      최후의 1인 치킨
+                    </span>
                   </div>
-                  <input
-                    type="text"
-                    data-testid="create-link-code-input"
-                    maxLength={12}
-                    value={linkCreateCode}
-                    onChange={(e) => setLinkCreateCode(e.target.value.toUpperCase())}
-                    placeholder="원하는 코드 입력 (예: 1VS1, HEEWOO)"
-                    className="w-full bg-white border border-slate-200 focus:border-rose-500 rounded-lg px-2.5 py-1.5 text-xs font-mono-num font-bold text-slate-900 uppercase focus:outline-none placeholder:text-slate-400"
-                  />
+                  <p className="text-[11px] font-semibold text-sky-800 leading-snug">
+                    상공 28m 글라이더 활공 강하로 시작하며 4단계로 축소되는 블루존 전기 자기장 안에서 단 1명의 생존자가 남을 때까지 전투합니다!
+                  </p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2.5 flex-1 min-h-[96px]">
+                <div className="grid grid-cols-2 gap-2.5 flex-1 min-h-[92px]">
                   <button
                     type="button"
-                    data-testid="create-link-duel-btn"
-                    onClick={() => onCreateLinkDuel(playerCallsign, linkCreateCode.trim() || undefined)}
-                    className="p-3.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-400 text-slate-900 text-left cursor-pointer flex items-center justify-center gap-2 shadow-xs"
+                    data-testid="start-br-solo-btn"
+                    onClick={() => {
+                      onSetPracticeMode(false);
+                      if (onStartBattleRoyale) {
+                        onStartBattleRoyale(currentMapId);
+                      } else {
+                        onStart();
+                      }
+                    }}
+                    className="p-3.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-left cursor-pointer flex flex-col justify-between shadow-sm transition-colors"
                   >
-                    <Link2 className="w-4 h-4 text-rose-600 shrink-0" />
-                    <span className="font-display text-sm font-black leading-tight">
-                      방 생성 · 코드
+                    <div className="flex items-center justify-between w-full">
+                      <Flame className="w-4 h-4 text-amber-300 shrink-0" />
+                      <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-white/20">즉시 강하</span>
+                    </div>
+                    <span className="font-display text-sm font-black leading-tight mt-1">
+                      배틀로얄 솔로 강하
                     </span>
                   </button>
 
                   <button
                     type="button"
-                    data-testid="quick-match-link-duel-btn"
-                    onClick={() =>
-                      queueActiveMode === 'link_duel' || multiplayer.linkQueueing
-                        ? handleCancelMatchmakingQueue()
-                        : handleStartMatchmakingQueue('link_duel')
-                    }
-                    className={`p-3.5 rounded-xl text-white text-left cursor-pointer flex items-center justify-center gap-2 shadow-sm transition-colors ${
-                      queueActiveMode === 'link_duel' || multiplayer.linkQueueing
-                        ? 'bg-rose-600 hover:bg-rose-500'
-                        : 'bg-sky-600 hover:bg-sky-500'
-                    }`}
+                    data-testid="create-br-room-btn"
+                    onClick={() => {
+                      onSelectMode('multiplayer');
+                      onCreateRoom(
+                        playerCallsign,
+                        true,
+                        'ffa',
+                        'ffa',
+                        multiplayer.botDifficulty ?? 'medium',
+                        'battle_royale',
+                        customBots,
+                        linkCreateCode.trim() || undefined
+                      );
+                    }}
+                    className="p-3.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-left cursor-pointer flex flex-col justify-between shadow-sm transition-colors"
                   >
-                    <Swords className="w-4 h-4 shrink-0" />
-                    <span className="font-display text-sm font-black leading-tight">
-                      {queueActiveMode === 'link_duel' || multiplayer.linkQueueing
-                        ? `매칭 취소 (${formatRotationTimer(queueElapsedSec)})`
-                        : '실시간 1:1 매칭'}
+                    <div className="flex items-center justify-between w-full">
+                      <Users className="w-4 h-4 shrink-0" />
+                      <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-white/20">사설방</span>
+                    </div>
+                    <span className="font-display text-sm font-black leading-tight mt-1">
+                      배틀로얄 사설방 생성
                     </span>
                   </button>
                 </div>
@@ -2075,38 +2107,21 @@ export function TitleScreen({
                     maxLength={12}
                     value={linkCodeInput}
                     onChange={(e) => setLinkCodeInput(e.target.value.toUpperCase())}
-                    placeholder="초대 코드 입력 (최대 12자)"
+                    placeholder="친구 사설방 코드 입력 (최대 12자)"
                     className="flex-1 bg-transparent px-2 text-xs sm:text-sm font-mono-num font-bold text-slate-900 uppercase focus:outline-none placeholder:text-slate-400"
                   />
                   <button
                     type="button"
-                    onClick={() =>
-                      linkCodeInput.trim() && onJoinLinkDuel(linkCodeInput.trim(), playerCallsign)
-                    }
+                    onClick={() => {
+                      if (!linkCodeInput.trim()) return;
+                      onSelectMode('multiplayer');
+                      onJoinRoom(linkCodeInput.trim(), playerCallsign, 'ffa');
+                    }}
                     className="px-4 py-2 rounded-lg bg-rose-600 text-white text-xs font-bold hover:bg-rose-500 cursor-pointer shrink-0"
                   >
                     코드 입장
                   </button>
                 </div>
-
-                {multiplayer.roomCode && (
-                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-between gap-2 shrink-0">
-                    <div>
-                      <div className="text-[11px] font-bold text-rose-700">대기 중인 1:1 코드</div>
-                      <div className="font-mono-num text-lg font-black text-slate-900">
-                        {multiplayer.roomCode}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleCopyInviteLink(multiplayer.roomCode!, true)}
-                      className="px-3 py-1.5 rounded-lg bg-rose-600 text-white text-xs font-bold flex items-center gap-1 cursor-pointer"
-                    >
-                      {copiedLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copiedLink ? '복사됨' : '초대링크'}</span>
-                    </button>
-                  </div>
-                )}
               </div>
             )}
 
@@ -2128,7 +2143,78 @@ export function TitleScreen({
                   />
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 flex-1 min-h-[96px]">
+                <div className="grid grid-cols-2 gap-2 flex-1 min-h-[112px]">
+                  <button
+                    type="button"
+                    data-testid="create-br-custom-room-btn"
+                    onClick={() =>
+                      onCreateRoom(
+                        playerCallsign,
+                        true,
+                        'ffa',
+                        'ffa',
+                        multiplayer.botDifficulty ?? 'medium',
+                        'battle_royale',
+                        customBots,
+                        customCreateCode.trim() || undefined
+                      )
+                    }
+                    className="p-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-left cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    <Flame className="w-4 h-4 shrink-0" />
+                    <span className="font-display text-xs sm:text-sm font-black leading-tight">
+                      배틀로얄 (자기장)
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="create-spike-room-btn"
+                    onClick={() => {
+                      onCreateRoom(
+                        playerCallsign,
+                        true,
+                        'team',
+                        'red',
+                        multiplayer.botDifficulty ?? 'medium',
+                        'spike_defuse',
+                        customBots,
+                        customCreateCode.trim() || undefined
+                      );
+                      window.setTimeout(() => onVoteMap('duel_arena'), 60);
+                    }}
+                    className="p-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-left cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    <Zap className="w-4 h-4 shrink-0" />
+                    <span className="font-display text-xs sm:text-sm font-black leading-tight">
+                      스파이크 폭파전
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    data-testid="create-duel-arena-room-btn"
+                    onClick={() => {
+                      onCreateRoom(
+                        playerCallsign,
+                        false,
+                        'team',
+                        'red',
+                        multiplayer.botDifficulty ?? 'medium',
+                        'classic',
+                        customBots,
+                        customCreateCode.trim() || undefined
+                      );
+                      window.setTimeout(() => onVoteMap('duel_arena'), 60);
+                    }}
+                    className="p-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-left cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    <Swords className="w-4 h-4 shrink-0" />
+                    <span className="font-display text-xs sm:text-sm font-black leading-tight">
+                      1v1·2v2 듀얼 아레나
+                    </span>
+                  </button>
+
                   <button
                     type="button"
                     data-testid="create-ffa-room-btn"
@@ -2144,57 +2230,11 @@ export function TitleScreen({
                         customCreateCode.trim() || undefined
                       )
                     }
-                    className="p-3 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-400 text-slate-900 text-left cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
+                    className="p-2.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-400 text-slate-900 text-left cursor-pointer flex items-center justify-center gap-1.5 shadow-xs"
                   >
-                    <Flame className="w-4 h-4 text-rose-600 shrink-0" />
+                    <Users className="w-4 h-4 text-rose-600 shrink-0" />
                     <span className="font-display text-xs sm:text-sm font-black leading-tight">
-                      개인전(FFA)
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    data-testid="create-team-room-btn"
-                    onClick={() =>
-                      onCreateRoom(
-                        playerCallsign,
-                        false,
-                        'team',
-                        'red',
-                        multiplayer.botDifficulty ?? 'medium',
-                        multiplayer.partyMode ?? 'knockout',
-                        customBots,
-                        customCreateCode.trim() || undefined
-                      )
-                    }
-                    className="p-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-left cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
-                  >
-                    <Users className="w-4 h-4 shrink-0" />
-                    <span className="font-display text-xs sm:text-sm font-black leading-tight">
-                      팀전(RED vs BLUE)
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    data-testid="create-spike-room-btn"
-                    onClick={() =>
-                      onCreateRoom(
-                        playerCallsign,
-                        true,
-                        'team',
-                        'red',
-                        multiplayer.botDifficulty ?? 'medium',
-                        'spike_defuse',
-                        customBots,
-                        customCreateCode.trim() || undefined
-                      )
-                    }
-                    className="p-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-left cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
-                  >
-                    <Zap className="w-4 h-4 shrink-0" />
-                    <span className="font-display text-xs sm:text-sm font-black leading-tight">
-                      스파이크 폭파전
+                      개인전 / 팀전 자유방
                     </span>
                   </button>
                 </div>

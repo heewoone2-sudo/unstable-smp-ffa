@@ -256,14 +256,14 @@ export function GameHud({
           : hud.isScoped
             ? '방패 스코프 조준'
             : hud.isBlocking
-              ? '방어 중'
+              ? '방패 방어 중 (-85% 피해)'
               : hud.isGliding
                 ? '활공 중 · HP 회복 (우클릭: 폭죽)'
                 : '전투 중';
 
   return (
     <div
-      className="fixed inset-0 z-10 pointer-events-none select-none"
+      className="fixed inset-0 z-30 pointer-events-none select-none"
       onTouchMove={(e) => {
         if (!showTouchControls || !onMobileLook) return;
         for (let i = 0; i < e.changedTouches.length; i++) {
@@ -300,6 +300,16 @@ export function GameHud({
           className="fixed inset-0 pointer-events-none"
           style={{
             boxShadow: 'inset 0 0 75px rgba(234, 88, 12, 0.48)',
+          }}
+        />
+      )}
+
+      {hud.battleRoyaleState?.outsideZone && (
+        <div
+          data-testid="br-zone-warning-vignette"
+          className="fixed inset-0 pointer-events-none animate-pulse"
+          style={{
+            boxShadow: 'inset 0 0 110px rgba(14, 165, 233, 0.65)',
           }}
         />
       )}
@@ -402,9 +412,9 @@ export function GameHud({
               setPracticeModalOpen(true);
             }}
             className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-[11px] cursor-pointer whitespace-nowrap"
-            title="전체 20종 맵·캐릭터 선택 [M]"
+            title="전체 21종 맵·캐릭터 선택 [M]"
           >
-            전체 20맵 [M]
+            전체 21맵 [M]
           </button>
         </div>
       )}
@@ -712,7 +722,49 @@ export function GameHud({
           data-testid="top-center-score-banner"
           className="fixed top-[128px] sm:top-3 left-1/2 -translate-x-1/2 pointer-events-none z-15 bg-zinc-950/92 border border-white/15 rounded-xl px-3 sm:px-3.5 py-1.5 sm:py-2 shadow-lg flex items-center gap-2.5 sm:gap-3 text-white whitespace-nowrap"
         >
-          {hud.partyMode === 'spike_defuse' && hud.spikeState ? (
+          {hud.partyMode === 'battle_royale' && hud.battleRoyaleState ? (
+            (() => {
+              const br = hud.battleRoyaleState;
+              const remSec = Math.max(0, br.timerSec);
+              const timerLabel = `${String(Math.floor(remSec / 60)).padStart(2, '0')}:${String(Math.floor(remSec % 60)).padStart(2, '0')}`;
+              return (
+                <div
+                  data-testid="battle-royale-hud"
+                  className="flex flex-col items-center gap-1 text-xs sm:text-sm font-display font-bold"
+                >
+                  <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                    <span className="px-2 py-0.5 rounded bg-sky-600 text-white text-[11px] font-black tracking-wide">
+                      ⚡ 배틀로얄 · {br.phaseLabel}
+                    </span>
+                    <span
+                      data-testid="br-zone-timer"
+                      className={`font-mono-num text-base sm:text-xl font-black px-2.5 py-0.5 rounded-lg border ${
+                        br.isShrinking
+                          ? 'bg-sky-500/30 border-sky-400 text-sky-200 animate-pulse'
+                          : 'bg-white/10 border-white/15 text-amber-300'
+                      }`}
+                    >
+                      {timerLabel}
+                    </span>
+                    <span className="text-emerald-300 font-mono-num font-black">
+                      생존 {br.aliveCount} / {br.totalCount}명
+                    </span>
+                    <span className="hidden md:inline text-zinc-300 text-[11px] font-mono-num">
+                      안전구역 {br.currentRadius}m → {br.targetRadius}m
+                    </span>
+                  </div>
+                  {br.outsideZone && (
+                    <div
+                      data-testid="br-outside-zone-alert"
+                      className="px-2.5 py-0.5 rounded bg-rose-600 text-white text-[11px] font-black animate-bounce"
+                    >
+                      ⚠️ 블루존 자기장 밖! 안전구역(중앙 원) 안으로 이동하세요 (-{br.damagePerSec} HP/s)
+                    </div>
+                  )}
+                </div>
+              );
+            })()
+          ) : hud.partyMode === 'spike_defuse' && hud.spikeState ? (
             (() => {
               const sp = hud.spikeState;
               const isPlanted = sp.phase === 'planted';
@@ -723,75 +775,101 @@ export function GameHud({
               return (
                 <div
                   data-testid="spike-defuse-hud"
-                  className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 text-xs sm:text-sm font-display font-bold"
+                  className="flex flex-col items-center gap-1 text-xs sm:text-sm font-display font-bold"
                 >
-                  <span className="flex items-center gap-1.5 text-rose-400">
-                    <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white text-[10px] font-black">
-                      공격 RED
+                  <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                    <span className="flex items-center gap-1.5 text-rose-400">
+                      <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white text-[10px] font-black">
+                        공격 RED
+                      </span>
+                      <span className="font-mono-num text-base sm:text-lg font-black text-white">
+                        {sp.redRounds}
+                      </span>
                     </span>
-                    <span className="font-mono-num text-base sm:text-lg font-black text-white">
-                      {sp.redRounds}
-                    </span>
-                  </span>
 
-                  <span
-                    data-testid="spike-timer-readout"
-                    className={`font-mono-num text-base sm:text-xl font-black px-2.5 py-0.5 rounded-lg border ${
-                      isPlanted
-                        ? 'bg-rose-600/35 border-rose-400 text-rose-200 animate-pulse'
-                        : 'bg-white/10 border-white/15 text-amber-300'
-                    }`}
-                  >
-                    {isPlanted ? `🔺 ${timerLabel}` : timerLabel}
-                  </span>
-
-                  <span className="flex items-center gap-1.5 text-cyan-400">
-                    <span className="font-mono-num text-base sm:text-lg font-black text-white">
-                      {sp.blueRounds}
-                    </span>
-                    <span className="px-1.5 py-0.5 rounded bg-sky-600 text-white text-[10px] font-black">
-                      수비 BLUE
-                    </span>
-                  </span>
-
-                  <div className="flex items-center gap-1 ml-1 pl-2 border-l border-white/15 text-[11px]">
                     <span
-                      className={`px-1.5 py-0.5 rounded font-black ${
-                        sp.plantedSite === 'A'
-                          ? 'bg-rose-600 text-white animate-pulse'
-                          : 'bg-white/10 text-zinc-200'
+                      data-testid="spike-timer-readout"
+                      className={`font-mono-num text-base sm:text-xl font-black px-2.5 py-0.5 rounded-lg border ${
+                        isPlanted
+                          ? 'bg-rose-600/35 border-rose-400 text-rose-200 animate-pulse'
+                          : 'bg-white/10 border-white/15 text-amber-300'
                       }`}
                     >
-                      A 사이트
+                      {isPlanted ? `🔺 ${timerLabel}` : timerLabel}
                     </span>
-                    <span
-                      className={`px-1.5 py-0.5 rounded font-black ${
-                        sp.plantedSite === 'B'
-                          ? 'bg-rose-600 text-white animate-pulse'
-                          : 'bg-white/10 text-zinc-200'
-                      }`}
-                    >
-                      B 사이트
+
+                    <span className="flex items-center gap-1.5 text-cyan-400">
+                      <span className="font-mono-num text-base sm:text-lg font-black text-white">
+                        {sp.blueRounds}
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded bg-sky-600 text-white text-[10px] font-black">
+                        수비 BLUE
+                      </span>
                     </span>
-                    <span className="hidden md:inline text-zinc-400 ml-1">
-                      R{sp.round} · {sp.targetRounds}선승
-                    </span>
+
+                    <div className="flex items-center gap-1 ml-1 pl-2 border-l border-white/15 text-[11px]">
+                      <span
+                        className={`px-1.5 py-0.5 rounded font-black ${
+                          sp.plantedSite === 'A'
+                            ? 'bg-rose-600 text-white animate-pulse'
+                            : sp.canPlantSite === 'A'
+                              ? 'bg-amber-500 text-slate-950'
+                              : 'bg-white/10 text-zinc-200'
+                        }`}
+                      >
+                        A 사이트 {sp.distToA !== undefined ? `${sp.distToA}m` : ''}
+                      </span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded font-black ${
+                          sp.plantedSite === 'B'
+                            ? 'bg-rose-600 text-white animate-pulse'
+                            : sp.canPlantSite === 'B'
+                              ? 'bg-amber-500 text-slate-950'
+                              : 'bg-white/10 text-zinc-200'
+                        }`}
+                      >
+                        B 사이트 {sp.distToB !== undefined ? `${sp.distToB}m` : ''}
+                      </span>
+                      <span className="hidden md:inline text-zinc-400 ml-1">
+                        R{sp.round} · {sp.targetRounds}선승
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-[10.5px] font-semibold text-zinc-300">
+                    {isPlanted
+                      ? `⚠️ ${sp.plantedSite} 사이트에 스파이크 설치됨! 수비팀(BLUE)은 스파이크 옆에서 [G] 또는 [E] 키 홀드하여 해체하세요`
+                      : hud.playerTeam === 'blue'
+                        ? '🛡️ [수비 BLUE] A/B 사이트 진입을 방어하고 스파이크 설치 시 [G]/[E] 키 홀드로 해체하세요'
+                        : '🔺 [공격 RED] 주황(A)·하늘색(B) 사이트 원 안에서 [G] 또는 [E] 키를 3초 홀드하여 스파이크를 설치하세요'}
                   </div>
                 </div>
               );
             })()
           ) : (hud.mode === 'multiplayer' || hud.mode === 'ffa') && hud.partyMode === 'boss_raid' ? (
-            <div className="flex flex-col items-center gap-1 min-w-[200px] sm:min-w-[280px]">
+            <div
+              data-testid="boss-raid-hud"
+              className="flex flex-col items-center gap-1 min-w-[220px] sm:min-w-[310px]"
+            >
               <div className="w-full flex items-center justify-between gap-3 text-xs font-display font-bold">
-                <span className="text-rose-400">👹 {hud.bossName || '보스 레이드'}</span>
+                <div className="flex items-center gap-1.5">
+                  <span style={{ color: hud.bossAccent || '#fb7185' }}>
+                    👹 {hud.bossName || '보스 레이드'}
+                  </span>
+                  {hud.bossSubtitle && (
+                    <span className="hidden sm:inline text-[10px] text-zinc-400 font-semibold">
+                      · {hud.bossSubtitle}
+                    </span>
+                  )}
+                </div>
                 <span className="font-mono-num text-white">
                   {hud.bossCurrentHp ?? 650} / {hud.bossMaxHp ?? 650}
                 </span>
               </div>
-              <div className="w-full h-2 rounded-full bg-zinc-800 overflow-hidden">
+              <div className="w-full h-2.5 rounded-full bg-zinc-800 overflow-hidden">
                 <div
-                  className="h-full bg-rose-500 transition-all duration-100"
+                  className="h-full transition-all duration-100"
                   style={{
+                    backgroundColor: hud.bossAccent || '#f43f5e',
                     width: `${Math.max(
                       0,
                       Math.min(100, ((hud.bossCurrentHp ?? 0) / Math.max(1, hud.bossMaxHp ?? 650)) * 100)

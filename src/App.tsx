@@ -371,6 +371,10 @@ export default function App() {
           onSelectPracticeMap={(mapId) => engineRef.current?.voteMap(mapId)}
           onPlayUiSound={(kind, step) => engineRef.current?.playUiSound(kind, step)}
           onStart={handleStart}
+          onStartBattleRoyale={(mapId) => {
+            (document.activeElement as HTMLElement | null)?.blur?.();
+            engineRef.current?.startBattleRoyaleMatch(mapId);
+          }}
           onLaunchMatchedGame={handleLaunchMatchedGame}
           onSetPlayerName={(name) => engineRef.current?.setPlayerName(name)}
           onOpenAuth={(tab) => {

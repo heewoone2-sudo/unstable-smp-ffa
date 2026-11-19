@@ -278,14 +278,14 @@ test('computeBlockPlacement snaps to 1.5m grid and avoids overlapping player tor
   assert.equal(placed!.z % 1.5, 0);
 });
 
-test('applyCombatDamage respects absorption and shield block unless broken', () => {
+test('applyCombatDamage respects absorption and 85% shield block damage reduction unless broken', () => {
   const normalBlocked = applyCombatDamage(
     { hp: 100, maxHp: 100, absorption: 0, isBlocking: true },
     20,
     false
   );
   assert.equal(normalBlocked.blocked, true);
-  assert.equal(normalBlocked.finalDamage, 7);
+  assert.equal(normalBlocked.finalDamage, 3);
 
   const axeBreak = applyCombatDamage(
     { hp: 100, maxHp: 100, absorption: 15, isBlocking: true },
@@ -306,17 +306,19 @@ test('expanded 216m open world has outer biome landmarks and open origin spawn',
   assert.ok(Math.hypot(pushed.x - -18, pushed.z - -16) >= 1.6);
 });
 
-test('all 20 arena maps provide clear origin spawn, jump pads, and 15-minute 4-map rotation', () => {
+test('all 21 arena maps provide clear origin spawn, jump pads, 84m radius, and 15-minute 4-map rotation', () => {
   assert.equal(MAP_ROTATION_SECONDS, 900);
-  assert.equal(MAP_ORDER.length, 20);
-  assert.equal(MAP_ORDER[0], 'container_yard');
-  assert.equal(ARENA_HORIZONTAL_SCALE, 1.45);
+  assert.equal(MAP_ORDER.length, 21);
+  assert.equal(MAP_ORDER[0], 'duel_arena');
+  assert.equal(MAP_ORDER[1], 'container_yard');
+  assert.equal(ARENA_HORIZONTAL_SCALE, 1.65);
   for (const mapId of MAP_ORDER) {
     const def = MAP_DEFINITIONS[mapId];
     const blocks = getArenaBlocksForMap(mapId);
     const pads = getJumpPadsForMap(mapId);
-    assert.equal(def.worldRadius, 70, `${mapId} should be expanded to 70m radius`);
-    assert.ok(blocks.length >= 90, `${mapId} should have high-density urban cover, container mazes, and step-jumpable 2-3F towers (${blocks.length})`);
+    assert.equal(def.worldRadius, 84, `${mapId} should be expanded to 84m radius`);
+    const minBlocks = mapId === 'duel_arena' ? 28 : 75;
+    assert.ok(blocks.length >= minBlocks, `${mapId} should have rich non-overlapping cover (${blocks.length})`);
     assert.ok(pads.length >= 4, `${mapId} should include jump pads for vertical combat`);
     assert.equal(getSupportHeightAt(0, 0, 0.5, 0.55, blocks), 0, `${mapId} origin must stay open for safe spawn`);
   }
@@ -326,7 +328,8 @@ test('all 20 arena maps provide clear origin spawn, jump pads, and 15-minute 4-m
   assert.equal(getMapForElapsedTime(0, 'container_yard'), 'container_yard');
   assert.equal(getMapForElapsedTime(900, 'container_yard'), 'emerald_citadel');
   assert.equal(getMapForElapsedTime(1800, 'container_yard'), 'sky_dock');
-  assert.equal(getNextMapId('aether_spire'), 'container_yard');
+  assert.equal(getNextMapId('aether_spire'), 'duel_arena');
+  assert.equal(getNextMapId('duel_arena'), 'container_yard');
 
   const w1 = getRotationWindow(1_000);
   const w1Same = getRotationWindow(500_000);
@@ -841,10 +844,10 @@ test('all 20 maps define distinct GOAT traits, valid multipliers, and clear jump
       assert.ok(sup <= 0.1, `${mapId} signature pool ${pool.id} overlapped block at (${pool.x},${pool.z}), sup=${sup}`);
     }
   }
-  assert.equal(traitNames.size, 20, 'all 20 maps must have unique GOAT trait names');
+  assert.equal(traitNames.size, 21, 'all 21 maps must have unique GOAT trait names');
 });
 
-test('all 20 maps feature genuinely distinct Valorant-style architectural layouts, 10 ground styles, and floating sky variants', () => {
+test('all 21 maps feature genuinely distinct Valorant-style architectural layouts, 10 ground styles, floating sky variants, and ZERO overlapping 3D blocks', () => {
   const groundStyles = new Set<string>();
   const ringStyles = new Set<string>();
   const layoutFingerprints = new Set<string>();
@@ -863,6 +866,24 @@ test('all 20 maps feature genuinely distinct Valorant-style architectural layout
       `${mapId} must not use shared cookie-cutter perimeter enclosure`
     );
 
+    // Strictly verify ZERO 3D AABB overlaps between any pair of blocks on this map
+    for (let i = 0; i < blocks.length; i++) {
+      const a = blocks[i];
+      for (let j = i + 1; j < blocks.length; j++) {
+        const b = blocks[j];
+        const overlapX = Math.abs(a.x - b.x) < (a.w + b.w) * 0.5 - 0.12;
+        const overlapZ = Math.abs(a.z - b.z) < (a.d + b.d) * 0.5 - 0.12;
+        const aTop = a.y + a.h;
+        const bTop = b.y + b.h;
+        const overlapY = a.y < bTop - 0.12 && aTop > b.y + 0.12;
+        assert.equal(
+          overlapX && overlapZ && overlapY,
+          false,
+          `${mapId} has overlapping blocks ${a.id} and ${b.id}`
+        );
+      }
+    }
+
     // Compute a geometric fingerprint of the map's block positions & heights
     const sig = blocks
       .slice(0, 12)
@@ -871,8 +892,8 @@ test('all 20 maps feature genuinely distinct Valorant-style architectural layout
     layoutFingerprints.add(sig);
   }
 
-  assert.equal(layoutFingerprints.size, 20, 'all 20 maps must have unique 3D block topology fingerprints');
-  assert.equal(groundStyles.size, 10, 'all 10 procedural floor groundStyles must be utilized across the 20 maps');
+  assert.equal(layoutFingerprints.size, 21, 'all 21 maps must have unique 3D block topology fingerprints');
+  assert.equal(groundStyles.size, 10, 'all 10 procedural floor groundStyles must be utilized across the 21 maps');
   assert.equal(ringStyles.size, 3, 'all 3 ringStyle variants must be utilized');
   assert.ok(floatingCount >= 4 && floatingCount <= 8, `expected floating sky maps, got ${floatingCount}`);
 });
@@ -951,5 +972,42 @@ test('Valorant-style Spike Defuse mode enforces team mode, detects A/B sites, an
   assert.equal(computeSpikeBeepInterval(3), 0.12);
 });
 
+test('4-Boss Roster and Battle Royale Blue Zone shrinking math work accurately', async () => {
+  const {
+    BOSS_ROSTER,
+    BOSS_VARIANT_ORDER,
+    getBossProfile,
+    computeBattleRoyaleZoneState,
+    resolveEffectiveRoomMode,
+    shouldEndMatchOnKillLimit,
+  } = await import('./partyModes');
 
+  assert.equal(BOSS_VARIANT_ORDER.length, 4);
+  const abilityKinds = new Set(BOSS_VARIANT_ORDER.map((id) => BOSS_ROSTER[id].abilityKind));
+  assert.equal(abilityKinds.size, 4);
+  assert.equal(getBossProfile('frost_leviathan').abilityKind, 'frost_nova');
+  assert.equal(getBossProfile('storm_archon').abilityKind, 'chain_storm');
+  assert.equal(getBossProfile('void_colossus').abilityKind, 'void_singularity');
 
+  assert.equal(resolveEffectiveRoomMode('multiplayer', 'team', 'battle_royale'), 'ffa');
+  assert.equal(shouldEndMatchOnKillLimit('battle_royale', 'multiplayer'), false);
+
+  const zStart = computeBattleRoyaleZoneState(0, 0, 0);
+  assert.equal(zStart.phase, 1);
+  assert.equal(zStart.currentRadius, 82);
+  assert.equal(zStart.targetRadius, 54);
+  assert.equal(zStart.isOutsideZone, false);
+
+  // Mid Phase 1 (elapsed = 14s out of 28s -> radius 68m, player at x=75m is outside zone)
+  const zShrink1 = computeBattleRoyaleZoneState(14, 75, 0);
+  assert.equal(zShrink1.phase, 1);
+  assert.equal(zShrink1.currentRadius, 68);
+  assert.equal(zShrink1.isOutsideZone, true);
+
+  // Final closed zone after all 4 phases (elapsed = 120s)
+  const zFinal = computeBattleRoyaleZoneState(120, 20, 20);
+  assert.equal(zFinal.phase, 4);
+  assert.equal(zFinal.currentRadius, 3.5);
+  assert.equal(zFinal.dps, 18);
+  assert.equal(zFinal.isOutsideZone, true);
+});

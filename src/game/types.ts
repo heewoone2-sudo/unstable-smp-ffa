@@ -34,7 +34,8 @@ export type MapId =
   | 'obsidian_keep'
   | 'solar_observatory'
   | 'toxic_refinery'
-  | 'aether_spire';
+  | 'aether_spire'
+  | 'duel_arena';
 export type MapCategory = 'industrial' | 'nature' | 'citadel' | 'cosmic';
 export type CameraMode = 'firstperson' | 'shiftlock' | 'free';
 export type CameraViewMode = CameraMode;
@@ -47,7 +48,13 @@ export type CustomPartyMode =
   | 'boss_raid'
   | 'random_arsenal'
   | 'one_shot'
-  | 'spike_defuse';
+  | 'spike_defuse'
+  | 'battle_royale';
+export type BossVariantId =
+  | 'molten_behemoth'
+  | 'frost_leviathan'
+  | 'storm_archon'
+  | 'void_colossus';
 export type AiPolicy =
   | 'wind_diver'
   | 'sword_duelist'
@@ -263,6 +270,21 @@ export interface SpikeHudState {
   channelKind: 'plant' | 'defuse' | null;
   channelProgress: number;
   halfDefuseReached: boolean;
+  distToA?: number;
+  distToB?: number;
+}
+
+export interface BattleRoyaleHudState {
+  phase: number;
+  phaseLabel: string;
+  currentRadius: number;
+  targetRadius: number;
+  timerSec: number;
+  isOutsideZone: boolean;
+  distToSafeZone: number;
+  aliveCount: number;
+  totalCount: number;
+  supplyCratesRemaining: number;
 }
 
 export interface HudSnapshot {
@@ -270,6 +292,7 @@ export interface HudSnapshot {
   mode: GameModeId;
   partyMode: CustomPartyMode;
   spikeState?: SpikeHudState | null;
+  battleRoyaleState?: BattleRoyaleHudState | null;
   botDifficulty: BotDifficulty;
   isPractice?: boolean;
   isSpectating: boolean;
@@ -291,6 +314,9 @@ export interface HudSnapshot {
   bossCurrentHp?: number;
   bossMaxHp?: number;
   bossName?: string;
+  bossVariant?: BossVariantId;
+  bossSubtitle?: string;
+  bossAccent?: string;
   characterId: CharacterId;
   roomMode: RoomMode;
   playerTeam: PlayerTeam;

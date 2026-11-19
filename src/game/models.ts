@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import type { ArenaBuffKind, CharacterProfile, WeaponSlotId } from './types';
+import type { ArenaBuffKind, BossVariantId, CharacterProfile, WeaponSlotId } from './types';
 
 function createExtrudedOutlineGeometry(
   sourceGeo: THREE.BufferGeometry,
@@ -1153,7 +1153,8 @@ export function createArrowProjectileMesh(accentHex = 0x38bdf8): THREE.Group {
  */
 export function createBossMonsterModel(
   shadowMaterial: THREE.MeshBasicMaterial,
-  enableShadows: boolean
+  enableShadows: boolean,
+  variant: BossVariantId = 'molten_behemoth'
 ): FighterRig {
   const root = new THREE.Group();
   const bodyGroup = new THREE.Group();
@@ -1167,11 +1168,58 @@ export function createBossMonsterModel(
     return mat;
   };
 
-  const hideMat = registerMat(makeMat('#1f1a29', 0.62, 0.28));
-  const carapaceMat = registerMat(makeClearcoatMat('#2e1065', 0.28, 0.58, 0x4c1d95, 0.25, 0.75));
-  const magmaMat = registerMat(makeMat('#f97316', 0.22, 0.15, 0xea580c, 1.05));
-  const hornMat = registerMat(makeClearcoatMat('#e2e8f0', 0.25, 0.2, 0x000000, 0, 0.6));
-  const eyeMat = registerMat(makeMat('#ff2442', 0.1, 0.1, 0xff1e38, 1.45));
+  const palette =
+    variant === 'frost_leviathan'
+      ? {
+          hide: '#0c2340',
+          carapace: '#1e3a5f',
+          carapaceEmissive: 0x0369a1,
+          core: '#38bdf8',
+          coreEmissive: 0x0284c7,
+          horn: '#e0f2fe',
+          eye: '#7dd3fc',
+          eyeEmissive: 0x38bdf8,
+        }
+      : variant === 'storm_archon'
+        ? {
+            hide: '#1e1b4b',
+            carapace: '#312e81',
+            carapaceEmissive: 0x4f46e5,
+            core: '#facc15',
+            coreEmissive: 0xeab308,
+            horn: '#fef08a',
+            eye: '#fde047',
+            eyeEmissive: 0xfacc15,
+          }
+        : variant === 'void_colossus'
+          ? {
+              hide: '#090d16',
+              carapace: '#1e293b',
+              carapaceEmissive: 0x6d28d9,
+              core: '#c084fc',
+              coreEmissive: 0x9333ea,
+              horn: '#22d3ee',
+              eye: '#a855f7',
+              eyeEmissive: 0xc084fc,
+            }
+          : {
+              hide: '#1f1a29',
+              carapace: '#2e1065',
+              carapaceEmissive: 0x4c1d95,
+              core: '#f97316',
+              coreEmissive: 0xea580c,
+              horn: '#e2e8f0',
+              eye: '#ff2442',
+              eyeEmissive: 0xff1e38,
+            };
+
+  const hideMat = registerMat(makeMat(palette.hide, 0.58, 0.34));
+  const carapaceMat = registerMat(
+    makeClearcoatMat(palette.carapace, 0.25, 0.64, palette.carapaceEmissive, 0.28, 0.8)
+  );
+  const magmaMat = registerMat(makeMat(palette.core, 0.2, 0.18, palette.coreEmissive, 1.15));
+  const hornMat = registerMat(makeClearcoatMat(palette.horn, 0.22, 0.25, palette.coreEmissive, 0.2, 0.7));
+  const eyeMat = registerMat(makeMat(palette.eye, 0.1, 0.1, palette.eyeEmissive, 1.55));
 
   // Massive Pillar Monster Legs with Claws
   const leftLegPivot = new THREE.Group();
@@ -1271,6 +1319,32 @@ export function createBossMonsterModel(
   hornR1.rotation.set(0.28, 0, -0.52);
 
   headGroup.add(cranium, snout, jaw, fangL, fangR, eyeL, eyeR, hornL1, hornR1);
+
+  // Variant-Specific 3D Silhouette Accessories (Frost Crown / Storm Halo / Void Mecha Cannons)
+  if (variant === 'frost_leviathan') {
+    for (let s = -1; s <= 1; s++) {
+      const crystalFin = new THREE.Mesh(new THREE.OctahedronGeometry(0.24, 0), hornMat);
+      crystalFin.scale.set(0.55, 2.2, 0.75);
+      crystalFin.position.set(s * 0.28, 0.78, -0.1);
+      crystalFin.rotation.z = -s * 0.35;
+      headGroup.add(crystalFin);
+    }
+  } else if (variant === 'storm_archon') {
+    const stormHalo = new THREE.Mesh(new THREE.TorusGeometry(0.68, 0.06, 8, 24), magmaMat);
+    stormHalo.rotation.x = Math.PI * 0.42;
+    stormHalo.position.set(0, 0.88, -0.12);
+    headGroup.add(stormHalo);
+  } else if (variant === 'void_colossus') {
+    for (const side of [-1, 1]) {
+      const cannon = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 0.95, 10), carapaceMat);
+      cannon.rotation.x = Math.PI * 0.44;
+      cannon.position.set(side * 0.65, 2.75, 0.25);
+      const muzzle = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.04, 8, 16), magmaMat);
+      muzzle.position.set(side * 0.65, 2.84, 0.72);
+      bodyGroup.add(cannon, muzzle);
+    }
+  }
+
   bodyGroup.add(headGroup);
 
   // Heavy Crusher Arms + Shoulder Pauldrons + Monster Claws

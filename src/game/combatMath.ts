@@ -270,8 +270,11 @@ export function computeBlockPlacement(
   return { x: gx, y: gy, z: gz };
 }
 
+export const SHIELD_BLOCK_DAMAGE_MULT = 0.15; // 85% damage reduction when blocking with shield
+export const SHIELD_BLOCK_KNOCKBACK_MULT = 0.2; // 80% knockback reduction when blocking with shield
+
 /**
- * Applies damage against a fighter considering blocking shield mitigation and absorption hearts.
+ * Applies damage against a fighter considering blocking shield mitigation (85% DR) and absorption hearts.
  */
 export function applyCombatDamage(
   target: FighterStats,
@@ -279,7 +282,7 @@ export function applyCombatDamage(
   canBreakShield: boolean
 ): DamageResult {
   const blocked = target.isBlocking && !canBreakShield;
-  const finalDamage = Math.max(1, Math.round(blocked ? rawDamage * 0.35 : rawDamage));
+  const finalDamage = Math.max(1, Math.round(blocked ? rawDamage * SHIELD_BLOCK_DAMAGE_MULT : rawDamage));
 
   let remainingAbsorption = target.absorption;
   let absorptionUsed = 0;
